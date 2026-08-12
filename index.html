@@ -39,12 +39,15 @@
           <span id="status-dot"></span>
           <span id="status-text">CONNECTING</span>
         </div>
+        <div id="market-timer">
+          <span id="timer-label">Ends in</span>
+          <span id="timer-value">--:--</span>
+        </div>
       </div>
     </header>
 
     <!-- ═══════════════ PRICE BAR ═══════════════ -->
     <div id="price-bar">
-      <!-- Left: prices -->
       <div class="price-item" id="price-current-wrap">
         <span class="price-label">PRICE</span>
         <span class="price-value large" id="price-current">--.-¢</span>
@@ -74,21 +77,6 @@
       <div class="price-item">
         <span class="price-label">UPDATED</span>
         <span class="price-value muted small" id="price-age">---</span>
-      </div>
-
-      <!-- CENTER: countdown timer -->
-      <div id="timer-center">
-        <span id="timer-label-top">ENDS IN</span>
-        <span id="timer-value">--:--</span>
-      </div>
-
-      <!-- Right: UP/DOWN toggle -->
-      <div id="outcome-switcher">
-        <span class="price-label">OUTCOME</span>
-        <div id="outcome-buttons">
-          <button class="outcome-btn active" id="btn-outcome-up">▲ UP</button>
-          <button class="outcome-btn" id="btn-outcome-down">▼ DOWN</button>
-        </div>
       </div>
     </div>
 
@@ -151,7 +139,7 @@
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v1.3</span>
+        <span id="app-version">v1.0</span>
       </div>
     </footer>
 

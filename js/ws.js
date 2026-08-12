@@ -1,10 +1,6 @@
 /**
- * ws.js — Polymarket CLOB WebSocket client v1.1
- *
- * FIX v1.1: The old version blocked messages from new token after rollover
- * because _currentTokenId was checked against msg.asset_id before subscribe
- * completed. Now clearTokenFilter() must be called before subscribe().
- *
+ * ws.js — Polymarket CLOB WebSocket client
+ * 
  * Features:
  * - Connect to wss://ws-subscriptions-clob.polymarket.com/ws/market
  * - Subscribe by asset_id (token ID)
@@ -12,18 +8,19 @@
  * - PING every 10s (text frame "PING")
  * - Exponential backoff reconnect (1s → 30s max)
  * - WATCHDOG: 15s silence → force reconnect (zombie connection detection!)
+ * - Dispatches: onBook, onPriceChange, onLastTrade, onBestBidAsk, onNewMarket, onMarketResolved
  */
 'use strict';
 
 window.PolyWS = (() => {
   const WS_URL = 'wss://ws-subscriptions-clob.polymarket.com/ws/market';
-  const PING_INTERVAL_MS  = 10_000;
-  const WATCHDOG_MS       = 15_000;
+  const PING_INTERVAL_MS  = 10_000;  // 10 seconds
+  const WATCHDOG_MS       = 15_000;  // 15 seconds silence = zombie
   const MAX_RECONNECT_MS  = 30_000;
   const BASE_RECONNECT_MS = 1_000;
 
   let _ws              = null;
-  let _currentTokenId  = null;
+  let _currentTokenId  = null;  // active subscribed token
   let _pingTimer       = null;
   let _watchdogTimer   = null;
   let _reconnectTimer  = null;
@@ -31,7 +28,7 @@ window.PolyWS = (() => {
   let _destroyed       = false;
   let _lastDataMs      = 0;
 
-  // Event handlers
+  // Event handlers (set by caller)
   const handlers = {
     onBook:           null,
     onPriceChange:    null,
@@ -48,7 +45,7 @@ window.PolyWS = (() => {
   // ─── Connect ────────────────────────────────────────────────────────
   function connect() {
     if (_destroyed) return;
-
+    
     try {
       _ws = new WebSocket(WS_URL);
     } catch (e) {
@@ -62,6 +59,7 @@ window.PolyWS = (() => {
       _reconnectAttempt = 0;
       _lastDataMs = Date.now();
 
+      // Subscribe to current token if we have one
       if (_currentTokenId) {
         _sendSubscribe(_currentTokenId);
       }
@@ -73,6 +71,7 @@ window.PolyWS = (() => {
     };
 
     _ws.onmessage = (evt) => {
+      // Handle PONG
       if (evt.data === 'PONG') {
         _lastDataMs = Date.now();
         return;
@@ -85,8 +84,11 @@ window.PolyWS = (() => {
         return;
       }
 
+      // Reset watchdog on any data
       _lastDataMs = Date.now();
+      _resetWatchdog();
 
+      // Handle array or single message
       if (Array.isArray(data)) {
         data.forEach(_handleMessage);
       } else if (data) {
@@ -111,11 +113,9 @@ window.PolyWS = (() => {
   function _handleMessage(msg) {
     if (!msg || !msg.event_type) return;
 
-    // FIX: Only filter if we have a token set AND the message has an asset_id.
-    // During rollover, _currentTokenId is briefly null (cleared) before new subscribe.
-    // Also allow messages with no asset_id (they may be market lifecycle events).
+    // Security: ignore messages from wrong token
     if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) {
-      return; // message is for a token we don't care about (e.g., old token lingering)
+      return;
     }
 
     switch (msg.event_type) {
@@ -141,6 +141,7 @@ window.PolyWS = (() => {
         if (handlers.onTickSizeChange) handlers.onTickSizeChange(msg);
         break;
       default:
+        // Unknown event — ignore
         break;
     }
   }
@@ -152,7 +153,7 @@ window.PolyWS = (() => {
       type: 'market',
     };
     if (useCustomFeature) {
-      msg.custom_feature_enabled = true;
+      msg.custom_feature_enabled = true; // enables: best_bid_ask, new_market, market_resolved
     }
     _send(JSON.stringify(msg));
   }
@@ -166,75 +167,72 @@ window.PolyWS = (() => {
   }
 
   /**
-   * FIX: clearTokenFilter must be called BEFORE subscribe() during rollover.
-   * This prevents the message filter from blocking messages from the new token
-   * during the brief window when both old and new tokens are being switched.
-   */
-  let _subscribedTokenId = null;
-
-  function clearTokenFilter() {
-    _currentTokenId = null;
-  }
-
-  /**
    * Subscribe to a new token. Unsubscribes from previous if needed.
+   * Does NOT reconnect the WebSocket — sends new subscribe frame.
    */
   function subscribe(newTokenId) {
-    if (!newTokenId) return;
-    const prev = _subscribedTokenId;
-    _subscribedTokenId = newTokenId;
+    const prev = _currentTokenId;
     _currentTokenId = newTokenId;
 
     if (_ws && _ws.readyState === WebSocket.OPEN) {
       if (prev && prev !== newTokenId) {
-        console.log('[PolyWS] Unsubscribing from old token:', prev);
         _sendUnsubscribe(prev);
       }
-      console.log('[PolyWS] Subscribing to new token:', newTokenId);
       _sendSubscribe(newTokenId);
     } else {
+      // Not connected — will subscribe on reconnect
       if (!_ws || _ws.readyState === WebSocket.CLOSED) {
         connect();
       }
     }
   }
 
-  // ─── Send ────────────────────────────────────────────────────────────
+  // ─── Send helper ────────────────────────────────────────────────────
   function _send(data) {
     if (_ws && _ws.readyState === WebSocket.OPEN) {
-      try { _ws.send(data); } catch (e) { console.warn('[PolyWS] Send failed:', e); }
+      try {
+        _ws.send(data);
+      } catch (e) {
+        console.warn('[PolyWS] Send failed:', e);
+      }
     }
   }
 
-  // ─── Ping ────────────────────────────────────────────────────────────
+  // ─── Ping / Pong ────────────────────────────────────────────────────
   function _startPing() {
     clearInterval(_pingTimer);
     _pingTimer = setInterval(() => {
       if (_ws && _ws.readyState === WebSocket.OPEN) {
-        _ws.send('PING');
+        _ws.send('PING'); // Must be text, not JSON!
       }
     }, PING_INTERVAL_MS);
   }
 
-  // ─── Watchdog ────────────────────────────────────────────────────────
+  // ─── Watchdog ───────────────────────────────────────────────────────
+  // Detects "zombie" connections: open but no data for 15+ seconds
   function _startWatchdog() {
     clearInterval(_watchdogTimer);
     _lastDataMs = Date.now();
     _watchdogTimer = setInterval(() => {
       const silence = Date.now() - _lastDataMs;
       if (silence > WATCHDOG_MS) {
-        console.warn(`[PolyWS] Watchdog: ${Math.round(silence / 1000)}s silence → reconnect`);
+        console.warn(`[PolyWS] Watchdog triggered: ${Math.round(silence / 1000)}s of silence. Forcing reconnect.`);
         if (_ws) _ws.close();
       }
     }, 5000);
   }
 
-  // ─── Reconnect ───────────────────────────────────────────────────────
+  function _resetWatchdog() {
+    // Called on every real message — watchdog timer doesn't need explicit reset
+    // because we just update _lastDataMs
+  }
+
+  // ─── Reconnect ──────────────────────────────────────────────────────
   function _scheduleReconnect() {
     clearTimeout(_reconnectTimer);
     const delay = Math.min(BASE_RECONNECT_MS * Math.pow(2, _reconnectAttempt), MAX_RECONNECT_MS);
     _reconnectAttempt++;
-    console.log(`[PolyWS] Reconnect in ${delay}ms (attempt ${_reconnectAttempt})`);
+    console.log(`[PolyWS] Reconnecting in ${delay}ms (attempt ${_reconnectAttempt})`);
     _reconnectTimer = setTimeout(connect, delay);
   }
 
@@ -247,18 +245,18 @@ window.PolyWS = (() => {
     _reconnectTimer = null;
   }
 
-  // ─── Cleanup ─────────────────────────────────────────────────────────
+  // ─── Cleanup ────────────────────────────────────────────────────────
   function destroy() {
     _destroyed = true;
     _clearTimers();
     if (_ws) {
-      _ws.onclose = null;
+      _ws.onclose = null; // prevent reconnect
       _ws.close();
       _ws = null;
     }
   }
 
-  // ─── Status ──────────────────────────────────────────────────────────
+  // ─── Status ─────────────────────────────────────────────────────────
   function isConnected() {
     return _ws && _ws.readyState === WebSocket.OPEN;
   }
@@ -283,7 +281,6 @@ window.PolyWS = (() => {
   return {
     connect,
     subscribe,
-    clearTokenFilter,
     destroy,
     isConnected,
     getStatus,
