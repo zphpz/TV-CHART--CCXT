@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Polymarket BTC Up/Down — Live Chart</title>
+  <meta name="description" content="Real-time Polymarket BTC Up/Down rolling market chart. View probability movements for 5m and 15m BTC prediction markets." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- ═══════════════ HEADER ═══════════════ -->
+    <header id="main-header">
+      <div id="brand">
+        <div id="brand-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#00d4aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div id="brand-text">
+          <span id="brand-name">PM CHART</span>
+          <span id="brand-sub">Polymarket Live</span>
+        </div>
+      </div>
+
+      <!-- Market switcher: 5m / 15m -->
+      <div id="market-switcher">
+        <button class="mkt-btn active" id="btn-mkt-5m" data-tf="5">BTC 5M</button>
+        <button class="mkt-btn" id="btn-mkt-15m" data-tf="15">BTC 15M</button>
+      </div>
+
+      <!-- Status indicator -->
+      <div id="status-panel">
+        <div id="status-indicator" class="status-connecting">
+          <span id="status-dot"></span>
+          <span id="status-text">CONNECTING</span>
+        </div>
+        <div id="market-timer">
+          <span id="timer-label">Ends in</span>
+          <span id="timer-value">--:--</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ═══════════════ PRICE BAR ═══════════════ -->
+    <div id="price-bar">
+      <div class="price-item" id="price-current-wrap">
+        <span class="price-label">PRICE</span>
+        <span class="price-value large" id="price-current">--.-¢</span>
+      </div>
+      <div class="price-divider"></div>
+      <div class="price-item">
+        <span class="price-label">BID</span>
+        <span class="price-value green" id="price-bid">--.-¢</span>
+      </div>
+      <div class="price-item">
+        <span class="price-label">ASK</span>
+        <span class="price-value red" id="price-ask">--.-¢</span>
+      </div>
+      <div class="price-item">
+        <span class="price-label">MID</span>
+        <span class="price-value" id="price-mid">--.-¢</span>
+      </div>
+      <div class="price-item">
+        <span class="price-label">LAST</span>
+        <span class="price-value" id="price-last">--.-¢</span>
+      </div>
+      <div class="price-divider"></div>
+      <div class="price-item">
+        <span class="price-label">SPREAD</span>
+        <span class="price-value muted" id="price-spread">--.-¢</span>
+      </div>
+      <div class="price-item">
+        <span class="price-label">UPDATED</span>
+        <span class="price-value muted small" id="price-age">---</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════ CHART TOOLBAR ═══════════════ -->
+    <div id="chart-toolbar">
+      <div id="tf-switcher">
+        <span class="tf-label">TIMEFRAME</span>
+        <div id="tf-buttons">
+          <button class="tf-btn active" id="btn-tf-1s" data-tf="1">1s</button>
+          <button class="tf-btn" id="btn-tf-5s" data-tf="5">5s</button>
+          <button class="tf-btn" id="btn-tf-15s" data-tf="15">15s</button>
+          <button class="tf-btn" id="btn-tf-30s" data-tf="30">30s</button>
+          <button class="tf-btn" id="btn-tf-1m" data-tf="60">1m</button>
+        </div>
+      </div>
+
+      <div id="market-info">
+        <span class="info-label">MARKET</span>
+        <span id="market-slug-display">---</span>
+        <span class="info-sep">→</span>
+        <span id="market-window-display">--:-- – --:--</span>
+      </div>
+
+      <div id="chart-actions">
+        <button id="btn-reset-zoom" class="action-btn" title="Reset zoom">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- ═══════════════ CHART ═══════════════ -->
+    <div id="chart-wrapper">
+      <div id="chart-container"></div>
+
+      <!-- Loading overlay -->
+      <div id="loading-overlay">
+        <div id="loading-spinner"></div>
+        <div id="loading-text">Fetching market data…</div>
+        <div id="loading-sub" style="display:none"></div>
+      </div>
+
+      <!-- Error overlay -->
+      <div id="error-overlay" style="display:none">
+        <div id="error-icon">⚠</div>
+        <div id="error-text">Connection lost</div>
+        <div id="error-sub">Reconnecting…</div>
+        <button id="btn-retry">Retry Now</button>
+      </div>
+    </div>
+
+    <!-- ═══════════════ FOOTER ═══════════════ -->
+    <footer id="main-footer">
+      <div id="footer-left">
+        <span id="market-count-display"></span>
+      </div>
+      <div id="footer-center">
+        <span class="attr-text">Charts powered by </span>
+        <a href="https://www.tradingview.com/" target="_blank" class="attr-link">TradingView</a>
+        <span class="attr-text"> · Data from </span>
+        <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket</a>
+      </div>
+      <div id="footer-right">
+        <span id="app-version">v1.0</span>
+      </div>
+    </footer>
+
+  </div><!-- /#app -->
+
+  <!-- Lightweight Charts v5 CDN -->
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+
+  <!-- App modules -->
+  <script src="js/price.js"></script>
+  <script src="js/buffer.js"></script>
+  <script src="js/market.js"></script>
+  <script src="js/ws.js"></script>
+  <script src="js/chart.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,281 @@
+**Детальный план реализации быстрого приложения-чарта для rolling BTC Up/Down рынков Polymarket (5m / 15m) на lightweight-charts.**
+
+Цель: живой line-chart цены (0–100¢, старт ~50¢) текущего окна рынка + история внутри окна, обновление ≥1 раз в секунду, переключение TF (1s / 5s / 15s / 30s / 1m), без лагов, с автоматической сменой рынка при закрытии старого и старте нового.
+
+### 1. Архитектура (рекомендуемая: максимально быстрая и простая)
+
+**Вариант A (предпочтительный для «без тормозов» и минимальной задержки):**  
+Чистый клиентский SPA (React + TypeScript + Vite или Next.js client-only).
+
+- Браузер напрямую:
+  - Gamma API → discovery рынков (slug, token IDs, endDate).
+  - CLOB WebSocket market channel → real-time цены / book.
+- История текущего окна хранится только в памяти (Map / ring-buffer).
+- Chart: `lightweight-charts` (LineSeries или AreaSeries).
+- Никакого бэкенда для чтения данных → минимальная latency.
+
+**Вариант B (если нужны история прошлых окон, кэш, несколько пользователей, защита от rate-limit):**  
+Frontend + лёгкий Node/Bun backend (или Cloudflare Worker / Deno).
+
+- Backend держит WebSocket(и), агрегирует ticks, хранит историю (Redis / in-memory + optional SQLite/Parquet), отдаёт клиенту через свой WebSocket или Server-Sent Events.
+- Frontend только рисует.
+
+Для старта бери **Вариант A**. Потом легко добавить backend.
+
+### 2. Источники данных Polymarket (актуально на 2026)
+
+| Задача | Endpoint / Channel | Auth | Примечания |
+|--------|---------------------|------|------------|
+| Discovery события / рынка | `https://gamma-api.polymarket.com/events?slug=...` или `?slug_contains=btc-updown-5m&active=true&closed=false` | Нет | Получаем `markets[]` → `clobTokenIds`, `conditionId`, `endDate`, `outcomes` |
+| Текущая цена / mid | CLOB REST `/price` или `/midpoint` | Нет | Для bootstrap |
+| Real-time | `wss://ws-subscriptions-clob.polymarket.com/ws/market` | **Нет** | Главный источник |
+| Исторические цены | CLOB `/prices-history` | Нет | Ограниченно полезно для short-lived rolling-рынков |
+| User orders/trades | `/ws/user` | Да (API key) | Не нужно для чарта |
+
+**Ключевые события Market Channel (с `custom_feature_enabled: true`):**
+
+- `book` — полный снимок стакана (при подписке + при значимых изменениях).
+- `price_change` — изменения уровней.
+- `best_bid_ask` — топ-of-book (самое полезное для mid-price).
+- `last_trade_price` — сделки.
+- `new_market` / `market_resolved` — полезно для rolling-логики.
+
+Подписка:
+```json
+{
+  "assets_ids": ["TOKEN_ID_UP", "TOKEN_ID_DOWN"],
+  "type": "market",
+  "custom_feature_enabled": true
+}
+```
+
+Heartbeat: каждые ~10 с отправлять `"PING"`, ждать `"PONG"`.
+
+Цены приходят в долях (0.01–0.99). Для графика умножай на 100 → центы (1–99).
+
+Для Up/Down обычно рисуют **Up (Yes)** token. Mid = (best_bid + best_ask) / 2. Можно показывать last trade или mid.
+
+### 3. Работа с rolling-рынками (самая важная часть)
+
+Рынки имеют вид:
+- `btc-updown-5m-{unix_timestamp}`  
+- `btc-updown-15m-{unix_timestamp}`
+
+Каждые 5/15 минут старое окно закрывается, появляется новое.
+
+**Алгоритм discovery + switch:**
+
+1. При старте приложения:
+   - Запрос Gamma: `GET /events?slug_contains=btc-updown-5m&active=true&closed=false&limit=10` (аналогично для 15m).
+   - Или точный slug текущего окна (вычисляешь текущий floor(timestamp / 300) * 300).
+2. Берёшь самый «свежий» активный рынок (по `endDate` ближайший в будущем).
+3. Из `markets[0].clobTokenIds` берёшь tokenId Up (обычно индекс 0).
+4. Подписываешься на WebSocket по этому `asset_id`.
+5. Параллельно каждые 5–15 секунд (или по таймеру до `endDate`) проверяешь появление нового рынка.
+6. При обнаружении нового:
+   - Отписываешься от старого token.
+   - Очищаешь/архивируешь серию текущего графика.
+   - Подписываешься на новый token.
+   - Сбрасываешь time scale графика на новое окно.
+7. Можно подписаться на `new_market` (с custom_feature) и фильтровать по slug/pattern.
+
+Дополнительно: храни `endDate` рынка и за 10–30 секунд до конца уже начинай искать следующий.
+
+### 4. Получение и обработка цены (real-time pipeline)
+
+Рекомендуемый поток:
+
+```
+WebSocket message
+  → parse JSON
+  → если best_bid_ask или book → вычисли mid = (bid + ask)/2
+  → если last_trade_price → можно использовать trade price
+  → timestamp = Date.now() или из сообщения (мс)
+  → priceCents = mid * 100
+  → push в ring-buffer / массив ticks: { time: number (unix sec или ms), value: number }
+  → throttle/debounce обновление графика (requestAnimationFrame или 100–250 мс)
+```
+
+Для TF-агрегации:
+- Храни raw ticks (1s resolution минимум).
+- При смене TF пересчитывай OHLC или просто last-value-per-bucket (для line chart достаточно last).
+- Используй `series.setData(aggregated)` + `series.update(lastPoint)`.
+
+Хранение: простой массив + `Map` по bucket-ам. Для 5-минутного окна при 1s — всего ~300 точек. Для 15m — ~900. Память не проблема.
+
+### 5. Frontend: lightweight-charts
+
+```ts
+import { createChart, LineSeries } from 'lightweight-charts';
+
+const chart = createChart(container, {
+  layout: { background: { color: '#0f0f0f' }, textColor: '#d1d5db' },
+  grid: { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
+  rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
+  timeScale: { timeVisible: true, secondsVisible: true, borderVisible: false },
+  localization: { priceFormatter: (p) => p.toFixed(1) + '¢' },
+});
+
+const series = chart.addSeries(LineSeries, {
+  color: '#22c55e',
+  lineWidth: 2,
+  priceLineVisible: true,
+  lastValueVisible: true,
+});
+
+// Данные: series.setData([{ time: 1723..., value: 52.3 }, ...])
+// Live: series.update({ time: ..., value: ... })
+```
+
+UI:
+- Переключатель 5m / 15m.
+- Переключатель TF: 1s | 5s | 15s | 30s | 1m.
+- Индикатор текущего рынка (slug + remaining time).
+- Цвет линии (зелёный/красный по направлению от 50).
+- Опционально: volume / spread / best bid-ask как отдельные series или markers.
+
+Производительность:
+- Не вызывай `setData` на каждый tick — только `update`.
+- `setData` только при смене TF или смене рынка.
+- Используй `requestAnimationFrame` + throttle.
+- Отключай анимации, если нужно.
+
+### 6. Стек технологий
+
+- **Язык**: TypeScript.
+- **Сборка**: Vite + React (или Solid/Svelte для ещё большей скорости).
+- **Chart**: `lightweight-charts` (официальный).
+- **WebSocket**: нативный `WebSocket` + reconnect-логика (exponential backoff + jitter).
+- **HTTP**: `fetch` или `ky` / `ofetch`.
+- **State**: Zustand / Jotai / просто React state + refs.
+- **Время**: `date-fns` или нативный `Intl` + `performance.now()`.
+- Опционально: `@polymarket/clob-client` только если понадобится REST-хелперы (для pure chart не обязателен).
+
+### 7. Структура проекта (минимальная)
+
+```
+src/
+  api/
+    gamma.ts          // discovery, getCurrentMarket(slugPattern)
+    clobWs.ts         // WebSocket manager + subscribe/unsubscribe
+  chart/
+    Chart.tsx
+    useChartSeries.ts
+  hooks/
+    useRollingMarket.ts   // логика switch рынков
+    usePriceTicks.ts      // buffer + aggregation
+  utils/
+    time.ts
+    price.ts
+  App.tsx
+```
+
+### 8. Обязательные моменты надёжности и производительности
+
+1. **Reconnection WebSocket**  
+   - Exponential backoff (1s → 2s → 4s → … max 30s).  
+   - При reconnect заново отправлять subscribe.  
+   - Следить за `onclose` / `onerror`.
+
+2. **Heartbeat**  
+   Каждые 10 секунд `"PING"`. Если нет `PONG` — переподключение.
+
+3. **Смена рынка без разрывов**  
+   - Pre-fetch следующего рынка за 20–40 секунд до `endDate`.  
+   - Плавный переход: оставить старую серию серой / полупрозрачной на пару секунд, потом очистить.
+
+4. **Clock skew**  
+   Не полагайся только на клиентское время. Используй timestamp из сообщений Polymarket, где возможно.
+
+5. **Rate limits Gamma**  
+   Не спамь `/events` чаще раза в 5–10 секунд. Кэшируй текущий рынок.
+
+6. **Цена всегда 0–100**  
+   Клипай значения, обрабатывай edge-кейсы (нет bid/ask, market resolved = 0 или 100).
+
+7. **Мобильная производительность**  
+   На слабых устройствах снижай частоту update до 200–500 мс.
+
+8. **CORS**  
+   Gamma и CLOB WebSocket работают из браузера (проверено). Если появятся проблемы — proxy через свой backend.
+
+### 9. Возможные ошибки и подводные камни (с учётом актуального состояния 2026)
+
+| Проблема | Почему возникает | Как избежать / лечить |
+|----------|------------------|-----------------------|
+| Рынок не находится | Slug pattern изменился или рынок ещё не создан | Гибкий `slug_contains` + fallback по `endDate` + polling |
+| Token ID поменялся | Новый рынок = новые token IDs | Всегда брать свежие `clobTokenIds` из Gamma |
+| WebSocket молчит | Не отправил subscribe сразу после open, или нет PING | Строгий lifecycle + heartbeat |
+| Цена прыгает 0↔100 | Market resolved или illiquid | Смотреть `market_resolved`, показывать статус |
+| Дубликаты ticks | Несколько сообщений почти одновременно | Дедуп по timestamp + последняя цена |
+| Chart «прыгает» time scale | При смене рынка time уходит в прошлое | `timeScale().setVisibleRange()` или `fitContent()` + reset |
+| Высокая latency | Browser → Polymarket далеко | Можно добавить backend ближе к US (Polymarket в основном US) |
+| Нет истории прошлого окна | Polymarket не хранит публично tick-history short markets | Либо не показывать, либо свой recorder + PMData / сторонние датасеты |
+| `best_bid_ask` не приходит | Забыли `custom_feature_enabled: true` | Всегда включать |
+| Geographic restrictions | Некоторые регионы | Документация Polymarket упоминает ограничения — проверяй |
+| Изменения API | Polymarket активно развивает CLOB + RTDS | Следи за docs.polymarket.com и GitHub Polymarket |
+
+Дополнительно на 2026:
+- Появился RTDS (`wss://ws-live-data.polymarket.com`) — больше для crypto prices и comments, не основной для CLOB.
+- Есть сторонние high-frequency датасеты (pmdata.dev, HuggingFace и т.д.) — полезны только для backtesting, не для live.
+- Official SDK обновлялся (`@polymarket/clob-client-v2` и новые пакеты) — для pure chart можно обойтись без него.
+
+### 10. Поэтапный план реализации
+
+1. **MVP (1–2 дня)**  
+   - Discovery одного текущего 5m рынка.  
+   - WebSocket → mid-price → LineSeries.  
+   - Простая смена рынка по таймеру.
+
+2. **Базовый продукт**  
+   - 5m + 15m.  
+   - TF-переключатель.  
+   - Красивый UI, remaining time, status.
+
+3. **Надёжность**  
+   - Robust reconnect, pre-fetch next market, обработка resolved.  
+   - Throttling, error boundaries.
+
+4. **Улучшения**  
+   - Spread / volume overlay.  
+   - Звук/вибрация на сильные движения.  
+   - Сохранение истории текущего окна в localStorage.  
+   - Backend-recorder для multi-window history.
+
+5. **Опционально**  
+   - Несколько активов (ETH, SOL…).  
+   - Сравнение 5m vs 15m на одном экране.  
+   - Экспорт ticks.
+
+### 11. Быстрый старт кода (ключевые куски)
+
+**Discovery:**
+```ts
+const res = await fetch(
+  `https://gamma-api.polymarket.com/events?slug_contains=btc-updown-5m&active=true&closed=false&limit=5`
+);
+const events = await res.json();
+const market = events[0]?.markets?.[0];
+const tokenId = JSON.parse(market.clobTokenIds)[0]; // Up
+```
+
+**WebSocket:**
+```ts
+const ws = new WebSocket('wss://ws-subscriptions-clob.polymarket.com/ws/market');
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    assets_ids: [tokenId],
+    type: 'market',
+    custom_feature_enabled: true,
+  }));
+  setInterval(() => ws.send('PING'), 10000);
+};
+ws.onmessage = (ev) => {
+  const msg = JSON.parse(ev.data);
+  // обработка best_bid_ask / book / last_trade_price
+};
+```
+
+Этот план покрывает все критические точки: discovery rolling-рынков, real-time без задержек, смену окон, производительность lightweight-charts и актуальные особенности Polymarket API 2026 года.
+
+Если нужно — могу следующим сообщением дать готовый каркас проекта (Vite + React + полный код WebSocket-менеджера + chart).

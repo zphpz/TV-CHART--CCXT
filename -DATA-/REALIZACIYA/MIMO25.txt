@@ -1,0 +1,280 @@
+---
+
+# Детальный план: Real-time Polymarket Rolling Market Chart
+
+## Архитектура
+
+**Pure client-side** — браузер + WebWorker. Никакого бэкенда.
+
+```
+┌─────────────────────────────────────────────────┐
+│  Main Thread                                     │
+│  ┌──────────────┐  ┌──────────────────────────┐ │
+│  │ UI Controls  │  │  Lightweight Charts v4   │ │
+│  │ TF: 1s..1m   │  │  (LineSeries, 0-100)     │ │
+│  └──────┬───────┘  └──────────┬───────────────┘ │
+│         │   postMessage       │                  │
+│  ┌──────┴────────────────────┴───────────────┐  │
+│  │              WebWorker                     │  │
+│  │  ┌─────────┐ ┌──────────┐ ┌────────────┐  │  │
+│  │  │ WS Conn │ │ Tick Agg │ │ Market     │  │  │
+│  │  │ CLOB    │ │ Engine   │ │ Discovery  │  │  │
+│  │  └─────────┘ └──────────┘ └────────────┘  │  │
+│  └────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+## Шаг 1: discovering рынков (slug → token IDs)
+
+**Формат slug:**
+```
+btc-updown-5m-{unix_timestamp}
+eth-updown-15m-{unix_timestamp}
+```
+
+**Как вычислить slug:**
+```js
+function getSlug(asset, tf, now) {
+  const dur = tf === '5m' ? 300 : 900;
+  const tStart = Math.floor(now / dur) * dur;
+  return `${asset}-updown-${tf}-${tStart}`;
+}
+```
+
+**Получить token IDs:**
+```
+GET https://gamma-api.polymarket.com/events?slug=btc-updown-5m-1780319100
+```
+
+Ответ содержит `markets[0].clobTokenIds` — JSON-строка массива. Парсить дважды:
+```js
+const tokenIds = JSON.parse(market.clobTokenIds);
+// outcomes[0] = "Up" (Yes), outcomes[1] = "Down" (No)
+const upTokenId = tokenIds[0]; // ← подписываемся на этот
+```
+
+**Ключевые поля Gamma:**
+- `outcomePrices` — JSON-строка, парсить: `JSON.parse(market.outcomePrices)[0]`
+- `clobTokenIds` — JSON-строка, парсить дважды
+- `outcomes` — JSON-строка, индекс-алigned с clobTokenIds
+- ВСЕГДА отправлять `User-Agent` — Gamma блокирует без UA
+
+---
+
+## Шаг 2: WebSocket подключение (цена в реальном времени)
+
+**Endpoint:** `wss://ws-subscriptions-clob.polymarket.com/ws/market`
+
+**Подписка:**
+```json
+{
+  "assets_ids": ["<up_token_id>"],
+  "type": "market"
+}
+```
+
+**Heartbeat:** каждые 10 секунд отправлять текстовый фрейм `PING`, сервер отвечает `PONG`.
+
+**Типы сообщений:**
+- `book` — снимок стакана при подписке (bids/asks)
+- `price_change` — инкрементальное обновление цены
+- `last_trade_price` — цена последней сделки
+
+**Извлечение mid-price из стакана:**
+```js
+// Лучший bid — последний элемент bids (ascending sort)
+// Лучший ask — последний элемент asks (descending sort)
+const bestBid = parseFloat(book.bids[book.bids.length - 1].price);
+const bestAsk = parseFloat(book.asks[book.asks.length - 1].price);
+const midPrice = (bestBid + bestAsk) / 2;
+// В центах: midPrice * 100 → 0-100
+```
+
+**Важно:** `side=buy` возвращает bid, `side=sell` возвращает ask. Это НЕ то, что вы платите — это уровень стакана.
+
+---
+
+## Шаг 3: Агрегация тиков в timeframe-ы
+
+**Хранить в памяти WebWorker:**
+```
+ticks[] = [{ time: unix_sec, value: 0-100 }]
+```
+
+**Aggregation engine:**
+```js
+// Для TF = 1с — просто тик
+// Для TF = 5с, 15с, 30с, 1м — OHLC из тиков за период
+
+function aggregateTicks(ticks, tfSeconds) {
+  const buckets = {};
+  for (const tick of ticks) {
+    const bucketKey = Math.floor(tick.time / tfSeconds) * tfSeconds;
+    if (!buckets[bucketKey]) {
+      buckets[bucketKey] = { time: bucketKey, open: tick.value, high: tick.value, low: tick.value, close: tick.value };
+    } else {
+      const b = buckets[bucketKey];
+      b.high = Math.max(b.high, tick.value);
+      b.low = Math.min(b.low, tick.value);
+      b.close = tick.value;
+    }
+  }
+  return Object.values(buckets).sort((a, b) => a.time - b.time);
+}
+```
+
+**Для LineSeries** — передавать `{ time, value: close }`.
+
+**Лимит памяти:** хранить ~3600 тиков (1 час при 1с обновлении). Старые — удалять.
+
+---
+
+## Шаг 4: Rolling Market Transition
+
+**Когда старый рынок заканчивается:**
+1. За 30 секунд до конца текущего интервала → предзагрузить slug следующего рынка
+2. Вычислить `nextTStart = currentTStart + duration`
+3. Запросить Gamma для нового slug → получить новые tokenIds
+4. В момент transition → переподписаться на новый token ID через WS
+5. **Не обнулять график** — просто начать добавлять новые тики в общий поток
+
+**Проблема:** WS может дропнуться при переподписке.
+**Решение:** держать第二个 WS соединение для следующего рынка заранее.
+
+---
+
+## Шаг 5: UI — Lightweight Charts v4
+
+```js
+import { createChart, LineSeries } from 'lightweight-charts';
+
+const chart = createChart(container, {
+  layout: { textColor: '#d1d4dc', background: { type: 'solid', color: '#1e1e1e' } },
+  width: 800,
+  height: 400,
+  rightPriceScale: { scaleMargins: { top: 0.1, bottom: 0.1 } },
+  timeScale: { timeVisible: true, secondsVisible: true },
+});
+
+const series = chart.addSeries(LineSeries, {
+  color: '#2962FF',
+  lineWidth: 2,
+  priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+});
+
+// Обновление:
+series.update({ time: unixTimestamp, value: priceInCents });
+
+// Автоскролл к последней точке:
+chart.timeScale().scrollToRealTime();
+```
+
+**Ось цен:** 0-100 фиксированная:
+```js
+series.applyOptions({
+  priceScaleId: 'right',
+  scaleMargins: { top: 0.05, bottom: 0.05 },
+});
+// min/max через priceScale options
+```
+
+**TF переключение:**
+```js
+function switchTimeframe(tf) {
+  const aggregated = aggregateTicks(allTicks, tfToSeconds[tf]);
+  series.setData(aggregated.map(t => ({ time: t.time, value: t.close })));
+  chart.timeScale().fitContent();
+}
+```
+
+---
+
+## Шаг 6: WebWorker структура
+
+```
+worker.js:
+  - onmessage: { type: 'subscribe', tokenIds: [...] }
+  - onmessage: { type: 'switchTF', tf: '5s' }
+  
+  - connectWS(tokenId)
+  - handleBook(msg) → extract midPrice
+  - handlePriceChange(msg) → extract new price
+  - tickBuffer[] → aggregate → postMessage({ type: 'tick', time, value })
+  
+  - discoverNextMarket(currentSlug) → pre-fetch next tokenIds
+  - setInterval: every 1s check if transition needed
+```
+
+Main thread:
+```js
+const worker = new Worker('worker.js');
+worker.onmessage = (e) => {
+  if (e.data.type === 'tick') {
+    series.update({ time: e.data.time, value: e.data.value });
+  }
+};
+```
+
+---
+
+## Шаг 7: Ошибки и edge cases
+
+| Проблема | Решение |
+|---|---|
+| **WS disconnect** | Автопереподключение с экспоненциальным backoff (1s, 2s, 4s...). После reconnect — перезапросить REST `/book` снимок для re-sync |
+| **Gamma rate limit (~300 req/10s)** | Кешировать slug→tokenId маппинг. Не опрашивать Gamma чаще 1 раза в 30 секунд на рынок |
+| **Нет тиков в первые секунды нового рынка** | Начинать с 50c (midpoint 0.50). Это начальная цена всегда |
+| **Дубликаты тиков через WS** | Дедупликация по `(timestamp, price)` |
+| **Временные зазоры при transition** | Линейная интерполяция между последним тиком старого и первым нового рынка |
+| **CLOB book пустой (zero volume)** | Использовать midpoint из REST API как fallback |
+| **Браузер в фоне (throttle timers)** | RequestAnimationFrame + visibilitychange handler: при возврате в фокус — перезапросить снимок |
+| **Gamma отдаёт outdated `outcomePrices`** | НЕ использовать Gamma для реалтайм цен. Только для discovery. Цены ТОЛЬКО из WS/CLOB |
+| **Время в lightweigth-charts** | Unix timestamp в секундах (не миллисекундах) |
+| **Стакан: bids ascending, asks descending** | Берём `arr[arr.length - 1]` для лучшей цены, НЕ `arr[0]` |
+| **Market разрешается Chainlink BTC/USD** | Не Binance! Если нужен reference price — подписываться на RTDS `wss://ws-live-data.polymarket.com` с topic `crypto_prices` |
+| **pUSD collateral (апрель 2026)** | V2 SDK. Не V1. Если используешь SDK — `@polymarket/clob-client-v2` |
+
+---
+
+## Шаг 8: Последние изменения Polymarket (2026)
+
+1. **CLOB V2** — `clob.polymarket.com` (не v1). Публичные эндпоинты (book, price) не требуют auth.
+2. **pUSD** заменил USDC.e как collateral (апрель 2026).
+3. **`/markets/keyset`** — новая пагинация с `after_cursor/next_cursor`. Старый `/markets` с `offset` deprecated.
+4. **`closed` default = `false`** — теперь по умолчанию скрытые рынки не возвращаются.
+5. **Rate limits выросли**: POST /order — 5000/10s burst, 48000/10min sustained.
+6. **RTDS** — отдельный WS: `wss://ws-live-data.polymarket.com` для crypto цен (Binance/Chainlink), НЕ для стаканов.
+7. **FAK order type** — Fill and Kill. Не FOK. Заполняет сколько возможно, остальное отменяет.
+8. **`initial_dump`** поле при подписке на WS — запрашивать `true` для начального снимка стакана.
+
+---
+
+## Структура файлов
+
+```
+polymarket-chart/
+├── index.html          # UI + controls
+├── app.js              # Main thread: chart, UI, worker bridge
+├── worker.js           # WebWorker: WS, aggregation, market discovery
+├── styles.css          # Minimal dark theme
+└── package.json        # lightweight-charts as dep (или CDN)
+```
+
+Без фреймворков. Без сборщиков. Vite если нужен dev server.
+
+---
+
+## Порядок реализации
+
+1. **index.html** — контейнер для графика + кнопки TF
+2. **worker.js** — WS подключение к CLOB, парсинг book/price_change
+3. **app.js** — createChart, LineSeries, postMessage bridge
+4. **Aggregation** — tick buffer → OHLC → setData при смене TF
+5. **Market discovery** — вычисление slug, Gamma fetch, pre-fetch следующего
+6. **Transition logic** — переподписка WS + бесшовный переход на графике
+
+---
+
+**Skipped:** auth (read-only data, не нужен),数据库 (in-memory only, данные старше 15м бесполезны), server-side (pure client). **Add when:** >5 concurrent markets → server proxy; historical storage → IndexedDB.

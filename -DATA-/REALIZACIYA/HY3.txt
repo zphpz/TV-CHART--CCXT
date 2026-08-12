@@ -1,0 +1,108 @@
+Отлично, картина сложилась. Вот детальный план.
+
+## 1. Архитектура (минимум задержек)
+
+```
+Браузер (index.html + lightweight-charts)
+  ├─ HTTP: GET /api/token?tf=5m   → маленький Node-прокси
+  │     (кэширует slug→token, дёргает Gamma API, обходит CORS/лимиты)
+  └─ WS (прямо): wss://ws-subscriptions-clob.polymarket.com/ws/market
+        подписка на token_id текущего rolling-рынка
+        ← best_bid_ask / last_trade_price → считаем mid → рисуем линию
+```
+
+Почему прокси только для метаданных, а WS — напрямую из браузера: WS к Polymarket с браузера работает без CORS, и это самый быстрый путь (нет лишнего хопа). Прокси нужен только потому, что Gamma API из браузера может резать CORS, плюс там кэш и нормальные ретраи.
+
+## 2. Как резолвить rolling-рынок (самое важное)
+
+Слаг детерминированный, **UTC-floor** (подтверждено: `1786491900 / 300 = 5954973` нацело):
+```
+tf=5m  → interval = 300
+tf=15m → interval = 900
+slug = `btc-updown-${tf}-${Math.floor(Date.now()/1000/interval)*interval}`
+```
+Пример для 5m сейчас: `btc-updown-5m-<floor(now/300)*300>`.
+
+Токен резолвим через Gamma (прокси):
+```
+GET https://gamma-api.polymarket.com/markets/slug/{slug}
+→ clobTokenIds: "[\"…\",\"…\"]"   // JSON-строка внутри JSON!
+→ outcomes:      "[\"Up\",\"Down\"]"  // или ["Yes","No"] — порядок НЕ гарантирован
+```
+Берём токен с индексом `outcomes.indexOf("Up")` (или "Yes"). **Не хардкодь индекс** — мапь по имени.
+
+Подписка на WS (после `onopen`):
+```js
+ws.send(JSON.stringify({
+  assets_ids: [tokenId],
+  type: "market",
+  custom_feature_enabled: true   // включает best_bid_ask, market_resolved и т.д.
+}));
+```
+Heartbeat: шлём текстовый фрейм `"PING"` каждые **10с** (сервер отвечает `"PONG"`), иначе разрыв.
+
+Цена для графика (0–100¢):
+- из `best_bid_ask`: `mid = (parseFloat(best_bid)+parseFloat(best_ask))/2 * 100` — чаще всего обновляется (ставят/снимают ордера).
+- фоллбэк `last_trade_price.price` — если book пустой.
+- старт = 0.50 → 50¢ ✔.
+
+## 3. Фронтенд (lightweight-charts v5)
+
+v5 поменял API: серии создаются через `addSeries(LineSeries, opts)` (UMD: `LightweightCharts.LineSeries`). `time` — **число** (unix-секунды), не строка.
+
+```js
+const chart = LightweightCharts.createChart(el, {
+  layout:{ background:{type:'solid',color:'#0e0e0e'}, textColor:'#ddd' },
+  rightPriceScale:{ autoscale:false },
+});
+const series = chart.addSeries(LightweightCharts.LineSeries, { color:'#4af', lineWidth:2 });
+series.applyOptions({ priceFormat:{ type:'custom', formatter:v=>v.toFixed(1)+'¢' }});
+chart.priceScale('right').applyOptions({ autoScale:false });
+// фиксируем 0..100
+series.createPriceLine?.(); // или просто через setData сmin/max
+
+// на каждом WS-событии:
+function onPrice(priceCents, tsMs){
+  const t = Math.floor(tsMs/1000);          // секунды
+  if (t < lastT) return;                      // защита от "старых" тиков
+  lastT = t;
+  series.update({ time:t, value:priceCents }); // одинаковый t = обновление точки
+}
+```
+- Правая ось 0–100: задай `rightPriceScale` и в `setData` первой точкой `0`, последней `100`, либо `priceScale('right').applyOptions({ autoScale:false })` + ручной min/max через фиктивные price lines.
+- Низ — время: `localization.timeFormatter` → `HH:mm:ss`.
+- «Часто минимум 1с»: рисуем на реальных WS-тиках (точнее). Если рынок тихий и тиков <1с — это честно (цена не меняется). Опционально `setInterval(1000)` кидает `update` с последней ценой на `floor(now/1000)` — получается ступенька, линия «живая».
+
+## 4. ТФ 1с / 5с / 15с / 30с / 1м (вторично)
+
+Храним сырые тики `[{tMs, price}]` в кольцевом буфере. На переключение ТФ пересобираем через `setData`: бьём тики на бакеты нужной длины, берём последнюю цену бакета. Живые тики дописываем в текущий бакет `update()`-ом. Это дешево и без лага.
+
+## 5. Переход между rolling-окнами (чтобы не было дыр)
+
+За ~10с до конца бакета подписываемся **и на следующий** токен (`floor+interval`). Когда `Date.now()>=startNext`, переключаем активный токен/буфер и показываем новый рынок (цена снова ~50¢). Старый можно ансабскрайбить.
+
+## 6. Ошибки и нюансы (с учётом последних изменений)
+
+- **CLOB V2 (28 апр 2026) + миграция на pUSD**: НЕ меняет WS-пейлоады и токены — это REST/on-chain концерн. Просто знай, что цены в долларах, тик-сайз может дробиться (0.01→0.001) — обрабатывай `tick_size_change`, не завись от фикс-тиксайза.
+- **Слаг может не существовать в момент старта окна**. Робастно: пробуй `floor`, `floor-300`, `floor+300`; выбирай тот, где `active && !closed && acceptingOrders && startDate<=now`. Ретрай с backoff при 404/429.
+- **Gamma rate limits**: `/markets` 300/10с, суммарно 4000/10с; offset-пагинация даёт **422** — используй `after_cursor`. Мы дёргаем 1 раз на окно — лимиты не задеваем, но кэшируй slug→token.
+- **`clobTokenIds`/`outcomes` — JSON-строки внутри JSON**: `JSON.parse(market.clobTokenIds)`.
+- **`best_bid`/`best_ask` могут быть `null`** на старте (только одна сторона книги) — фоллбэк на другую сторону или `last_trade_price`, иначе линия встанет.
+- **WS `time` должен быть неубывающим**: внешний тик с меньшим `t`, чем последний, — дропай (`update` с меньшим временем молча игнорится/бросает). Конвертай ms→s и клампай.
+- **Heartbeat**: именно текст `PING` (заглавными), не JSON. Пропустишь — сервер закроет через ~10с.
+- **Реконнект**: exponential backoff (1s→30s), на `onopen` заново шли подписку и `PING`-таймер.
+- **CORS Gamma из браузера** — вероятен; прокси решает. Сам WS — без проблем.
+- **История**: rolling-рынок живёт ~5мин, поэтому «история» = жизнь текущего окна (in-session буфер). Если нужна история за прошлые окна — отдельный запрос к `https://data-api.polymarket.com/trades?token_id=…` (опцional, вне MVP).
+- **Цена как ¢**: Polymarket хранит 0.00–1.00; чтобы ось была 0–100 — умножай на 100 для `value`, форматтер `+¢`.
+- **Лагающий `update` при многих тиках/с**: не вызывай `update` синхронно на каждое событие — складывай в буфер и сбрасывай через `requestAnimationFrame` (1 кадр = 1 `update` с последней ценой). Это даёт 60fps без тормозов.
+
+## 7. Чек-лист реализации
+1. Node-прокси: `/api/token?tf=5m&t=<unixts>` → slug → Gamma → `{tokenId, outcomes, start, end}` (кэш 60с).
+2. Генерация slug + выбор активного окна (retry/backoff).
+3. WS-клиент: open → PING 10с → subscribe(custom_feature_enabled) → парсим `best_bid_ask`/`last_trade_price` → mid→¢.
+4. Буфер тиков + rAF-слив в `series.update`.
+5. Переключатель ТФ (ребакетинг из буфера) + кнопка «в реалтайм».
+6. Пре-подписка на следующее окно за 10с до конца.
+7. Reconnect + drop старых `t`.
+
+Хочешь — реализую сразу: Node-прокси + `index.html` с графиком (UMD lightweight-charts, без сборки). Сказать «делай»?

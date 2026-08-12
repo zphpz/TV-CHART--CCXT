@@ -1,0 +1,503 @@
+/* ═══════════════════════════════════════════════════════
+   Polymarket BTC Up/Down Chart — Premium Dark Theme
+   ═══════════════════════════════════════════════════════ */
+
+/* ── Reset & Base ─────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Colors */
+  --bg-primary:     #080b0f;
+  --bg-secondary:   #0d1117;
+  --bg-panel:       #111720;
+  --bg-card:        #161d27;
+  --bg-hover:       #1a2230;
+  --border:         #1e2a38;
+  --border-bright:  #2a3a50;
+
+  --text-primary:   #e2e8f0;
+  --text-secondary: #8899aa;
+  --text-muted:     #4a5568;
+
+  --accent-teal:    #00d4aa;
+  --accent-teal-d:  #00a882;
+  --accent-blue:    #3b82f6;
+  --accent-purple:  #8b5cf6;
+
+  --green:          #22c55e;
+  --green-d:        #16a34a;
+  --red:            #ef4444;
+  --red-d:          #dc2626;
+  --yellow:         #eab308;
+
+  --line-green:     #00d4aa;
+  --line-red:       #ff4d6d;
+  --line-neutral:   #4dabf7;
+
+  /* Sizes */
+  --header-h:       52px;
+  --pricebar-h:     48px;
+  --toolbar-h:      42px;
+  --footer-h:       30px;
+  --chart-h:        calc(100vh - var(--header-h) - var(--pricebar-h) - var(--toolbar-h) - var(--footer-h));
+
+  /* Transitions */
+  --tr-fast: 120ms ease;
+  --tr-med:  200ms ease;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── App Layout ───────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Header ───────────────────────────────────────────── */
+#main-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--header-h);
+  padding: 0 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+
+#brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 130px;
+}
+
+#brand-logo {
+  width: 32px; height: 32px;
+  background: linear-gradient(135deg, rgba(0,212,170,0.15), rgba(59,130,246,0.15));
+  border: 1px solid rgba(0,212,170,0.3);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+#brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+#brand-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+}
+#brand-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+/* Market switcher */
+#market-switcher {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.mkt-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.mkt-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.mkt-btn.active {
+  background: linear-gradient(135deg, var(--accent-teal), var(--accent-blue));
+  color: #fff;
+  box-shadow: 0 0 12px rgba(0,212,170,0.3);
+}
+
+/* Status panel */
+#status-panel {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+#status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+#status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  animation: pulse 2s ease infinite;
+}
+
+.status-live #status-dot     { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-connecting #status-dot { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+.status-error #status-dot    { background: var(--red); box-shadow: 0 0 6px var(--red); animation: none; }
+
+.status-live #status-text     { color: var(--green); }
+.status-connecting #status-text { color: var(--yellow); }
+.status-error #status-text    { color: var(--red); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+#market-timer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+#timer-label { font-size: 9px; color: var(--text-muted); letter-spacing: 0.05em; text-transform: uppercase; }
+#timer-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+  min-width: 48px;
+  text-align: right;
+}
+#timer-value.urgent { color: var(--red); }
+
+/* ── Price Bar ────────────────────────────────────────── */
+#price-bar {
+  display: flex;
+  align-items: center;
+  height: var(--pricebar-h);
+  padding: 0 16px;
+  gap: 0;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.price-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 18px;
+  min-width: 80px;
+}
+
+.price-divider {
+  width: 1px;
+  height: 28px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.price-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.price-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  transition: color var(--tr-fast);
+}
+.price-value.large { font-size: 18px; font-weight: 700; color: var(--accent-teal); }
+.price-value.green { color: var(--green); }
+.price-value.red   { color: var(--red); }
+.price-value.muted { color: var(--text-secondary); font-size: 12px; }
+.price-value.small { font-size: 11px; }
+
+.price-flash-up   { animation: flashUp 0.4s ease; }
+.price-flash-down { animation: flashDown 0.4s ease; }
+
+@keyframes flashUp   { 0% { color: var(--green); } 100% { } }
+@keyframes flashDown { 0% { color: var(--red); }   100% { } }
+
+/* ── Chart Toolbar ────────────────────────────────────── */
+#chart-toolbar {
+  display: flex;
+  align-items: center;
+  height: var(--toolbar-h);
+  padding: 0 12px;
+  gap: 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#tf-switcher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tf-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+#tf-buttons {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.tf-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+  letter-spacing: 0.04em;
+}
+.tf-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.tf-btn.active {
+  background: var(--accent-teal);
+  color: var(--bg-primary);
+  box-shadow: 0 0 8px rgba(0,212,170,0.4);
+}
+
+#market-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+
+.info-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.info-sep { color: var(--border-bright); }
+
+#market-slug-display {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#market-window-display {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+#chart-actions { margin-left: auto; }
+
+.action-btn {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 5px;
+  padding: 5px 7px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+  display: flex; align-items: center;
+}
+.action-btn:hover { color: var(--text-primary); border-color: var(--border-bright); }
+
+/* ── Chart Wrapper ────────────────────────────────────── */
+#chart-wrapper {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+#chart-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Loading Overlay ──────────────────────────────────── */
+#loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 11, 15, 0.92);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  z-index: 20;
+  backdrop-filter: blur(4px);
+}
+
+#loading-spinner {
+  width: 40px; height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent-teal);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#loading-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+#loading-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── Error Overlay ────────────────────────────────────── */
+#error-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 11, 15, 0.95);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 20;
+}
+
+#error-icon { font-size: 40px; }
+#error-text { font-size: 16px; font-weight: 600; color: var(--red); }
+#error-sub  { font-size: 12px; color: var(--text-muted); }
+
+#btn-retry {
+  margin-top: 8px;
+  background: var(--accent-teal);
+  border: none;
+  color: var(--bg-primary);
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 8px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+#btn-retry:hover { background: var(--accent-teal-d); transform: translateY(-1px); }
+
+/* ── Footer ───────────────────────────────────────────── */
+#main-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--footer-h);
+  padding: 0 14px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#footer-left, #footer-right {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+#footer-center {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.attr-text { color: var(--text-muted); }
+.attr-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color var(--tr-fast);
+}
+.attr-link:hover { color: var(--accent-teal); }
+
+/* ── Scrollbar ────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Toast notification ───────────────────────────────── */
+.toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--text-primary);
+  z-index: 100;
+  transform: translateX(120%);
+  transition: transform 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 320px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+.toast.show { transform: translateX(0); }
+.toast.info  { border-left: 3px solid var(--accent-teal); }
+.toast.warn  { border-left: 3px solid var(--yellow); }
+.toast.error { border-left: 3px solid var(--red); }
+
+/* ── Responsive ───────────────────────────────────────── */
+@media (max-width: 600px) {
+  #brand-sub, #market-info, .info-sep, #market-window-display { display: none; }
+  .price-item { padding: 0 10px; min-width: 60px; }
+  .price-value.large { font-size: 15px; }
+}

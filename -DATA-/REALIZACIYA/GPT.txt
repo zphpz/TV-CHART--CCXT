@@ -1,0 +1,3990 @@
+Да. Для такой задачи **Lightweight Charts подходит очень хорошо**, но я бы строил систему не как «страница → Polymarket API → график», а как маленький realtime-terminal:
+
+**Polymarket WebSocket → collector → нормализация rolling-рынков → локальная БД/Parquet → WebSocket вашего приложения → Lightweight Charts.**
+
+Причина принципиальная: официальный `/prices-history` сейчас не является источником секундной истории. У него предусмотрены агрегированные интервалы вплоть до `1m`, и `fidelity` тоже задаётся в минутах. Секундные/субсекундные данные нужно получать из realtime-потока и **самостоятельно сохранять**. ([Polymarket Documentation][1])
+
+Ниже я бы проектировал именно так.
+
+---
+
+# 1. Как должен выглядеть результат
+
+Интерфейс примерно такой:
+
+```text
+┌────────────────────────────────────────────────────────────────────────────┐
+│ BTC UP/DOWN 5M                         LIVE ●     Market: 18:25–18:30      │
+│                                                                            │
+│  1s   5s   15s   30s   1m       Price: 63.0¢   Bid: 62¢  Ask: 64¢       │
+│                                                                            │
+│100 ┤                                                                       │
+│ 90 ┤                          ╭─────╮                                      │
+│ 80 ┤                       ╭──╯     ╰──╮                                  │
+│ 70 ┤                 ╭─────╯            ╰──╮                              │
+│ 60 ┤             ╭───╯                     ╰───                           │
+│ 50 ┼─────────────╯                                                        │
+│ 40 ┤                                                                       │
+│ 30 ┤                                                                       │
+│ 20 ┤                                                                       │
+│ 10 ┤                                                                       │
+│  0 ┤                                                                       │
+│    └──────┬──────────┬──────────┬──────────┬──────────────┬───────────────┘
+│         18:25       18:26      18:27      18:28          18:29
+│
+│ Market #...       18:25:00 → 18:30:00
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+При этом я бы добавил ещё:
+
+```text
+[5M] [15M]
+
+Price:
+● Midpoint
+○ Last trade
+○ Best bid
+○ Best ask
+
+Aggregation:
+[1s] [5s] [15s] [30s] [1m]
+
+History:
+[1h] [6h] [24h] [7d] [Custom]
+```
+
+---
+
+# 2. Самое важное: что именно считать «ценой»
+
+Это надо решить **до написания программы**.
+
+У Polymarket есть минимум три разных величины:
+
+### A. Last Trade
+
+Цена последней сделки.
+
+Realtime WebSocket сообщает событие:
+
+```json
+{
+  "event_type": "last_trade_price",
+  "asset_id": "...",
+  "price": "0.63",
+  "size": "219.21",
+  "side": "SELL",
+  "timestamp": "..."
+}
+```
+
+Это реальная цена исполнения сделки. ([Polymarket Documentation][2])
+
+### B. Best Bid
+
+Лучшая цена, по которой кто-то сейчас готов купить.
+
+### C. Best Ask
+
+Лучшая цена, по которой кто-то сейчас готов продать.
+
+### D. Midpoint
+
+```text
+(best_bid + best_ask) / 2
+```
+
+Polymarket прямо указывает, что midpoint является отображаемой вероятностью рынка; однако при широком spread Polymarket может показывать вместо midpoint last trade price. ([Polymarket Documentation][3])
+
+## Я рекомендую
+
+Для твоего основного графика сделать:
+
+**по умолчанию → Midpoint**
+
+и дополнительно хранить:
+
+```text
+mid
+bid
+ask
+last_trade
+spread
+```
+
+Потому что тогда ты сможешь потом переключиться:
+
+```text
+[ MID ] [ LAST ] [ BID ] [ ASK ]
+```
+
+А если ты занимаешься анализом поведения рынка, это намного ценнее одной линии.
+
+---
+
+# 3. Очень важная поправка к «рынок всегда стартует с 50¢»
+
+Я бы **не кодировал правило `new market = price 0.50`**.
+
+Это визуально может наблюдаться очень часто, но технически нельзя строить систему с таким предположением.
+
+В документации Polymarket прямо указано, что у нового рынка нет гарантированной начальной цены: цена появляется из выставленных заявок/первых сделок. ([Polymarket Documentation][3])
+
+То есть приложение должно делать:
+
+```text
+market created
+     ↓
+book snapshot
+     ↓
+bid / ask
+     ↓
+midpoint
+     ↓
+first observed price
+```
+
+А не:
+
+```text
+market created
+     ↓
+price = 0.50
+```
+
+Можно визуально показывать 50¢ как reference line, но **не подставлять 50 как историческую рыночную точку**.
+
+---
+
+# 4. Откуда брать данные
+
+Здесь у Polymarket очень удобная схема.
+
+## Metadata
+
+Используем Gamma API:
+
+```text
+https://gamma-api.polymarket.com
+```
+
+Например:
+
+```text
+GET /events/slug/{slug}
+```
+
+или markets endpoint.
+
+Polymarket сейчас отдаёт в market metadata:
+
+```text
+slug
+conditionId
+startDate
+endDate
+active
+closed
+outcomes
+outcomePrices
+clobTokenIds
+acceptingOrders
+tick size
+...
+```
+
+`clobTokenIds` дают токены исходов; в типичном бинарном рынке первый — Yes, второй — No. ([Polymarket Documentation][4])
+
+---
+
+# 5. Для твоих BTC-рынков вообще не нужно искать рынок перебором
+
+Это один из самых приятных моментов.
+
+У rolling crypto markets slug имеет детерминированную структуру:
+
+```text
+btc-updown-5m-UNIX_TIMESTAMP
+```
+
+и
+
+```text
+btc-updown-15m-UNIX_TIMESTAMP
+```
+
+Для 5 минут:
+
+```text
++300 секунд
+```
+
+Для 15 минут:
+
+```text
++900 секунд
+```
+
+Это также подтверждается актуальным обсуждением `py-clob-client`, где показан такой способ получения следующего 15m/5m market slug. ([GitHub][5])
+
+Поэтому приложение может заранее вычислять:
+
+```ts
+const currentWindow =
+    Math.floor(Date.now() / 300_000) * 300_000;
+
+const slug =
+    `btc-updown-5m-${currentWindow / 1000}`;
+```
+
+Следующий:
+
+```ts
+const nextSlug =
+    `btc-updown-5m-${currentWindow / 1000 + 300}`;
+```
+
+Для 15m:
+
+```ts
+const currentWindow =
+    Math.floor(Date.now() / 900_000) * 900_000;
+```
+
+---
+
+# 6. Но я бы всё равно не полагался только на вычисление slug
+
+Лучший вариант:
+
+```text
+                    ┌───────────────┐
+                    │ deterministic │
+                    │ next slug     │
+                    └───────┬───────┘
+                            │
+                            ▼
+                       Gamma API
+                            │
+                            ▼
+                   получаем market
+                   + token IDs
+                            │
+                            ▼
+                       WebSocket
+```
+
+А параллельно слушаем события Polymarket:
+
+```text
+new_market
+market_resolved
+```
+
+При `custom_feature_enabled=true` Market WebSocket может отдавать lifecycle-события `new_market` и `market_resolved`, а также `best_bid_ask`. ([Polymarket Documentation][2])
+
+Но для переключения rolling рынка я бы использовал **детерминированный timestamp как primary mechanism**, а `new_market` как дополнительную страховку.
+
+Причина: уже встречались случаи, когда пользователи наблюдали задержку между фактическим началом crypto-window и событием обнаружения нового рынка.
+
+---
+
+# 7. Главный источник realtime — именно Market WebSocket
+
+Адрес:
+
+```text
+wss://ws-subscriptions-clob.polymarket.com/ws/market
+```
+
+Это публичный канал, authentication для market data не требуется. ([Polymarket Documentation][6])
+
+Подписка примерно:
+
+```json
+{
+  "assets_ids": [
+    "YES_TOKEN_ID"
+  ],
+  "type": "market",
+  "custom_feature_enabled": true
+}
+```
+
+Полный realtime feed может дать:
+
+```text
+book
+price_change
+last_trade_price
+tick_size_change
+best_bid_ask
+new_market
+market_resolved
+```
+
+([Polymarket Documentation][7])
+
+---
+
+# 8. Что именно слушать
+
+Я бы использовал **не один event**, а несколько.
+
+## `book`
+
+Пригодится для восстановления состояния книги.
+
+Сообщение содержит:
+
+```text
+bids
+asks
+timestamp
+hash
+tickSize
+minOrderSize
+lastTradePrice
+```
+
+([Polymarket Documentation][2])
+
+---
+
+## `price_change`
+
+Это очень важный поток.
+
+Он сообщает изменение уровня книги:
+
+```json
+{
+  "price": "0.63",
+  "size": "200",
+  "side": "BUY",
+  "best_bid": "0.63",
+  "best_ask": "0.65"
+}
+```
+
+с timestamp. ([Polymarket Documentation][2])
+
+Именно на основании этих событий надо обновлять состояние order book.
+
+---
+
+## `last_trade_price`
+
+Это фактические исполнения:
+
+```text
+price
+size
+side
+timestamp
+transactionHash
+```
+
+([Polymarket Documentation][2])
+
+Это отдельный источник, который надо сохранять независимо.
+
+---
+
+# 9. Как я бы определял значение для главной линии
+
+При каждом поступившем событии:
+
+### Если есть новое best bid/ask
+
+```text
+mid = (bid + ask) / 2
+```
+
+### Если spread слишком широкий
+
+Можно отдельно хранить:
+
+```text
+displayed_price
+```
+
+по логике Polymarket:
+
+```text
+if ask - bid <= 0.10:
+    displayed = midpoint
+else:
+    displayed = last_trade
+```
+
+Так будет максимально близко к тому, что видит пользователь на Polymarket. ([Polymarket Documentation][3])
+
+Но для аналитики я бы всё равно **не выбрасывал midpoint и last отдельно**.
+
+---
+
+# 10. Единица измерения
+
+Polymarket API отдаёт:
+
+```text
+0.63
+```
+
+а пользователь хочет:
+
+```text
+63¢
+```
+
+Внутри приложения я рекомендую хранить:
+
+```ts
+price = 63.0
+```
+
+то есть уже в процентах/центах.
+
+Тогда:
+
+```text
+0.00 → 0
+0.50 → 50
+1.00 → 100
+```
+
+и график становится простым.
+
+---
+
+# 11. Lightweight Charts
+
+На сегодня актуальная версия Lightweight Charts — **5.2.0**. Она вышла 24 апреля 2026 года. ([GitHub][8])
+
+Я бы использовал именно 5.2.x, а не слепо `master`.
+
+Установка:
+
+```bash
+npm install lightweight-charts
+```
+
+([GitHub][9])
+
+---
+
+# 12. Тип графика
+
+Здесь достаточно:
+
+```ts
+LineSeries
+```
+
+а не Candlestick.
+
+Потому что твой объект:
+
+```text
+time → probability
+```
+
+а не OHLC обычного финансового инструмента.
+
+Lightweight Charts поддерживает line series напрямую. ([tradingview.github.io][10])
+
+---
+
+# 13. Шкала справа
+
+Нужно отключить автоматическую шкалу и зафиксировать:
+
+```text
+0
+10
+20
+30
+...
+90
+100
+```
+
+Например концептуально:
+
+```ts
+priceScaleId: 'right'
+
+rightPriceScale: {
+    visible: true,
+    autoScale: false,
+}
+```
+
+и диапазон:
+
+```text
+0 → 100
+```
+
+У последних версий Lightweight Charts есть API `setVisibleRange()` у price scale, так что это можно сделать программно. ([tradingview.github.io][11])
+
+Это **очень желательно** для твоего приложения.
+
+Иначе график 46¢–57¢ будет автоматически растянут и движение визуально станет огромным, хотя рынок практически не изменился.
+
+---
+
+# 14. Источник времени
+
+Очень важно.
+
+**Не использовать время браузера как время события.**
+
+У Polymarket WebSocket есть timestamp самого market event:
+
+```text
+timestamp: "1757908892351"
+```
+
+то есть миллисекунды Unix time. ([Polymarket Documentation][7])
+
+В хранилище надо сохранять:
+
+```text
+event_ts
+received_ts
+```
+
+Например:
+
+```text
+event_ts    = 1782753357.235
+received_ts = 1782753357.254
+```
+
+Разница:
+
+```text
+19 ms
+```
+
+А это потом даст тебе возможность оценить latency.
+
+---
+
+# 15. Почему нужно хранить `received_ts`
+
+Это очень полезно именно для твоей задачи.
+
+Например:
+
+```text
+Polymarket event timestamp:
+12:00:01.230
+
+твой сервер получил:
+12:00:01.251
+
+browser получил:
+12:00:01.265
+```
+
+Ты тогда можешь построить:
+
+```text
+market latency
+collector latency
+browser latency
+render latency
+```
+
+и понять, действительно ли приложение работает realtime.
+
+---
+
+# 16. Самая важная архитектурная ошибка, которую надо избежать
+
+Не делай:
+
+```text
+WebSocket
+  ↓
+React state
+  ↓
+setData(...)
+  ↓
+chart
+```
+
+для каждого сообщения.
+
+Это очень быстро превратит приложение в тормозную конструкцию.
+
+Lightweight Charts сама рекомендует для realtime использовать:
+
+```ts
+series.update(...)
+```
+
+а не постоянно:
+
+```ts
+series.setData(...)
+```
+
+потому что `setData()` заменяет весь массив данных. ([GitHub][12])
+
+---
+
+# 17. Правильная схема realtime
+
+Нужно разделить:
+
+```text
+                 Polymarket
+                     │
+                     ▼
+                 WebSocket
+                     │
+                     ▼
+              event processor
+                     │
+          ┌──────────┴─────────┐
+          ▼                    ▼
+       storage              live state
+                               │
+                               ▼
+                           browser WS
+                               │
+                               ▼
+                       aggregation engine
+                               │
+                               ▼
+                       Lightweight Charts
+```
+
+---
+
+# 18. Почему нужен backend
+
+Можно технически подключить браузер напрямую:
+
+```text
+Browser → Polymarket WebSocket
+```
+
+Это действительно возможно для публичного market stream.
+
+Но полноценное приложение я бы всё равно сделал с backend.
+
+Потому что тебе нужна **история**.
+
+Realtime WebSocket не является историческим хранилищем.
+
+Если приложение запустилось сегодня:
+
+```text
+12:00
+```
+
+оно не может спросить websocket:
+
+```text
+дай все события вчера между 12:00 и 13:00
+```
+
+---
+
+# 19. У Polymarket нет подходящего официального секундного history API
+
+Это критическая часть всей системы.
+
+Официальный:
+
+```text
+GET /prices-history
+```
+
+поддерживает:
+
+```text
+1m
+1h
+6h
+1d
+1w
+max
+```
+
+и `fidelity` задаётся в минутах. ([Polymarket Documentation][1])
+
+То есть:
+
+```text
+секунды ← НЕ получить
+```
+
+из обычного history endpoint.
+
+Поэтому надо писать собственный collector.
+
+---
+
+# 20. Collector должен работать постоянно
+
+Например:
+
+```text
+collector
+   │
+   ├── BTC 5m current
+   ├── BTC 5m next
+   ├── BTC 15m current
+   └── BTC 15m next
+```
+
+И постоянно сохранять данные.
+
+Тогда через месяц у тебя появляется:
+
+```text
+30 дней × 288 × 5m markets
+```
+
+для 5m:
+
+```text
+≈ 8 640 markets
+```
+
+и
+
+```text
+30 дней × 96 × 15m markets
+```
+
+для 15m:
+
+```text
+≈ 2 880 markets
+```
+
+---
+
+# 21. Я бы подписывался заранее на CURRENT и NEXT market
+
+Например сейчас:
+
+```text
+current = btc-updown-5m-...
+next    = btc-updown-5m-...
+```
+
+Подписываем:
+
+```text
+current YES
+current NO
+next YES
+next NO
+```
+
+Когда подходит boundary:
+
+```text
+current → historical
+next    → current
+next+1  → new next
+```
+
+То есть подписка постоянно поддерживается с запасом.
+
+Это уменьшает риск потери самого начала нового market.
+
+---
+
+# 22. Почему подписывать и YES, и NO
+
+Можно получать только YES.
+
+Но я бы сохранял оба.
+
+Потому что в бинарном рынке примерно:
+
+```text
+YES + NO ≈ 1
+```
+
+Но реальные данные помогут диагностировать:
+
+```text
+spread
+liquidity
+imbalance
+book state
+```
+
+Кроме того, при проблемах одного token stream второй является полезной проверкой.
+
+Storage:
+
+```text
+market
+ ├── yes_token
+ └── no_token
+```
+
+---
+
+# 23. Database
+
+Для начала я бы не использовал PostgreSQL.
+
+Для такого приложения отлично подойдёт:
+
+### SQLite
+
+```text
+collector
+   ↓
+SQLite WAL
+```
+
+если это твой персональный terminal.
+
+Или:
+
+### DuckDB / Parquet
+
+если основная задача:
+
+```text
+исследование
+backtesting
+аналитика
+```
+
+Мой вариант:
+
+```text
+Realtime:
+SQLite
+
+Long-term:
+Parquet
+```
+
+---
+
+# 24. Структура данных
+
+Таблица `markets`:
+
+```text
+market_id
+slug
+condition_id
+
+series
+asset
+timeframe
+
+start_ts
+end_ts
+
+yes_token
+no_token
+
+active
+closed
+resolved
+
+tick_size
+```
+
+---
+
+Таблица `quotes`:
+
+```text
+event_ts
+received_ts
+
+market_id
+token_id
+
+bid
+ask
+mid
+last
+
+spread
+
+source_event
+```
+
+---
+
+Таблица `trades`:
+
+```text
+event_ts
+received_ts
+
+market_id
+token_id
+
+price
+size
+side
+transaction_hash
+```
+
+---
+
+Таблица `book_events`:
+
+```text
+event_ts
+received_ts
+
+market_id
+token_id
+
+side
+price
+size
+best_bid
+best_ask
+hash
+```
+
+---
+
+# 25. Почему не надо хранить только «каждую секунду»
+
+Вот здесь есть очень важная тонкость.
+
+Ты сказал:
+
+> изменения движения цены я должен видеть частое минимум одно секундное
+
+Но **не надо заставлять collector сохранять только один snapshot в секунду**.
+
+Правильно:
+
+```text
+collector:
+event-level
+```
+
+а график:
+
+```text
+1s
+5s
+15s
+30s
+1m
+```
+
+То есть:
+
+```text
+raw events
+    ↓
+aggregation
+    ↓
+chart
+```
+
+---
+
+# 26. Например, за одну секунду пришло
+
+```text
+12:00:01.102   50.0
+12:00:01.211   50.5
+12:00:01.341   51.0
+12:00:01.455   50.5
+12:00:01.903   52.0
+```
+
+Для `1s` можешь использовать:
+
+```text
+last = 52
+```
+
+Но также иметь:
+
+```text
+open = 50
+high = 52
+low = 50
+close = 52
+```
+
+И я бы именно так и сделал.
+
+---
+
+# 27. На самом деле лучше сделать два режима
+
+### Line
+
+```text
+close / last snapshot
+```
+
+### Candle
+
+```text
+Open
+High
+Low
+Close
+```
+
+То есть переключатель:
+
+```text
+[LINE] [CANDLE]
+```
+
+При этом пользовательская задача остаётся той же.
+
+На `1s` будут свечи по секунде.
+
+На `5s`:
+
+```text
+5 секунд → одна свеча
+```
+
+На `1m`:
+
+```text
+60 секунд → одна свеча
+```
+
+---
+
+# 28. Агрегация
+
+Я бы определял:
+
+```text
+bucket = floor(event_ts / timeframe) * timeframe
+```
+
+Например `5s`:
+
+```text
+12:00:03 → bucket 12:00:00
+12:00:04 → bucket 12:00:00
+12:00:07 → bucket 12:00:05
+```
+
+и строил:
+
+```text
+open
+high
+low
+close
+```
+
+---
+
+# 29. Очень важная проблема отсутствующих секунд
+
+Допустим:
+
+```text
+12:00:00  50
+12:00:01  50.2
+12:00:02  нет данных
+12:00:03  нет данных
+12:00:04  51
+```
+
+Не надо автоматически считать:
+
+```text
+50.2
+50.2
+50.2
+51
+```
+
+как реальные цены.
+
+Надо хранить:
+
+```text
+observed_at
+```
+
+и отдельно различать:
+
+```text
+no event
+```
+
+от
+
+```text
+price unchanged
+```
+
+---
+
+# 30. Но для визуальной линии можно сделать carry-forward
+
+Например:
+
+```text
+raw:
+
+12:00:00 50
+12:00:01 50.2
+12:00:04 51
+```
+
+визуальная 1s серия:
+
+```text
+12:00:00 50.0
+12:00:01 50.2
+12:00:02 50.2
+12:00:03 50.2
+12:00:04 51.0
+```
+
+Но в данных должно оставаться:
+
+```text
+observed=false
+```
+
+у 02 и 03.
+
+Это позволит потом делать правильный backtest.
+
+---
+
+# 31. Главная проблема rolling markets
+
+Допустим:
+
+```text
+17:00:00 → market A
+17:05:00 → market B
+```
+
+A:
+
+```text
+50 → 73
+```
+
+B:
+
+```text
+50 → 20
+```
+
+Нельзя соединять:
+
+```text
+73 ─────────── 50
+```
+
+потому что возникает ложный скачок.
+
+Lightweight Charts специально поддерживает **WhitespaceData**, которое позволяет сделать разрыв между участками серии. ([tradingview.github.io][13])
+
+Поэтому:
+
+```text
+market A:
+50 → 55 → 60 → 73
+
+whitespace
+
+market B:
+50 → 47 → 38 → 20
+```
+
+---
+
+# 32. Я бы дополнительно рисовал vertical market boundary
+
+Например:
+
+```text
+                 │
+                 │
+       Market A  │ Market B
+                 │
+```
+
+Каждые:
+
+```text
+5 min
+```
+
+или:
+
+```text
+15 min
+```
+
+можно делать вертикальный маркер.
+
+И tooltip:
+
+```text
+BTC UP/DOWN 5M
+Market starts: 18:25:00
+Market ends:   18:30:00
+```
+
+Это будет очень удобно визуально.
+
+---
+
+# 33. Необходимо различать время рынка и абсолютное время
+
+Каждая запись должна иметь:
+
+```text
+market_start
+market_end
+event_ts
+```
+
+Например:
+
+```text
+market_start = 18:25:00
+event        = 18:27:43.211
+market_end   = 18:30:00
+```
+
+Тогда можно легко показать:
+
+```text
+time remaining = 2m 16.789s
+```
+
+и:
+
+```text
+elapsed = 163.211s
+```
+
+---
+
+# 34. Что делать в момент rollover
+
+Допустим:
+
+```text
+17:04:59.999
+```
+
+старый рынок.
+
+И:
+
+```text
+17:05:00.000
+```
+
+новый.
+
+Нужно сделать атомарно:
+
+```text
+OLD MARKET
+   ↓
+stop active
+   ↓
+save last state
+   ↓
+insert market boundary
+   ↓
+NEW MARKET
+   ↓
+subscribe
+```
+
+Не делать:
+
+```text
+price from old market
++
+price from new market
+```
+
+одним непрерывным рынком.
+
+---
+
+# 35. Самая безопасная схема rollover
+
+Заранее держать:
+
+```text
+ACTIVE
+NEXT
+```
+
+Например:
+
+```text
+current token:
+btc-updown-5m-178...
+ 
+next token:
+btc-updown-5m-178...+300
+```
+
+Когда наступает:
+
+```text
+next.startDate <= now
+```
+
+делаем:
+
+```text
+current = next
+next = generateNextSlug()
+fetch metadata
+subscribe next
+```
+
+---
+
+# 36. Gamma API здесь используется только для discovery
+
+Не надо полагаться на него для realtime price.
+
+То есть:
+
+```text
+Gamma:
+  "кто сейчас рынок?"
+
+CLOB WebSocket:
+  "что в нём сейчас происходит?"
+```
+
+Это правильное разделение.
+
+---
+
+# 37. Rate limits
+
+Polymarket сейчас использует Cloudflare throttling.
+
+Для Gamma:
+
+```text
+general           4000 / 10 sec
+/events            500 / 10 sec
+/markets           300 / 10 sec
+```
+
+Для CLOB market-data, например:
+
+```text
+/book               1500 / 10 sec
+/prices             1500 / 10 sec
+/prices-history     1000 / 10 sec
+```
+
+([Polymarket Documentation][14])
+
+Для твоего приложения это вообще не проблема, если не сделать глупость вроде:
+
+```text
+каждые 100 ms:
+    GET /markets
+```
+
+---
+
+# 38. Правильная частота REST
+
+Discovery:
+
+```text
+примерно раз в 5 минут
+```
+
+или лучше:
+
+```text
+сразу вычислять slug
++
+запрашивать только конкретный slug
+```
+
+А realtime:
+
+```text
+WebSocket
+```
+
+Это практически бесплатная архитектура по нагрузке.
+
+---
+
+# 39. Обязательно нужен reconnect
+
+WebSocket может:
+
+```text
+disconnect
+timeout
+close
+stall
+```
+
+Поэтому:
+
+```text
+connection
+   ↓
+heartbeat
+   ↓
+timeout
+   ↓
+reconnect
+   ↓
+resubscribe
+   ↓
+book snapshot
+```
+
+Нельзя считать:
+
+```text
+socket connected = data guaranteed
+```
+
+---
+
+# 40. После reconnect нельзя просто продолжить
+
+Очень частая ошибка.
+
+Предположим:
+
+```text
+12:00:00.000 disconnect
+12:00:00.800 reconnect
+```
+
+Возможно, между ними были события.
+
+Поэтому после reconnect я бы делал:
+
+```text
+new book snapshot
++
+current midpoint/bid/ask
+```
+
+и отмечал:
+
+```text
+data_gap = true
+```
+
+если пропуск действительно произошёл.
+
+---
+
+# 41. Book hash нужно использовать
+
+В order book есть:
+
+```text
+hash
+```
+
+Polymarket прямо документирует его как идентификатор состояния книги, который можно использовать для обнаружения изменения. ([Polymarket Documentation][15])
+
+Это очень полезно для диагностики.
+
+Например:
+
+```text
+last_hash != current_hash
+```
+
+значит состояние книги изменилось.
+
+---
+
+# 42. Tick size нельзя хардкодить
+
+Сегодня можно увидеть:
+
+```text
+0.01
+```
+
+Но WebSocket предусматривает событие:
+
+```text
+tick_size_change
+```
+
+и документация приводит пример:
+
+```text
+oldTickSize: 0.01
+newTickSize: 0.001
+```
+
+([Polymarket Documentation][2])
+
+То есть приложение должно брать:
+
+```text
+tickSize
+```
+
+из market/book metadata.
+
+---
+
+# 43. Поэтому price formatter должен быть динамический
+
+Например:
+
+```text
+tick = 0.01
+
+63.00¢
+```
+
+а если:
+
+```text
+tick = 0.001
+```
+
+то:
+
+```text
+63.700¢
+```
+
+Не надо писать:
+
+```ts
+value.toFixed(2)
+```
+
+навсегда.
+
+---
+
+# 44. WebSocket-события надо дедуплицировать
+
+У каждого события могут быть:
+
+```text
+hash
+timestamp
+transactionHash
+market
+token
+```
+
+И у тебя должен существовать event ID:
+
+```text
+event_key =
+    market_id +
+    token_id +
+    event_type +
+    timestamp +
+    hash/tx
+```
+
+Это защищает storage от повторной записи после reconnect/повторной обработки.
+
+---
+
+# 45. Нужна проверка последовательности
+
+Collector должен уметь сказать:
+
+```text
+GOOD
+```
+
+или:
+
+```text
+GAP SUSPECTED
+```
+
+например:
+
+```text
+last_event_ts = 18:25:01.120
+new_event_ts  = 18:25:01.125
+```
+
+нормально.
+
+Но:
+
+```text
+18:25:01.120
+18:25:04.900
+```
+
+при высокой активности может требовать диагностики.
+
+---
+
+# 46. Очень полезный watchdog
+
+Например:
+
+```text
+last event age:
+[ 37 ms ]
+```
+
+В UI:
+
+```text
+LIVE ● 37ms
+```
+
+если:
+
+```text
+> 1 second
+```
+
+:
+
+```text
+STALE ●
+```
+
+если:
+
+```text
+> 5 sec
+```
+
+:
+
+```text
+DISCONNECTED
+```
+
+---
+
+# 47. Storage лучше разделить на raw и derived
+
+## Raw
+
+Сохраняем:
+
+```text
+всё, что пришло от Polymarket
+```
+
+## Derived
+
+Строим:
+
+```text
+1s
+5s
+15s
+30s
+1m
+```
+
+То есть:
+
+```text
+raw
+ │
+ ├── 1s
+ ├── 5s
+ ├── 15s
+ ├── 30s
+ └── 1m
+```
+
+Это позволит в будущем менять алгоритм агрегации без повторного скачивания данных.
+
+---
+
+# 48. Я бы вообще не пересчитывал 1m историю при каждом запросе
+
+Сделай continuous aggregation.
+
+Например collector получил:
+
+```text
+event
+```
+
+→ обновил:
+
+```text
+current 1s candle
+```
+
+→ когда секунда закончилась:
+
+```text
+close 1s candle
+```
+
+→ одновременно обновляется:
+
+```text
+5s
+15s
+30s
+1m
+```
+
+---
+
+# 49. Frontend тогда очень лёгкий
+
+Frontend получает уже готовые:
+
+```json
+{
+  "market": "...",
+  "timeframe": "1s",
+  "data": [
+    {"time": 178..., "value": 50},
+    {"time": 178..., "value": 50.2},
+    {"time": 178..., "value": 51.1}
+  ]
+}
+```
+
+и realtime:
+
+```json
+{
+  "type": "update",
+  "market": "...",
+  "time": 178...,
+  "value": 51.1
+}
+```
+
+---
+
+# 50. Что должен делать браузер
+
+Минимально:
+
+```text
+1. получить initial history
+2. setData(...)
+3. подключить WebSocket вашего сервера
+4. получать update
+5. series.update(...)
+```
+
+И всё.
+
+Не нужно:
+
+```text
+book reconstruction
+market discovery
+database
+aggregation
+```
+
+в браузере.
+
+---
+
+# 51. Почему это будет быстро
+
+Lightweight Charts использует HTML5 canvas и изначально ориентирован на производительность. ([GitHub][16])
+
+Realtime обновление через:
+
+```ts
+series.update(...)
+```
+
+не заставляет библиотеку каждый раз пересобирать весь массив. ([GitHub][12])
+
+А в версии 5.1+ есть data conflation для больших наборов данных; для твоего приложения это особенно интересно, когда пользователь отдаляется от графика и десятки тысяч точек уже физически невозможно показать по одной. ([GitHub][8])
+
+---
+
+# 52. Сколько данных получится
+
+Для одного 5m market:
+
+```text
+300 секунд
+```
+
+Если сохранять одну точку в секунду:
+
+```text
+300 points
+```
+
+288 markets/day:
+
+```text
+86 400 points/day
+```
+
+30 дней:
+
+```text
+2 592 000 points
+```
+
+Это **очень маленький объём**.
+
+Даже если raw events будут в десятки раз больше:
+
+```text
+20–50 млн событий
+```
+
+это всё ещё вполне нормальная задача для хорошо организованного storage.
+
+---
+
+# 53. Но raw order book может стать существенно больше
+
+Если ты будешь сохранять:
+
+```text
+каждый price_change
+```
+
+и при этом:
+
+```text
+все уровни книги
+```
+
+объём значительно возрастёт.
+
+Поэтому я бы разделил:
+
+### Обязательно
+
+```text
+best_bid
+best_ask
+mid
+last_trade
+spread
+timestamp
+```
+
+### Для продвинутой аналитики
+
+```text
+full orderbook events
+```
+
+И включал второй режим collector отдельно.
+
+---
+
+# 54. Есть ещё более интересный вариант
+
+Хранить:
+
+```text
+Top 5 bids
+Top 5 asks
+```
+
+на каждое изменение.
+
+Это даст:
+
+```text
+spread
+depth
+imbalance
+liquidity
+```
+
+и при этом объём будет значительно меньше полного order book snapshot.
+
+---
+
+# 55. Я бы заложил сразу order-book imbalance
+
+Например:
+
+```text
+bid_depth_5
+ask_depth_5
+```
+
+и:
+
+```text
+imbalance =
+(bid_depth - ask_depth)
+/
+(bid_depth + ask_depth)
+```
+
+Тогда позже можно получить отдельный индикатор:
+
+```text
+-1 ←────────0────────→ +1
+seller pressure       buyer pressure
+```
+
+Для твоего анализа BTC Up/Down это может оказаться намного интереснее самой линии цены.
+
+---
+
+# 56. Не надо смешивать рынки 5m и 15m
+
+В storage:
+
+```text
+series = BTC_UP_DOWN
+timeframe = 5m
+```
+
+и:
+
+```text
+series = BTC_UP_DOWN
+timeframe = 15m
+```
+
+Отдельно.
+
+---
+
+# 57. Что делать с 5m и 15m одновременно
+
+Я бы сделал верхнюю панель:
+
+```text
+Asset:
+[BTC]
+
+Market:
+[5 MIN] [15 MIN]
+```
+
+И дальше всё остальное одинаково.
+
+Позже можно добавить:
+
+```text
+ETH
+SOL
+XRP
+```
+
+без переделки архитектуры.
+
+---
+
+# 58. Структура проекта
+
+Я бы сделал примерно:
+
+```text
+polymarket-terminal/
+│
+├── apps/
+│   ├── web/
+│   │   ├── chart/
+│   │   ├── controls/
+│   │   ├── market/
+│   │   └── websocket/
+│   │
+│   └── collector/
+│       ├── polymarket/
+│       ├── markets/
+│       ├── websocket/
+│       ├── aggregation/
+│       └── storage/
+│
+├── packages/
+│   ├── types/
+│   ├── protocol/
+│   └── aggregation/
+│
+├── data/
+│   ├── raw/
+│   └── derived/
+│
+└── docker/
+```
+
+---
+
+# 59. Frontend
+
+Мой выбор:
+
+```text
+React
++
+TypeScript
++
+Vite
++
+lightweight-charts 5.2
+```
+
+Но React здесь практически только UI-оболочка.
+
+График не должен зависеть от React rendering cycle.
+
+---
+
+# 60. Collector
+
+Я бы выбрал:
+
+### Node.js + TypeScript
+
+или
+
+### Bun + TypeScript
+
+Если приоритет:
+
+```text
+простота
+экосистема
+совместимость
+```
+
+→ Node.js.
+
+Если хочется очень лёгкого realtime-приложения:
+
+→ Bun тоже прекрасно подходит.
+
+---
+
+# 61. Backend API
+
+Например:
+
+```text
+GET /api/markets/current
+GET /api/markets/{market}/history
+GET /api/markets/{market}/metadata
+```
+
+и:
+
+```text
+WS /ws/live
+```
+
+---
+
+# 62. Запрос истории
+
+Например:
+
+```http
+GET /api/history?
+    asset=BTC&
+    period=5m&
+    from=...&
+    to=...&
+    timeframe=1s
+```
+
+Сервер отвечает:
+
+```json
+{
+  "market": "...",
+  "timeframe": "1s",
+  "points": [...]
+}
+```
+
+---
+
+# 63. Логика timeframe
+
+Пользователь нажал:
+
+```text
+15s
+```
+
+сервер может отдать:
+
+```text
+15-second aggregate
+```
+
+и browser делает:
+
+```ts
+series.setData(...)
+```
+
+Только **один раз**.
+
+После этого realtime:
+
+```ts
+series.update(...)
+```
+
+---
+
+# 64. Если пользователь переключил
+
+```text
+1s → 1m
+```
+
+не надо передавать миллионы сырых точек.
+
+Сервер отдаёт:
+
+```text
+1m dataset
+```
+
+и график загружается почти мгновенно.
+
+---
+
+# 65. История должна быть lazy-loaded
+
+Не надо при старте открывать:
+
+```text
+30 days
+```
+
+весь массив.
+
+Лучше:
+
+```text
+initial:
+last 1h
+```
+
+а дальше при прокрутке влево:
+
+```text
+load previous chunk
+```
+
+например:
+
+```text
++ 1 hour
++ 6 hours
++ 1 day
+```
+
+---
+
+# 66. Lightweight Charts позволяет работать с visible range
+
+У него есть:
+
+```text
+getVisibleRange()
+setVisibleRange()
+setVisibleLogicalRange()
+```
+
+([tradingview.github.io][17])
+
+Это удобно для lazy loading.
+
+Когда пользователь приблизился к левой границе:
+
+```text
+if distance_from_left < threshold:
+    fetch older data
+```
+
+---
+
+# 67. Очень важно не дёргать `setData`
+
+Типичная ошибка:
+
+```ts
+websocket.onmessage = () => {
+    series.setData(allData);
+}
+```
+
+Это нельзя.
+
+Должно быть:
+
+```ts
+initial → setData()
+
+realtime → update()
+```
+
+Что и рекомендует документация Lightweight Charts. ([tradingview.github.io][18])
+
+---
+
+# 68. Что делать при смене рынка
+
+Например:
+
+```text
+18:25 market A
+18:30 market B
+```
+
+На frontend должно происходить:
+
+```text
+A завершается
+
+              ↓
+
+B становится active
+
+              ↓
+
+series.update(...)
+```
+
+но **не через перенос последней цены A в B**.
+
+В B первая точка должна быть первой реально наблюдаемой ценой B.
+
+---
+
+# 69. Лучше вообще хранить market ID у каждого chart point
+
+Не только:
+
+```json
+{
+  "time": ...,
+  "value": 63
+}
+```
+
+а внутренняя структура:
+
+```ts
+{
+    time,
+    value,
+    marketId,
+    tokenId,
+    observed,
+}
+```
+
+Lightweight Charts лишние поля может не использовать непосредственно в серии, но внутренний data model должен это знать.
+
+---
+
+# 70. Особенность времени Lightweight Charts
+
+В data series время будет Unix seconds:
+
+```ts
+time: 178...
+```
+
+Но событие Polymarket может приходить в milliseconds:
+
+```text
+1782753357257
+```
+
+поэтому:
+
+```ts
+const chartTime = Math.floor(timestampMs / 1000);
+```
+
+Но!
+
+Тут возникает проблема: тебе нужна **минимум секундная детализация**.
+
+Несколько событий:
+
+```text
+12:00:01.100
+12:00:01.200
+12:00:01.900
+```
+
+при переводе:
+
+```text
+12:00:01
+```
+
+становятся одним timestamp.
+
+И это нормально, **если график именно 1s** и ты заранее агрегируешь события до секунды.
+
+---
+
+# 71. Raw timestamp обязательно хранить отдельно
+
+То есть:
+
+```text
+event_ts_ms
+```
+
+не выбрасывать.
+
+Для chart:
+
+```text
+bucket_ts_s
+```
+
+Для raw:
+
+```text
+event_ts_ms
+```
+
+---
+
+# 72. Это позволит потом сделать даже 100ms режим
+
+Например сейчас:
+
+```text
+1s
+```
+
+потом:
+
+```text
+500ms
+250ms
+100ms
+```
+
+без повторного сбора данных.
+
+---
+
+# 73. Какой именно market URL использовать
+
+Ты привёл:
+
+```text
+https://polymarket.com/event/btc-updown-5m
+```
+
+и:
+
+```text
+https://polymarket.com/event/btc-updown-15m
+```
+
+Но для конкретного rolling window у рынка есть slug с timestamp:
+
+```text
+btc-updown-5m-1786491900
+```
+
+и аналогичный:
+
+```text
+btc-updown-15m-1786491900
+```
+
+Именно **timestamped slug** нужен для получения конкретного market metadata/token IDs. Такой формат подтверждается примерами реальных рынков и актуальными обсуждениями API. ([GitHub][5])
+
+---
+
+# 74. Ещё одна потенциальная проблема
+
+У rolling markets могут возникать ситуации:
+
+```text
+market exists
+but:
+acceptingOrders = false
+```
+
+или:
+
+```text
+active = true
+```
+
+но торговый стакан ещё не наполнен.
+
+Поэтому:
+
+```text
+market found
+```
+
+не означает:
+
+```text
+market tradable
+```
+
+Нужно проверять metadata.
+
+В market schema присутствует `acceptingOrders`. ([Polymarket Documentation][19])
+
+---
+
+# 75. Возможна ситуация «рынок есть, но book пустой»
+
+Например:
+
+```text
+bids = []
+asks = []
+```
+
+Тогда:
+
+```text
+mid = undefined
+```
+
+Не делать:
+
+```text
+mid = 50
+```
+
+Лучше отображать:
+
+```text
+WAITING FOR MARKET DATA
+```
+
+---
+
+# 76. Что делать с resolution
+
+Нельзя считать:
+
+```text
+market ended = result known
+```
+
+Это разные вещи.
+
+Есть:
+
+```text
+endDate
+```
+
+и последующая resolution.
+
+WebSocket поддерживает `market_resolved`. ([Polymarket Documentation][2])
+
+Поэтому metadata:
+
+```text
+start
+end
+resolved
+```
+
+хранить отдельно.
+
+---
+
+# 77. Это особенно важно для исторического анализа
+
+Например рынок завершился:
+
+```text
+18:30
+```
+
+но результат окончательно resolved позже.
+
+Исторический график должен знать:
+
+```text
+market ended
+market resolved
+outcome
+```
+
+---
+
+# 78. Я бы добавил к market таблице
+
+```text
+outcome
+resolution_ts
+resolution_price
+```
+
+и:
+
+```text
+reference_price
+```
+
+если/когда ты его извлекаешь.
+
+Это позволит потом анализировать:
+
+```text
+probability before close
+vs
+actual outcome
+```
+
+---
+
+# 79. Что делать с ценой «50¢ в начале»
+
+На графике я бы сделал горизонтальную линию:
+
+```text
+50¢
+```
+
+тонкая пунктирная.
+
+Она означает:
+
+```text
+neutral probability
+```
+
+а не:
+
+```text
+actual starting price
+```
+
+Так визуально получается именно то, что тебе нужно.
+
+---
+
+# 80. Я бы добавил вторую горизонтальную линию
+
+На:
+
+```text
+50
+```
+
+и можно сделать:
+
+```text
+last price
+```
+
+как динамическую price line.
+
+Получится:
+
+```text
+50 ───────────────────────── reference
+                       ───── 63 current
+```
+
+---
+
+# 81. Лучше использовать два data stream
+
+### Main
+
+```text
+midpoint
+```
+
+### Optional
+
+```text
+last trade
+```
+
+Например:
+
+```text
+midpoint ─────────
+last      - - - - -
+```
+
+Так ты сразу видишь:
+
+```text
+market estimate
+vs
+actual transaction
+```
+
+---
+
+# 82. Можно сделать ещё лучше
+
+Вверху:
+
+```text
+MID 63.5¢
+BID 63.0¢
+ASK 64.0¢
+LAST 63.0¢
+SPREAD 1.0¢
+```
+
+Это очень полезно именно для принятия решения.
+
+---
+
+# 83. Ошибка: polling раз в секунду
+
+Я бы **категорически не делал**:
+
+```text
+setInterval(() => {
+  GET /price
+}, 1000)
+```
+
+Потому что:
+
+1. это latency хуже;
+2. можно пропустить внутрисекундные движения;
+3. unnecessary requests;
+4. aggregation будет неполной.
+
+Realtime WebSocket именно для этого и существует. Polymarket прямо описывает его как near-real-time market data stream. ([Polymarket Documentation][6])
+
+---
+
+# 84. Ещё одна ошибка: использовать только last trade
+
+Представь:
+
+```text
+bid  = 0.60
+ask  = 0.65
+last = 0.50
+```
+
+На графике:
+
+```text
+last = 50
+```
+
+хотя текущая книга уже:
+
+```text
+60–65
+```
+
+Это создаёт очень странную картину.
+
+Поэтому именно для continuous realtime line:
+
+**midpoint лучше**, а `last trade` сохраняется отдельно.
+
+---
+
+# 85. Ещё одна ошибка: получать данные с сайта Polymarket
+
+Не надо парсить:
+
+```text
+polymarket.com
+```
+
+HTML/React.
+
+Это плохой источник.
+
+Используй:
+
+```text
+Gamma API
++
+CLOB WebSocket
+```
+
+Так приложение не зависит от frontend сайта Polymarket.
+
+---
+
+# 86. Ещё одна ошибка: строить приложение полностью на REST
+
+REST нужен:
+
+```text
+market discovery
+initial snapshot
+fallback
+historical API
+```
+
+Realtime:
+
+```text
+WebSocket
+```
+
+---
+
+# 87. Ещё одна ошибка: не иметь локального data archive
+
+Если ты хочешь:
+
+> график с историей
+
+то collector должен работать **24/7**.
+
+Иначе завтра у тебя опять будет:
+
+```text
+live only
+```
+
+а вчерашние секунды будут потеряны.
+
+---
+
+# 88. Поэтому я бы сразу запускал collector как systemd/Docker service
+
+Например:
+
+```text
+polymarket-collector.service
+```
+
+и:
+
+```text
+Restart=always
+```
+
+или Docker:
+
+```text
+restart: unless-stopped
+```
+
+---
+
+# 89. Очень полезный health endpoint
+
+```text
+GET /health
+```
+
+ответ:
+
+```json
+{
+  "status": "ok",
+  "websocket": true,
+  "last_event_ms_ago": 41,
+  "current_market": "btc-updown-5m-...",
+  "next_market": "btc-updown-5m-..."
+}
+```
+
+---
+
+# 90. А в интерфейсе
+
+Например:
+
+```text
+● LIVE 42ms
+
+WS: connected
+Collector: healthy
+
+BTC 5M
+18:25–18:30
+
+63.4¢
+```
+
+---
+
+# 91. Очень важный защитный механизм
+
+Если WebSocket перестал поступать, frontend **не должен продолжать рисовать старое значение так, будто оно realtime**.
+
+Показывать:
+
+```text
+STALE 3.2s
+```
+
+---
+
+# 92. При reconnect
+
+Frontend:
+
+```text
+STALE
+    ↓
+RECONNECTING
+    ↓
+SYNCING
+    ↓
+LIVE
+```
+
+После `SYNCING` получаем актуальный snapshot.
+
+---
+
+# 93. Как я бы сделал протокол frontend/backend
+
+### History
+
+```json
+{
+  "type": "history",
+  "timeframe": "1s",
+  "market": "...",
+  "points": [...]
+}
+```
+
+### Realtime
+
+```json
+{
+  "type": "price",
+  "market": "...",
+  "ts": 1782753357,
+  "mid": 63.5,
+  "bid": 63,
+  "ask": 64,
+  "last": 63
+}
+```
+
+### Market rollover
+
+```json
+{
+  "type": "market_switch",
+  "oldMarket": "...",
+  "newMarket": "...",
+  "startTs": 1782753600
+}
+```
+
+---
+
+# 94. Важный нюанс: два websocket
+
+Получится:
+
+```text
+Polymarket WSS
+      │
+      ▼
+collector
+      │
+      ▼
+your WSS
+      │
+      ▼
+browser
+```
+
+Это правильно.
+
+Browser не должен сам реконструировать Polymarket orderbook.
+
+---
+
+# 95. Почему это лучше прямого browser → Polymarket
+
+Плюс:
+
+```text
+1 browser
+```
+
+неважно.
+
+Но если открыть:
+
+```text
+10 вкладок
+```
+
+ты получишь:
+
+```text
+10 subscriptions
+```
+
+а collector:
+
+```text
+1 subscription
+```
+
+и:
+
+```text
+10 browsers ← your WS
+```
+
+Это гораздо разумнее.
+
+---
+
+# 96. Если приложение только для одного компьютера
+
+Можно упростить ещё сильнее:
+
+```text
+Browser
+  │
+  ├── Gamma REST
+  │
+  └── Polymarket WSS
+       ↓
+IndexedDB
+```
+
+Но тогда:
+
+**история собирается только пока приложение открыто.**
+
+Для нормального historical terminal я этот вариант не рекомендую.
+
+---
+
+# 97. Где хранить историю на клиенте
+
+В браузере:
+
+```text
+IndexedDB
+```
+
+полезна для cache:
+
+```text
+последний час
+последний день
+```
+
+Но не как source of truth.
+
+---
+
+# 98. Долгосрочное хранение
+
+Я бы сделал:
+
+```text
+SQLite
+```
+
+для operational data:
+
+```text
+markets
+latest quotes
+aggregated 1s
+```
+
+а raw data:
+
+```text
+Parquet
+```
+
+по дням:
+
+```text
+data/
+  2026-08-10/
+      btc-5m.parquet
+      btc-15m.parquet
+
+  2026-08-11/
+      ...
+```
+
+---
+
+# 99. Такой archive потом будет очень удобен для Python
+
+Например:
+
+```python
+import pandas as pd
+
+df = pd.read_parquet("btc-5m.parquet")
+```
+
+и затем:
+
+```text
+backtest
+ML
+анализ
+статистика
+event studies
+```
+
+без обращения к Polymarket.
+
+---
+
+# 100. Отдельно я бы сохранял market metadata snapshot
+
+Потому что завтра:
+
+```text
+API representation может измениться
+```
+
+А у тебя будет:
+
+```text
+что именно приложение видело в тот момент.
+```
+
+---
+
+# 101. Обязательные поля audit trail
+
+```text
+source
+collector_version
+received_at
+event_type
+raw_json_hash
+```
+
+При серьёзном исследовании это окажется очень полезным.
+
+---
+
+# 102. Какой график я считаю оптимальным
+
+Я бы сделал основной `LineSeries`:
+
+```text
+Midpoint
+```
+
+и под ним тонкую серию:
+
+```text
+Last Trade
+```
+
+А вверху:
+
+```text
+BTC / 5M
+
+[1s] [5s] [15s] [30s] [1m]
+
+MID 63.5¢
+BID 63¢
+ASK 64¢
+LAST 63¢
+SPREAD 1¢
+```
+
+Справа:
+
+```text
+100
+90
+80
+70
+60
+50
+40
+30
+20
+10
+0
+```
+
+Снизу:
+
+```text
+HH:MM:SS
+```
+
+---
+
+# 103. Цвет линии я бы менял по направлению
+
+Например:
+
+```text
+price rising   → одна цветовая схема
+price falling  → другая
+```
+
+Но сама линия должна оставаться одной серией/или использовать point colors только если это действительно улучшает восприятие.
+
+В последних версиях Lightweight Charts есть поддержка изменения цветов точек и улучшения отрисовки таких линий. ([GitHub][8])
+
+---
+
+# 104. Отдельно стоит сделать background рынка
+
+Каждые:
+
+```text
+5 min
+```
+
+фон/маркер:
+
+```text
+Market #178...
+```
+
+Это очень сильно помогает видеть:
+
+```text
+один рынок
+│
+│
+│
+следующий рынок
+```
+
+---
+
+# 105. У тебя получится очень интересная картинка
+
+Например:
+
+```text
+100 ┤
+ 90 ┤
+ 80 ┤                   ╭──╮
+ 70 ┤               ╭───╯  ╰─╮
+ 60 ┤        ╭──────╯         ╰──╮
+ 50 ┼────────╯                    ╰──
+ 40 ┤                                │
+    └───────────────┬───────────────┬──────
+                   market          market
+                   A               B
+```
+
+И можно визуально анализировать поведение вероятности внутри каждого 5m window.
+
+---
+
+# 106. Очень важно: 5m markets не являются одним финансовым инструментом
+
+Вот это я бы заложил в модель данных обязательно.
+
+Это:
+
+```text
+BTC UP/DOWN 5M market #1
+BTC UP/DOWN 5M market #2
+BTC UP/DOWN 5M market #3
+```
+
+а не:
+
+```text
+BTC perpetual
+```
+
+Следовательно:
+
+```text
+50 → 70
+```
+
+в одном market и:
+
+```text
+50 → 30
+```
+
+в следующем нельзя интерпретировать как обычную continuous price series без контекстной границы.
+
+---
+
+# 107. Поэтому я бы ввёл два режима просмотра
+
+## Mode A — Markets
+
+Каждый market показывается отдельно:
+
+```text
+[← previous] [CURRENT] [next →]
+```
+
+Очень чисто для анализа.
+
+## Mode B — Continuous
+
+Все markets идут друг за другом:
+
+```text
+market1 | market2 | market3 | ...
+```
+
+с визуальными разделителями.
+
+Это будет очень удобно.
+
+---
+
+# 108. Для отдельного market нужен ещё progress bar
+
+Например:
+
+```text
+18:25:00 ━━━━━━━━━━━━━━━ 63% ━━━━━ 18:30:00
+```
+
+и:
+
+```text
+Remaining:
+01:51.230
+```
+
+---
+
+# 109. Ещё одна полезная линия
+
+Добавить:
+
+```text
+50¢ reference
+```
+
+и:
+
+```text
+current price
+```
+
+---
+
+# 110. Что делать при закрытии рынка
+
+Последние секунды могут быть очень активны.
+
+Поэтому collector **не должен прекращать запись строго в `endDate` без buffer**.
+
+Я бы оставил:
+
+```text
++ несколько секунд
+```
+
+для получения поздних событий/reconciliation.
+
+Но market lifecycle state отдельно отмечать:
+
+```text
+ended = true
+```
+
+---
+
+# 111. Reconciliation
+
+После завершения market:
+
+```text
+our data
+vs
+Polymarket REST
+```
+
+можно сравнить:
+
+```text
+last_trade
+mid
+volume
+```
+
+для контроля качества collector.
+
+---
+
+# 112. Очень полезно строить coverage
+
+Например:
+
+```text
+Market #123
+coverage: 99.97%
+
+events:
+1842
+
+seconds observed:
+299 / 300
+```
+
+И если один рынок имеет:
+
+```text
+coverage = 87%
+```
+
+ты сразу знаешь, что историческим данным нельзя слепо доверять.
+
+---
+
+# 113. Ещё одна важная вещь — серверное время
+
+Для collector лучше синхронизировать часы:
+
+```text
+NTP
+```
+
+Потому что ты собираешь:
+
+```text
+event timestamp
+received timestamp
+```
+
+а latency имеет смысл только если clock нормальный.
+
+---
+
+# 114. Точность
+
+Не используй JS `number` для идентификаторов token.
+
+Token ID очень длинные.
+
+Хранить:
+
+```ts
+string
+```
+
+а не:
+
+```ts
+number
+```
+
+Это принципиально.
+
+---
+
+# 115. Decimal
+
+Для цены:
+
+```text
+0.63
+```
+
+можно использовать Number в frontend.
+
+Но если хочешь абсолютно точный raw storage:
+
+```text
+string / integer ticks
+```
+
+Например:
+
+```text
+63
+```
+
+для cent-level.
+
+Но учитывая возможность tick size `0.001`, лучше хранить:
+
+```text
+decimal string
+```
+
+или нормализованное integer representation.
+
+---
+
+# 116. Я бы сделал canonical representation
+
+```text
+price_raw = "0.637"
+```
+
+и:
+
+```text
+price = 63.7
+```
+
+для UI.
+
+---
+
+# 117. Тесты обязательно нужны
+
+Не только frontend tests.
+
+Нужны unit tests на:
+
+```text
+slug generation
+timestamp bucketing
+market rollover
+reconnect
+deduplication
+book update
+mid calculation
+aggregation
+```
+
+---
+
+# 118. Особенно тест `slug generation`
+
+Для 5m:
+
+```text
+12:00 → timestamp ending xx00
+12:05 → xx300
+12:10 → xx600
+```
+
+Для 15m:
+
+```text
+xx00
+xx900
+xx1800
+xx2700
+```
+
+---
+
+# 119. Тест rollover
+
+Подавать искусственно:
+
+```text
+17:04:59.999
+17:05:00.000
+17:05:00.100
+```
+
+И проверить:
+
+```text
+A
+A
+B
+```
+
+а не:
+
+```text
+A
+B
+A
+```
+
+---
+
+# 120. Тест WebSocket reconnect
+
+Сценарий:
+
+```text
+events:
+1
+2
+3
+
+disconnect
+
+reconnect
+
+snapshot
+
+events:
+4
+5
+```
+
+И убедиться:
+
+```text
+1
+2
+3
+snapshot
+4
+5
+```
+
+без:
+
+```text
+duplicates
+```
+
+---
+
+# 121. UI должен уметь сообщать о качестве данных
+
+Я бы обязательно сделал маленький status bar:
+
+```text
+● LIVE
+Latency: 38ms
+Market: 100%
+Coverage: 99.8%
+```
+
+А если проблемы:
+
+```text
+⚠ GAP 1.4s
+```
+
+---
+
+# 122. Как сделать history очень быстрой
+
+Backend должен отдавать:
+
+```text
+gzip / brotli
+```
+
+и лучше:
+
+```text
+compact binary format
+```
+
+позже можно перейти на:
+
+```text
+MessagePack
+```
+
+но первоначально JSON вполне достаточен.
+
+2.5 млн точек — это ещё не тот масштаб, где нужно сразу усложнять протокол.
+
+---
+
+# 123. Сжатие
+
+JSON:
+
+```text
+~ десятки MB
+```
+
+gzip:
+
+```text
+существенно меньше
+```
+
+и при этом backend очень простой.
+
+---
+
+# 124. Важная оптимизация для frontend
+
+Не держать миллионы points в React state:
+
+```ts
+useState([...millions])
+```
+
+Нет.
+
+Хранить chart data отдельно:
+
+```text
+ChartDataStore
+```
+
+а React только отвечает за:
+
+```text
+selected timeframe
+selected market
+UI controls
+```
+
+---
+
+# 125. Внутреннее состояние chart
+
+Например:
+
+```ts
+class PriceChartStore {
+    rawPoints
+    aggregatedPoints
+    currentMarket
+    lastUpdate
+}
+```
+
+React подписывается только на metadata.
+
+---
+
+# 126. Основная схема приложения
+
+Я бы в итоге получил:
+
+```text
+                    POLYMARKET
+                        │
+             ┌──────────┴───────────┐
+             │                      │
+         Gamma REST            CLOB WSS
+             │                      │
+             │              book / trade /
+             │              price_change
+             │                      │
+             └──────────┬───────────┘
+                        │
+                  MARKET MANAGER
+                        │
+             ┌──────────┴───────────┐
+             │                      │
+         rollover               normalization
+             │                      │
+             └──────────┬───────────┘
+                        │
+                   RAW STORAGE
+                        │
+                 aggregation
+                        │
+              ┌─────────┼─────────┐
+              │         │         │
+              1s        5s       1m
+              │         │         │
+              └─────────┼─────────┘
+                        │
+                  YOUR WEBSOCKET
+                        │
+                     Browser
+                        │
+               Lightweight Charts
+```
+
+---
+
+# 127. Что я считаю обязательным MVP
+
+Я бы **не пытался сразу делать весь терминал**.
+
+Первая версия:
+
+### Backend
+
+```text
+Gamma discovery
++
+CLOB WebSocket
++
+BTC 5m
++
+BTC 15m
++
+YES/NO
++
+mid/bid/ask/last
++
+SQLite
+```
+
+### Frontend
+
+```text
+Lightweight Charts 5.2
++
+0–100 scale
++
+1s
++
+5s
++
+15s
++
+30s
++
+1m
++
+LIVE indicator
++
+market boundaries
+```
+
+Это уже будет полноценный рабочий инструмент.
+
+---
+
+# 128. Второй этап
+
+Добавить:
+
+```text
+historical scrolling
+market selector
+date selector
+```
+
+---
+
+# 129. Третий этап
+
+Добавить:
+
+```text
+orderbook
+trade markers
+volume
+spread
+depth
+imbalance
+```
+
+---
+
+# 130. Четвёртый этап
+
+Добавить:
+
+```text
+backtest API
+CSV/Parquet export
+market replay
+```
+
+И вот тогда получится уже фактически исследовательская среда Polymarket.
+
+---
+
+# 131. Что особенно важно именно с учётом актуального состояния Polymarket
+
+На август 2026 я бы учитывал следующие вещи:
+
+**1. Не использовать `/prices-history` как источник секундной истории.**
+Он остаётся агрегированным историческим API. ([Polymarket Documentation][1])
+
+**2. Основной realtime источник — Market WebSocket.**
+Он отдаёт `book`, `price_change`, `last_trade_price`, `tick_size_change` и дополнительные lifecycle/top-of-book события. ([Polymarket Documentation][7])
+
+**3. Не хардкодить tick size.**
+Есть realtime `tick_size_change`. ([Polymarket Documentation][2])
+
+**4. Не хардкодить стартовую цену 50¢.**
+Polymarket прямо описывает, что начальная цена возникает из рынка. ([Polymarket Documentation][3])
+
+**5. Не полагаться на `new_market` как единственный механизм rollover.**
+Для rolling markets timestamp slug позволяет заранее вычислять следующий рынок; события lifecycle следует использовать как дополнительную страховку. ([GitHub][5])
+
+**6. Хранить metadata и realtime отдельно.**
+
+**7. Не смешивать рынки при построении линии.**
+
+**8. Использовать `series.update()` для realtime в Lightweight Charts.** ([tradingview.github.io][18])
+
+**9. Использовать whitespace / market boundaries между rolling markets.** ([tradingview.github.io][13])
+
+**10. Версию Lightweight Charts зафиксировать на 5.2.x, а не зависеть от плавающего master.** Последний стабильный релиз сейчас — 5.2.0. ([GitHub][8])
+
+---
+
+# 132. И ещё один момент, который я бы сделал именно для твоей задачи
+
+Я бы не ограничивался графиком:
+
+```text
+time → price
+```
+
+В перспективе хранить для каждого market:
+
+```text
+t
+price
+bid
+ask
+last
+spread
+trade_count
+trade_volume
+remaining_seconds
+market_id
+```
+
+Тогда ты получишь фундамент не только для графика, но и для дальнейшего анализа вида:
+
+```text
+за сколько секунд до окончания
+рынок начинает резко двигаться?
+
+есть ли характерное движение
+на 30-й секунде?
+
+как ведёт себя цена при BTC ±0.1%?
+
+насколько часто 80¢ превращается в 20¢?
+
+как выглядит trajectory в разных market?
+```
+
+И это уже будет гораздо интереснее обычного графика.
+
+---
+
+# 133. Моя рекомендуемая конечная конфигурация
+
+```text
+Frontend
+    React + TypeScript + Vite
+    Lightweight Charts 5.2
+
+Backend
+    Node.js + TypeScript
+
+Realtime
+    Polymarket CLOB WebSocket
+
+Metadata
+    Gamma API
+
+Storage
+    SQLite + WAL
+
+Long-term archive
+    Parquet
+
+Transport
+    WebSocket
+
+Main price
+    midpoint
+
+Secondary
+    last trade
+    bid
+    ask
+
+Resolution
+    1s / 5s / 15s / 30s / 1m
+
+Markets
+    BTC 5m
+    BTC 15m
+
+Rolling
+    deterministic timestamp slug
+    + lifecycle events as fallback
+
+Chart range
+    0–100¢ fixed
+
+Data
+    raw event level
+    aggregated chart level
+```
+
+### Самая важная мысль
+
+**Сам график — самая простая часть.** Lightweight Charts с этим справится без проблем. Сложность находится в **правильном сборе и реконструкции истории rolling-рынков**.
+
+Я бы поэтому сначала написал **надёжный collector**, который 24/7 собирает `BTC 5m + BTC 15m` из Polymarket WebSocket и сохраняет raw event data. Затем поверх него уже сделать красивый Lightweight Charts frontend. Так ты не окажешься в ситуации, когда через неделю выясняется, что график красивый, но секунды за предыдущие дни нигде не сохранились.
+
+[1]: https://docs.polymarket.com/api-reference/markets/get-prices-history?utm_source=chatgpt.com "Get prices history - Polymarket Documentation"
+[2]: https://docs.polymarket.com/developers/CLOB/websocket/wss-overview "Real-Time Data - Polymarket Documentation"
+[3]: https://docs.polymarket.com/concepts/prices-orderbook?utm_source=chatgpt.com "Prices & Orderbook - Polymarket Documentation"
+[4]: https://docs.polymarket.com/quickstart?utm_source=chatgpt.com "Quickstart - Polymarket Documentation"
+[5]: https://github.com/Polymarket/py-clob-client/issues/244?utm_source=chatgpt.com "\"Question: How to correctly generate the timestamp for 15-minute market slugs?\" · Issue #244 · Polymarket/py-clob-client"
+[6]: https://docs.polymarket.com/market-data/websocket/overview?utm_source=chatgpt.com "Overview - Polymarket Documentation"
+[7]: https://docs.polymarket.com/market-data/websocket/market-channel?utm_source=chatgpt.com "Market Channel - Polymarket Documentation"
+[8]: https://github.com/tradingview/lightweight-charts/releases?utm_source=chatgpt.com "Releases · tradingview/lightweight-charts · GitHub"
+[9]: https://github.com/tradingview/lightweight-charts/blob/master/README.md?utm_source=chatgpt.com "lightweight-charts/README.md at master · tradingview/lightweight-charts · GitHub"
+[10]: https://tradingview.github.io/lightweight-charts/docs/series-types?utm_source=chatgpt.com "Series | Lightweight Charts"
+[11]: https://tradingview.github.io/lightweight-charts/docs/api/interfaces/IPriceScaleApi?utm_source=chatgpt.com "Interface: IPriceScaleApi | Lightweight Charts"
+[12]: https://github.com/tradingview/lightweight-charts/blob/master/website/versioned_docs/version-4.2/intro.md?utm_source=chatgpt.com "lightweight-charts/website/versioned_docs/version-4.2/intro.md at master · tradingview/lightweight-charts · GitHub"
+[13]: https://tradingview.github.io/lightweight-charts/tutorials/demos/whitespace?utm_source=chatgpt.com "Whitespace data | Lightweight Charts"
+[14]: https://docs.polymarket.com/api-reference/rate-limits?utm_source=chatgpt.com "Rate Limits - Polymarket Documentation"
+[15]: https://docs.polymarket.com/trading/orderbook?utm_source=chatgpt.com "Orderbook - Polymarket Documentation"
+[16]: https://github.com/tradingview/lightweight-charts?utm_source=chatgpt.com "GitHub - tradingview/lightweight-charts: Performant financial charts built with HTML5 canvas · GitHub"
+[17]: https://tradingview.github.io/lightweight-charts/docs/5.1/time-scale?utm_source=chatgpt.com "Time scale | Lightweight Charts"
+[18]: https://tradingview.github.io/lightweight-charts/tutorials/demos/realtime-updates?utm_source=chatgpt.com "Realtime updates | Lightweight Charts"
+[19]: https://docs.polymarket.com/api-reference/markets/list-markets-keyset-pagination?utm_source=chatgpt.com "List markets (keyset pagination) - Polymarket Documentation"

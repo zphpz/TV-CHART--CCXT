@@ -1,0 +1,597 @@
+Вот детальный план реализации вашего приложения для отображения rolling-рынков BTC UpDown с Polymarket на `lightweight-charts`.
+
+---
+
+## 1. Общая архитектура приложения
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Frontend (React/Vanilla JS)            │
+│  ┌─────────────────┐    ┌──────────────────────────────────┐   │
+│  │  Timeframe      │    │     Lightweight Charts           │   │
+│  │  Switcher       │◄──►│  (Line Series с агрегацией)     │   │
+│  │  (1с/5с/15с/    │    │                                  │   │
+│  │   30с/1м)       │    └──────────────────────────────────┘   │
+│  └─────────────────┘                      ▲                    │
+│         ▲                                  │                    │
+│         │                                  │                    │
+│  ┌──────┴──────┐                   ┌──────┴──────┐             │
+│  │  Data       │                   │  Historical │             │
+│  │  Buffer     │                   │  Cache      │             │
+│  │  (секундные │                   │  (LocalStorage/           │
+│  │   точки)    │                   │   IndexedDB)             │
+│  └─────────────┘                   └─────────────┘             │
+└─────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ WebSocket / REST
+                              │
+┌─────────────────────────────────────────────────────────────────┐
+│                       Polymarket API                           │
+│  ┌─────────────────┐    ┌──────────────────────────────────┐   │
+│  │  Markets WS     │    │  Events/Gamma API                │   │
+│  │  (wss://api.    │    │  (получение slug/asset_id)       │   │
+│  │  polymarket.us/ │    │                                  │   │
+│  │  v1/ws/markets) │    └──────────────────────────────────┘   │
+│  └─────────────────┘                                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Получение данных с Polymarket
+
+### 2.1 Определение market slug и asset_id для каждого rolling-рынка
+
+Ваши URL имеют вид:
+- `https://polymarket.com/event/btc-updown-5m-1786491900`
+- `https://polymarket.com/event/btc-updown-15m`
+
+**Проблема**: каждый новый 5-минутный рынок имеет уникальный slug с числовым суффиксом. Вам нужно динамически определять **текущий активный** рынок.
+
+**Решение**:
+
+1. **Получить список всех активных рынков** через Events API:
+   ```
+   GET https://gateway.polymarket.us/v1/events?active=true&limit=100
+   ```
+   
+
+2. **Отфильтровать** по названию/категории, содержащей "btc-updown" или "BTC UpDown".
+
+3. **Получить детали конкретного события** по slug:
+   ```
+   GET https://gateway.polymarket.us/v1/events/slug/{slug}
+   ```
+   
+
+4. Из ответа извлечь:
+   - `event.id` — идентификатор события
+   - `event.markets` — массив рынков внутри события
+   - Для каждого рынка: `market.id`, `market.question`, `market.slug`
+
+5. **Получить token ID (asset_id)** для каждого исхода (YES/NO) через CLOB API или Gamma API:
+   ```
+   GET https://gamma-api.polymarket.com/markets?id={market_id}
+   ```
+   или через CLOB:
+   ```
+   GET https://clob.polymarket.com/markets/{market_id}
+   ```
+   
+
+**Важно**: Для rolling-рынков, которые каждые 5 минут создаются заново, вам нужно **периодически проверять** (например, каждые 10 секунд или при приближении к концу периода), не начался ли новый рынок. Можно подписаться на `new_market` события через WebSocket с `custom_feature_enabled: true`.
+
+### 2.2 WebSocket для реального времени (основной источник)
+
+**Эндпоинт**: `wss://api.polymarket.us/v1/ws/markets`
+
+**Аутентификация**: Требуется API Key:
+- `X-PM-Access-Key`: ваш API key ID
+- `X-PM-Timestamp`: timestamp в миллисекундах
+- `X-PM-Signature`: base64(`timestamp` + "GET" + `/v1/ws/markets`)
+
+**Подписка на данные** (рекомендую `MARKET_DATA_LITE` для минимальной нагрузки):
+```json
+{
+  "subscribe": {
+    "requestId": "mdl-sub-1",
+    "subscriptionType": "SUBSCRIPTION_TYPE_MARKET_DATA_LITE",
+    "marketSlugs": ["btc-updown-5m-1786491900"]
+  }
+}
+```
+
+
+**Ответ**:
+```json
+{
+  "requestId": "mdl-sub-1",
+  "subscriptionType": "SUBSCRIPTION_TYPE_MARKET_DATA_LITE",
+  "marketDataLite": {
+    "marketSlug": "btc-updown-5m-1786491900",
+    "currentPx": {"value": "0.55", "currency": "USD"},
+    "lastTradePx": {"value": "0.55", "currency": "USD"},
+    "bestBid": {"value": "0.54", "currency": "USD"},
+    "bestAsk": {"value": "0.56", "currency": "USD"}
+  }
+}
+```
+
+
+**Альтернативный WebSocket (CLOB, без аутентификации)**:
+- Эндпоинт: `wss://ws-subscriptions-clob.polymarket.com/ws/market`
+- Подписка по `asset_ids` (token ID):
+```json
+{
+  "type": "market",
+  "assets_ids": ["TOKEN_ID_YES", "TOKEN_ID_NO"],
+  "initial_dump": true
+}
+```
+
+- События: `book`, `price_change`, `last_trade_price`, `best_bid_ask`
+
+**Для ваших целей** (цена в центах от 0 до 100) лучше всего использовать:
+- `last_trade_price` — цена последней сделки (самый точный показатель)
+- Или `best_bid`/`best_ask` — спред, из которого можно взять среднюю
+
+### 2.3 REST API для исторических данных (при первом запуске / при переключении)
+
+Для загрузки истории при первом открытии графика:
+
+**Gamma API** (без аутентификации):
+```
+GET https://gamma-api.polymarket.com/markets/{market_id}/history?interval=1m&limit=100
+```
+
+**Или через Bitquery GraphQL** (требуется токен):
+```graphql
+query GetMarketPrices($marketId: String!) {
+  market(id: $marketId) {
+    priceHistory(interval: "1m", limit: 100) {
+      timestamp
+      price
+    }
+  }
+}
+```
+
+**Внимание**: Для rolling-рынков исторических данных может быть мало (рынок живет всего 5 минут). Поэтому основной упор — на **накопление данных в реальном времени** с момента запуска рынка.
+
+---
+
+## 3. Обработка и хранение данных
+
+### 3.1 Структура данных
+
+Каждая точка данных:
+```typescript
+interface PricePoint {
+  time: number;        // Unix timestamp (секунды)
+  price: number;       // цена в центах (0-100)
+  source: 'trade' | 'bid' | 'ask' | 'mid';
+}
+```
+
+### 3.2 Буферизация секундных данных
+
+Для отображения "минимум одно секундное изменение" нужно:
+
+1. **Получать каждое обновление** через WebSocket (может приходить несколько раз в секунду).
+2. **Агрегировать по секунде**: для каждой секунды хранить **последнюю** цену (или OHLC, если нужно).
+3. Хранить в массиве `secondData: PricePoint[]`.
+
+```javascript
+let secondBuffer = {};
+let currentSecond = Math.floor(Date.now() / 1000);
+
+function onPriceUpdate(price) {
+  const sec = Math.floor(Date.now() / 1000);
+  if (sec !== currentSecond) {
+    // завершить предыдущую секунду
+    if (secondBuffer[currentSecond]) {
+      secondData.push({
+        time: currentSecond,
+        price: secondBuffer[currentSecond].lastPrice
+      });
+    }
+    currentSecond = sec;
+    secondBuffer[sec] = { firstPrice: price, lastPrice: price, high: price, low: price };
+  } else {
+    secondBuffer[sec].lastPrice = price;
+    if (price > secondBuffer[sec].high) secondBuffer[sec].high = price;
+    if (price < secondBuffer[sec].low) secondBuffer[sec].low = price;
+  }
+}
+```
+
+### 3.3 Агрегация по таймфреймам (ТФ)
+
+При переключении ТФ (1с, 5с, 15с, 30с, 1м) данные агрегируются из `secondData`:
+
+```javascript
+function aggregateData(seconds, timeframeSeconds) {
+  const result = [];
+  for (let i = 0; i < seconds.length; i += timeframeSeconds) {
+    const chunk = seconds.slice(i, i + timeframeSeconds);
+    if (chunk.length === 0) continue;
+    result.push({
+      time: chunk[chunk.length - 1].time, // время последней точки в чанке
+      price: chunk[chunk.length - 1].price // последняя цена (или можно OHLC)
+    });
+  }
+  return result;
+}
+```
+
+**Для ТФ = 1с** — просто берём все секундные точки.
+
+### 3.4 Кэширование исторических данных
+
+Чтобы при перезагрузке страницы не терять историю текущего рынка:
+
+- Использовать **IndexedDB** или **LocalStorage** (для небольших объёмов).
+- Ключ: `market_slug` + `date`.
+- При загрузке страницы: проверить кэш, если есть — загрузить, затем догнать через WebSocket.
+
+---
+
+## 4. Интеграция с Lightweight Charts
+
+### 4.1 Инициализация
+
+```javascript
+import { createChart, LineSeries } from 'lightweight-charts';
+
+const chart = createChart(document.getElementById('chart'), {
+  width: container.clientWidth,
+  height: container.clientHeight,
+  layout: {
+    background: { color: '#ffffff' },
+    textColor: '#333',
+  },
+  rightPriceScale: {
+    scaleMargins: {
+      top: 0.1,
+      bottom: 0.1,
+    },
+    // цена от 0 до 100 центов
+    autoScale: false,
+    fixedRange: {
+      minValue: 0,
+      maxValue: 100,
+    },
+  },
+  timeScale: {
+    timeVisible: true,
+    secondsVisible: true, // показывать секунды
+  },
+});
+
+const series = chart.addSeries(LineSeries, {
+  color: '#2962FF',
+  lineWidth: 2,
+  priceFormat: {
+    type: 'price',
+    precision: 2,
+    minMove: 0.01,
+  },
+});
+```
+
+### 4.2 Обновление графика в реальном времени
+
+**Способ 1: `series.update()`** — для добавления одной точки:
+```javascript
+series.update({
+  time: currentSecond,
+  value: price,
+});
+```
+
+**Способ 2: `series.setData()`** — для полной перерисовки при смене ТФ:
+```javascript
+const aggregated = aggregateData(secondData, timeframeSeconds);
+series.setData(aggregated);
+```
+
+**Рекомендация**: использовать `update()` для каждого нового секундного значения, а `setData()` — только при смене ТФ.
+
+### 4.3 Управление ТФ
+
+Сделать переключатель:
+```html
+<button data-tf="1">1с</button>
+<button data-tf="5">5с</button>
+<button data-tf="15">15с</button>
+<button data-tf="30">30с</button>
+<button data-tf="60">1м</button>
+```
+
+При клике — агрегировать `secondData` заново и вызвать `series.setData()`.
+
+---
+
+## 5. Обработка rolling-рынков (ключевая сложность)
+
+### 5.1 Определение момента смены рынка
+
+Каждый rolling-рынок живёт ровно 5 минут (или 15 минут). Вам нужно:
+
+1. **Знать время старта** текущего рынка (из `event.startDate` или вычислять из slug).
+2. **За 5-10 секунд до окончания** начать проверять, появился ли новый рынок.
+3. **При появлении нового рынка**:
+   - Сохранить историю текущего рынка (опционально).
+   - Очистить `secondData`.
+   - Подписаться на новый market slug / asset_id.
+   - Сбросить график.
+
+### 5.2 Обнаружение нового рынка
+
+**Способ А**: Периодический опрос Events API (каждые 2-3 секунды в конце периода):
+```
+GET https://gateway.polymarket.us/v1/events?active=true&search=btc-updown
+```
+
+
+**Способ Б**: WebSocket с `custom_feature_enabled: true` и подпиской на `new_market`:
+```json
+{
+  "assets_ids": [],
+  "type": "market",
+  "custom_feature_enabled": true
+}
+```
+При создании нового рынка придёт событие `new_market` с `assets_ids` и `question`.
+
+**Способ В** (самый надёжный): комбинировать оба подхода — WebSocket для мгновенного уведомления + REST для подтверждения.
+
+### 5.3 Начальная цена 50c
+
+Новый рынок всегда начинается с 50c. При обнаружении нового рынка вы можете:
+- Сразу добавить точку `{ time: startTime, price: 50 }` в историю.
+- Ждать первого реального трейда через WebSocket.
+
+---
+
+## 6. Критические ошибки и что обязательно учесть
+
+### 6.1 Аутентификация WebSocket (новое требование)
+
+**Важно**: Согласно документации Polymarket US, WebSocket эндпоинт `/v1/ws/markets` **требует API Key аутентификации** через заголовки handshake.
+
+Некоторые старые публичные WebSocket (CLOB) могут работать без аутентификации, но они могут быть deprecated. **Рекомендую**:
+- Использовать официальный `wss://api.polymarket.us/v1/ws/markets` с API Key.
+- Получить API Key в настройках аккаунта Polymarket.
+
+**Пример аутентификации**:
+```javascript
+const ws = new WebSocket('wss://api.polymarket.us/v1/ws/markets', {
+  headers: {
+    'X-PM-Access-Key': 'your-api-key-id',
+    'X-PM-Timestamp': Date.now().toString(),
+    'X-PM-Signature': signature,
+  }
+});
+```
+
+### 6.2 CLOB v2 миграция (апрель 2026)
+
+Polymarket провёл миграцию на CLOB v2 **28 апреля 2026**. Это затронуло:
+- Новые адреса контрактов
+- Новый формат события `OrderFilled`
+
+**Что нужно учесть**:
+- Если используете старые SDK — обновите до версий, поддерживающих CLOB v2.
+- `asset_id` (token ID) могут измениться — всегда получайте их через актуальный API, не хардкодьте.
+- Формат order book может отличаться — проверяйте документацию.
+
+### 6.3 Heartbeat и keep-alive
+
+WebSocket соединение может разрываться. Обязательно:
+- Обрабатывать `heartbeat` сообщения.
+- Отправлять PING каждые 30-50 секунд.
+- Реализовать **автоматическое переподключение** с экспоненциальной задержкой.
+
+```javascript
+ws.on('message', (data) => {
+  const msg = JSON.parse(data);
+  if (msg.heartbeat) {
+    // сервер ждёт ответа или просто подтверждает жизнь
+    return;
+  }
+  // обработка данных...
+});
+
+// Периодический ping
+setInterval(() => {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send('PING');
+  }
+}, 30000);
+```
+
+### 6.4 tick_size_change (критично для торговли)
+
+Событие `tick_size_change` происходит, когда цена переходит через 0.96 или ниже 0.04. Это меняет минимальный шаг цены.
+
+**Для вашего приложения** (только визуализация) — это менее критично, но нужно учитывать, что цена может "залипнуть" на 0.99 или 0.01, и шаг изменения станет больше.
+
+### 6.5 Производительность
+
+- Не обновлять график чаще 1 раза в секунду (даже если данные приходят чаще).
+- Использовать `requestAnimationFrame` для синхронизации с рендерингом.
+- Не хранить больше 10 000 точек в памяти (для 5-минутного рынка с 1с интервалом — это 300 точек, что безопасно).
+- При смене ТФ — агрегировать на лету, не пересоздавая серию.
+
+### 6.6 Разница между "currentPx" и "lastTradePx"
+
+В `MARKET_DATA_LITE` есть два поля:
+- `currentPx` — текущая рыночная цена (может быть mid-price)
+- `lastTradePx` — цена последней совершённой сделки
+
+**Для линии графика** лучше использовать `lastTradePx` — это реальные сделки, а не теоретическая цена.
+
+### 6.7 Обработка ошибок подписки
+
+Если подписка не удалась, придёт ответ с `error` полем:
+```json
+{
+  "request_id": "mdl-sub-1",
+  "error": "Market not found or invalid slug"
+}
+```
+Нужно обрабатывать такие ошибки и пробовать другие slug.
+
+### 6.8 Rate Limiting
+
+API Polymarket имеет ограничения по частоте запросов. Для REST:
+- Не делать более 10-20 запросов в секунду.
+- Использовать WebSocket для реального времени, REST — только для инициализации и обнаружения новых рынков.
+
+---
+
+## 7. Рекомендуемый стек технологий
+
+| Компонент | Рекомендация | Причина |
+|-----------|--------------|---------|
+| **Фреймворк** | React + Vite | Быстрая разработка, отличная производительность |
+| **График** | `lightweight-charts` | Лёгкий, быстрый, создан TradingView |
+| **WebSocket** | Нативный `WebSocket` API | Минимум зависимостей, надёжно |
+| **HTTP-клиент** | `fetch` или `axios` | Стандарт |
+| **Кэширование** | IndexedDB (через `idb` библиотеку) | Хранение больших объёмов истории |
+| **Сборка** | Vite / esbuild | Быстрая горячая перезагрузка |
+
+---
+
+## 8. Пошаговый план реализации
+
+### Шаг 1: Настройка проекта
+- Создать React + Vite проект
+- Установить `lightweight-charts`
+
+### Шаг 2: Получение API ключа
+- Зарегистрироваться на Polymarket
+- Создать API Key в настройках
+
+### Шаг 3: Определение рынка
+- Написать функцию `getActiveMarket(slugPattern)`:
+  - Запрашивает `/v1/events?active=true`
+  - Фильтрует по `slug` или `title`
+  - Возвращает `eventId`, `marketId`, `assetId`
+
+### Шаг 4: WebSocket подключение
+- Реализовать класс `PolymarketWS`:
+  - Подключение с аутентификацией
+  - Подписка на `MARKET_DATA_LITE` по slug
+  - Обработка входящих сообщений
+  - Heartbeat / ping
+  - Reconnection logic
+
+### Шаг 5: Буферизация данных
+- Реализовать `DataBuffer`:
+  - Хранит `secondData`
+  - Метод `addPrice(price, timestamp)`
+  - Метод `getAggregated(timeframeSeconds)`
+
+### Шаг 6: График
+- Инициализировать `LightweightChart`
+- Добавить `LineSeries`
+- При обновлении данных — вызывать `series.update()` или `series.setData()`
+
+### Шаг 7: Переключение ТФ
+- Добавить UI-переключатель
+- При смене — агрегировать данные заново и обновить график
+
+### Шаг 8: Обнаружение нового rolling-рынка
+- Запустить таймер, который проверяет окончание текущего рынка
+- При окончании — найти новый slug, переподписаться, сбросить данные
+
+### Шаг 9: Кэширование
+- При получении новых данных — сохранять в IndexedDB
+- При загрузке страницы — восстанавливать из кэша
+
+### Шаг 10: Тестирование и оптимизация
+- Проверить работу при переподключении
+- Проверить производительность при высокой частоте обновлений
+- Проверить смену rolling-рынка в реальных условиях
+
+---
+
+## 9. Пример кода (ключевые фрагменты)
+
+### WebSocket с аутентификацией
+
+```javascript
+class PolymarketDataFeed {
+  constructor(apiKey, apiSecret) {
+    this.apiKey = apiKey;
+    this.apiSecret = apiSecret;
+    this.ws = null;
+    this.listeners = [];
+  }
+
+  connect() {
+    const timestamp = Date.now();
+    const signature = this.generateSignature(timestamp);
+    
+    this.ws = new WebSocket('wss://api.polymarket.us/v1/ws/markets', {
+      headers: {
+        'X-PM-Access-Key': this.apiKey,
+        'X-PM-Timestamp': timestamp.toString(),
+        'X-PM-Signature': signature,
+      }
+    });
+
+    this.ws.onopen = () => {
+      this.subscribe('btc-updown-5m-1786491900');
+      this.startHeartbeat();
+    };
+
+    this.ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.heartbeat) return;
+      if (data.marketDataLite) {
+        const price = parseFloat(data.marketDataLite.lastTradePx.value) * 100;
+        this.notify(price, Date.now());
+      }
+    };
+
+    this.ws.onclose = () => {
+      setTimeout(() => this.connect(), 1000);
+    };
+  }
+
+  subscribe(slug) {
+    this.ws.send(JSON.stringify({
+      subscribe: {
+        requestId: 'mdl-' + Date.now(),
+        subscriptionType: 'SUBSCRIPTION_TYPE_MARKET_DATA_LITE',
+        marketSlugs: [slug],
+      }
+    }));
+  }
+}
+```
+
+### Обновление графика
+
+```javascript
+let lastUpdateTime = 0;
+
+function onPriceUpdate(price, timestamp) {
+  const seconds = Math.floor(timestamp / 1000);
+  buffer.addPrice(price, seconds);
+  
+  // Не обновляем график чаще 1 раза в секунду
+  if (Date.now() - lastUpdateTime < 1000) return;
+  lastUpdateTime = Date.now();
+  
+  const data = buffer.getAggregated(currentTimeframe);
+  series.setData(data);
+}
+```
+
+---
+
+Этот план должен дать вам полное представление о том, как реализовать приложение. Главные сложности — это **аутентификация WebSocket**, **корректное обнаружение новых rolling-рынков** и **обработка разрывов соединения**. Если будут дополнительные вопросы по конкретным деталям — спрашивайте.

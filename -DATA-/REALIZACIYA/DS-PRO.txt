@@ -1,0 +1,857 @@
+Ниже — детальный план реализации быстрого приложения-графика для rolling-рынков Polymarket `btc-updown-5m`. Учитывай, что Polymarket периодически меняет API/WebSocket, поэтому все эндпоинты нужно проверять через официальную документацию и DevTools → Network/WS.
+
+---
+
+## 1. Что использовать из Polymarket
+
+### 1.1. Основные API-базы
+
+| Назначение | Endpoint |
+|---|---|
+| REST Gamma API — поиск событий/рынков/токенов | `https://gamma-api.polymarket.com` |
+| REST CLOB API — книги ордеров, история цен | `https://clob.polymarket.com` |
+| WebSocket CLOB — real-time цены | `wss://ws-subscriptions-clob.polymarket.com/ws/market` |
+
+Не парсить `polymarket.com` HTML — медленно и легко ломается.
+
+### 1.2. Какие данные нужны от Gamma
+
+Примерный запрос:
+
+```text
+GET https://gamma-api.polymarket.com/events?slug=btc-updown-5m-1786491900
+```
+
+Примерная структура ответа:
+
+```json
+{
+  "events": [
+    {
+      "id": "event_id",
+      "slug": "btc-updown-5m-1786491900",
+      "startTime": 1786491900,
+      "endTime": 1786492200,
+      "markets": [
+        {
+          "id": "market_id",
+          "question": "Will BTC be up in 5 minutes?",
+          "outcomes": ["Up", "Down"],
+          "clobTokenIds": ["0x_up_token_id", "0x_down_token_id"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+Здесь важно:
+
+- `clobTokenIds` — это CLOB token id, по ним работают CLOB WebSocket и REST.
+- `outcomes` — обычно `["Up", "Down"]`. Если хочешь график “в центах 0–100”, бери **Up-токен**.
+- `startTime` и `endTime` — UNIX-секунды. Границы 5-минутного рынка.
+
+Цена raw на Polymarket обычно в диапазоне `0.00–1.00`. Для отображения `0–100` умножаешь на 100.
+
+---
+
+## 2. Архитектура приложения
+
+Рекомендую сделать SPA на:
+
+- **Vite + React + TypeScript**
+- **lightweight-charts v5** (с репозитория, который ты указал)
+- Без бэкенда на первом этапе — real-time через прямой WebSocket в браузере.
+
+Общая схема:
+
+```
+[Gamma REST]        → определение текущего рынка и CLOB token id
+[CLOB REST]         → начальная история цен
+[CLOB WebSocket]    → real-time price/book/trade
+        ↓
+[PriceStore]        → хранит последнюю цену, raw 1s точки
+        ↓
+[Aggregator]        → 1s / 5s / 15s / 30s / 1m
+        ↓
+[Lightweight Chart] → line series
+```
+
+---
+
+## 3. Пошаговый план реализации
+
+### Шаг 0. Инициализация проекта
+
+```bash
+npm create vite@latest btc-5m-chart -- --template react-ts
+cd btc-5m-chart
+npm install lightweight-charts
+npm run dev
+```
+
+---
+
+### Шаг 1. Определение текущего рынка
+
+Так как рынок rolling, slug содержит timestamp старта.
+
+Формат:
+
+```text
+btc-updown-5m-1786491900
+```
+
+Здесь `1786491900` — UNIX-время старта рынка.
+
+Функция вычисления текущего slug:
+
+```ts
+const INTERVAL = 300; // 5 минут в секундах
+
+function getCurrentMarketSlug(): string {
+  const now = Math.floor(Date.now() / 1000);
+  const start = Math.floor(now / INTERVAL) * INTERVAL;
+  return `btc-updown-5m-${start}`;
+}
+```
+
+Но не всегда рынок может быть уже создан. Поэтому:
+
+1. Пробуем `getCurrentMarketSlug()`.
+2. Если Gamma не нашла — пробуем следующий:
+   ```ts
+   const next = start + INTERVAL;
+   const prev = start - INTERVAL;
+   ```
+3. Повторяем discovery раз в 5–10 секунд.
+
+Получение данных:
+
+```ts
+async function fetchEvent(slug: string) {
+  const response = await fetch(
+    `https://gamma-api.polymarket.com/events?slug=${slug}`,
+    {
+      headers: {
+        Accept: 'application/json',
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Gamma error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const event = data.events?.[0] ?? data;
+  return event;
+}
+```
+
+Из ответа нужно вытащить:
+
+```ts
+const market = event.markets.find((m) => m.outcomes?.[0] === 'Up');
+const upTokenId = market.clobTokenIds?.[0];
+const downTokenId = market.clobTokenIds?.[1];
+const startTime = event.startTime;
+const endTime = event.endTime;
+```
+
+> Если в реальном API структура немного другая, всегда смотри DevTools → Network на официальном сайте Polymarket.
+
+---
+
+### Шаг 2. Инициализация графика
+
+Используем `lightweight-charts`.
+
+Пример для v5:
+
+```ts
+import {
+  createChart,
+  LineSeries,
+  ColorType,
+  UTCTimestamp,
+} from 'lightweight-charts';
+
+const chart = createChart(container, {
+  width: container.clientWidth,
+  height: 400,
+  timeScale: {
+    timeVisible: true,
+    secondsVisible: true,
+    rightOffset: 10,
+  },
+  rightPriceScale: {
+    mode: PriceScaleMode.Normal,
+    autoScale: true,
+  },
+  localization: {
+    priceFormatter: (price: number) => `${price.toFixed(2)}¢`,
+  },
+});
+
+const lineSeries = chart.addSeries(LineSeries, {
+  color: '#10b981',
+  lineWidth: 2,
+  priceLineVisible: true,
+  lastValueVisible: true,
+});
+```
+
+Начальная точка:
+
+```ts
+const firstPoint = {
+  time: startTime as UTCTimestamp,
+  value: 50,
+};
+
+lineSeries.setData([firstPoint]);
+```
+
+Почему 50? Потому что рынок начинается с `0.50` — это `50¢`.
+
+---
+
+### Шаг 3. Заполнение начальной историей
+
+Для активного 5-минутного рынка история маленькая, но можно попробовать получить её через CLOB REST:
+
+```text
+GET https://clob.polymarket.com/prices-history?market=<tokenId>&interval=1m&fidelity=1
+```
+
+Примерный формат ответа:
+
+```json
+{
+  "history": [
+    { "t": 1786491900, "p": "0.50" },
+    { "t": 1786491960, "p": "0.53" }
+  ]
+}
+```
+
+Код загрузки:
+
+```ts
+async function fetchHistory(tokenId: string) {
+  const res = await fetch(
+    `https://clob.polymarket.com/prices-history?market=${tokenId}&interval=1m&fidelity=1`,
+    {
+      headers: {
+        Accept: 'application/json',
+      },
+    },
+  );
+
+  if (!res.ok) {
+    return [];
+  }
+
+  const data = await res.json();
+  const history = data.history ?? [];
+
+  return history
+    .map((h) => ({
+      time: Number(h.t) as UTCTimestamp,
+      value: Number(h.p) * 100,
+    }))
+    .filter((p) => p.value >= 0 && p.value <= 100);
+}
+```
+
+Если история пустая — оставляем только стартовую точку `{ time: startTime, value: 50 }`.
+
+Важно: не рассчитывай на то, что `prices-history` даст 1-секундные точки. Для очень короткого 5-минутного рынка 1m история может быть практически бесполезной. Основное — real-time WebSocket.
+
+---
+
+### Шаг 4. Real-time WebSocket
+
+Подключение:
+
+```ts
+const WS_URL = 'wss://ws-subscriptions-clob.polymarket.com/ws/market';
+
+const ws = new WebSocket(WS_URL);
+
+ws.onopen = () => {
+  ws.send(
+    JSON.stringify({
+      type: 'market',
+      assets_ids: [upTokenId],
+    }),
+  );
+};
+```
+
+> Точный формат подписки может отличаться. Официальный пример — в доках CLOB WebSocket. На практике публичный market-канал принимает `assets_ids`.
+
+Обработка сообщений:
+
+```ts
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+
+  if (Array.isArray(data)) {
+    data.forEach(handleMessage);
+  } else {
+    handleMessage(data);
+  }
+};
+
+function handleMessage(msg: any) {
+  if (msg.asset_id !== currentUpTokenId) {
+    return; // защита от старых подписок
+  }
+
+  if (msg.event_type === 'last_trade_price') {
+    const rawPrice = Number(msg.price);
+    updatePrice(rawPrice * 100, 'trade');
+  }
+
+  if (msg.event_type === 'book') {
+    const bid = Number(msg.bids?.[0]?.price);
+    const ask = Number(msg.asks?.[0]?.price);
+
+    if (bid > 0 && ask > 0) {
+      const mid = ((bid + ask) / 2) * 100;
+      updatePrice(mid, 'mid');
+    }
+  }
+
+  if (msg.event_type === 'price_change') {
+    const rawPrice = Number(msg.price);
+    updatePrice(rawPrice * 100, 'price_change');
+  }
+}
+```
+
+Что использовать как цену?
+
+- **last trade** — реальные сделки, но бывают паузы.
+- **midpoint** из книги ордеров — чаще обновляется, линия более гладкая.
+- Рекомендую приоритет:  
+  `last trade` → если нет, `mid` → если нет, последняя известная → 50.
+
+---
+
+### Шаг 5. Агрегация 1s / 5s / 15s / 30s / 1m
+
+Храним сырые 1-секундные точки.
+
+```ts
+interface RawPoint {
+  time: number; // UNIX seconds
+  value: number; // 0-100
+}
+
+const rawPoints: RawPoint[] = [];
+```
+
+Каждую секунду обновляем график:
+
+```ts
+setInterval(() => {
+  const now = Math.floor(Date.now() / 1000) as UTCTimestamp;
+  const value = latestPrice ?? 50;
+
+  rawPoints.push({ time: now, value });
+
+  // Для 1s TF обновляем напрямую
+  lineSeries.update({ time: now, value });
+}, 1000);
+```
+
+Но если выбран TF 5s/15s/30s/1m, нужно агрегировать.
+
+Функция агрегации:
+
+```ts
+function aggregate(raw: RawPoint[], tfSeconds: number): RawPoint[] {
+  if (tfSeconds === 1) {
+    return raw;
+  }
+
+  const buckets = new Map<number, RawPoint>();
+
+  for (const point of raw) {
+    const bucketStart = Math.floor(point.time / tfSeconds) * tfSeconds;
+
+    // Внутри bucket храним последнюю цену
+    buckets.set(bucketStart, {
+      time: bucketStart,
+      value: point.value,
+    });
+  }
+
+  return Array.from(buckets.values()).sort((a, b) => a.time - b.time);
+}
+```
+
+При переключении ТФ:
+
+```ts
+function switchTimeframe(tfSeconds: number) {
+  const aggregated = aggregate(rawPoints, tfSeconds);
+  lineSeries.setData(aggregated);
+}
+```
+
+И дальше продолжай обновлять:
+
+- Для TF 1s: `lineSeries.update({ time, value })`.
+- Для TF больше 1s: обновляй последнюю точку в bucket.
+
+Пример:
+
+```ts
+const bucketStart = Math.floor(now / tfSeconds) * tfSeconds;
+lineSeries.update({ time: bucketStart as UTCTimestamp, value });
+```
+
+Это удобно, потому что `lightweight-charts` при `update` с тем же `time` перезаписывает последнюю точку.
+
+---
+
+### Шаг 6. Переключение ТФ
+
+Простой UI:
+
+```tsx
+const TIMEFRAMES = [
+  { label: '1s', seconds: 1 },
+  { label: '5s', seconds: 5 },
+  { label: '15s', seconds: 15 },
+  { label: '30s', seconds: 30 },
+  { label: '1m', seconds: 60 },
+];
+```
+
+При клике:
+
+```ts
+setActiveTf(tf.seconds);
+switchTimeframe(tf.seconds);
+```
+
+---
+
+### Шаг 7. Rolling-переход между рынками
+
+Каждые 5 минут:
+
+1. Старый рынок заканчивается.
+2. Начинается новый.
+3. Нужно сбросить график и начать с 50.
+
+Алгоритм:
+
+```ts
+let currentStartTime: number;
+
+function scheduleMarketRollover() {
+  const now = Math.floor(Date.now() / 1000);
+  const nextStart = currentStartTime + 300;
+
+  if (now >= nextStart) {
+    switchToMarketByStartTime(nextStart);
+  } else {
+    setTimeout(scheduleMarketRollover, Math.min(1000, (nextStart - now) * 1000));
+  }
+}
+```
+
+Что делает `switchToMarketByStartTime`:
+
+1. Закрывает или фильтрует старый WebSocket.
+2. Сбрасывает `rawPoints`.
+3. Устанавливает `currentUpTokenId` нового рынка.
+4. Ставит стартовую точку `{ time: nextStart, value: 50 }`.
+5. Подписывается на новый `upTokenId`.
+6. Обновляет заголовок.
+
+Важно: после rollover могут приходить сообщения от старого рынка. Поэтому в `handleMessage` обязательно:
+
+```ts
+if (msg.asset_id !== currentUpTokenId) return;
+```
+
+---
+
+## 4. Возможные ошибки и что учесть
+
+### 4.1. CORS
+
+Из браузера WebSocket обычно работает без CORS.  
+Но REST-запросы к Gamma/CLOB могут быть заблокированы CORS.
+
+Решение:
+
+- Использовать serverless-прокси:
+  - Vercel Function
+  - Cloudflare Worker
+  - Next.js API route
+- Или временно CORS-прокси.
+
+Но real-time лучше не проксировать без необходимости.
+
+---
+
+### 4.2. Rate limits
+
+Polymarket может вернуть `429 Too Many Requests`.
+
+Что делать:
+
+- Не опрашивать REST чаще, чем раз в 5–10 секунд.
+- Для real-time использовать WebSocket, а не polling.
+- При 429 — retry с exponential backoff.
+
+```ts
+async function fetchWithRetry(url: string, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+    });
+
+    if (response.ok) {
+      return response.json();
+    }
+
+    if (response.status === 429 || response.status >= 500) {
+      const delay = 1000 * 2 ** i + Math.random() * 500;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    } else {
+      throw new Error(`HTTP ${response.status}`);
+    }
+  }
+
+  throw new Error('Request failed');
+}
+```
+
+---
+
+### 4.3. Ошибка выбора токена
+
+В событии `btc-updown-5m` есть два токена: Up и Down.
+
+Если выбрать Down, цена будет `100 - UpPrice`.
+
+Убедись, что выбрал Up-токен.
+
+```ts
+const market = event.markets.find((m) => m.outcomes?.[0] === 'Up');
+const upTokenId = market.clobTokenIds?.[0];
+```
+
+Если структура отличается, в DevTools смотри, какой `clobTokenIds` соответствует Up.
+
+---
+
+### 4.4. Рынок может не торговаться каждую секунду
+
+Если использовать только `last_trade_price`, линия будет рваной.
+
+Решение:
+
+- Используй midpoint из книги ордеров.
+- Если нет книги — неси последнюю известную цену.
+- Если нет ни одной цены — показывай 50.
+
+---
+
+### 4.5. Таймзоны и UNIX-секунды
+
+`lightweight-charts` принимает UNIX-секунды.
+
+Polymarket может возвращать:
+
+- UNIX-секунды
+- UNIX-миллисекунды
+- строку
+
+Поэтому:
+
+```ts
+function toUnixSeconds(value: string | number): number {
+  const num = Number(value);
+
+  if (num > 10_000_000_000) {
+    return Math.floor(num / 1000);
+  }
+
+  return num;
+}
+```
+
+---
+
+### 4.6. WebSocket дисконнекты
+
+WebSocket может закрыться.
+
+Нужен auto-reconnect с exponential backoff:
+
+```ts
+let reconnectAttempt = 0;
+
+ws.onclose = () => {
+  reconnectAttempt += 1;
+  const delay = Math.min(1000 * 2 ** reconnectAttempt, 30000);
+  setTimeout(() => connectWebSocket(), delay);
+};
+
+ws.onopen = () => {
+  reconnectAttempt = 0;
+  sendSubscription();
+};
+```
+
+---
+
+### 4.7. Устаревшие сообщения после rollover
+
+После переключения рынка старые WS-сообщения могут продолжать приходить.
+
+Обязательно:
+
+```ts
+if (msg.asset_id !== currentUpTokenId) return;
+```
+
+Или закрывай WebSocket и открывай заново.
+
+---
+
+### 4.8. Изменения API Polymarket
+
+Polymarket может менять:
+
+- Эндпоинты.
+- Формат сообщений WebSocket.
+- Требовать API-ключ для части данных.
+- Менять public/private каналы.
+
+Что делать:
+
+- Следи за официальной документацией.
+- В DevTools своего браузера открывай WS-соединение официального сайта и смотри формат.
+- Не хардкодь token id.
+- Используй field names из Gamma API динамически.
+
+---
+
+### 4.9. Проблемы с производительностью
+
+Для 5-минутного рынка данных мало:
+
+- 1s TF → 300 точек
+- 5s TF → 60 точек
+- 1m TF → 5 точек
+
+Проблем с производительностью быть не должно.
+
+Но если добавишь больше рынков — ограничивай историю:
+
+```ts
+const MAX_POINTS = 10_000;
+rawPoints.splice(0, rawPoints.length - MAX_POINTS);
+```
+
+Не вызывай `lineSeries.setData()` каждую секунду. Используй `update()`.
+
+---
+
+### 4.10. Ошибка с временем точки
+
+`lightweight-charts` не принимает одинаковые timestamp в `setData`.
+
+Убедись, что перед `setData` нет дубликатов:
+
+```ts
+const unique = Array.from(
+  new Map(points.map((p) => [p.time, p])).values(),
+);
+```
+
+---
+
+## 5. Итоговая реализация по шагам
+
+1. **Настрой проект**  
+   Vite + React + TS + lightweight-charts.
+
+2. **Определи текущий рынок**  
+   Через Gamma и slug.
+
+3. **Получи token id Up-токена**  
+   Из Gamma.
+
+4. **Построй начальный график**  
+   StartTime + 50.
+
+5. **Подключи WebSocket**  
+   CLOB WS, подпишись на `market` канал.
+
+6. **Собирай raw 1s точки**  
+   При каждом сообщении обновляй последнюю цену.
+
+7. **Раз в секунду обновляй график**  
+   `lineSeries.update()`.
+
+8. **Сделай агрегацию для TF**  
+   1s, 5s, 15s, 30s, 1m.
+
+9. **Обработай rollover**  
+   Смена рынка каждые 5 минут, сброс на 50.
+
+10. **Добавь обработку ошибок**  
+    Retry, reconnect, CORS, 429.
+
+---
+
+## 6. Если хочется полностью прямого подключения без CORS
+
+WebSocket в браузере — самое прямое подключение.
+
+Но REST-запросы на Gamma могут падать из-за CORS.  
+В этом случае можно использовать маленький Node.js/Next.js proxy:
+
+```ts
+export default async function handler(req, res) {
+  const url = req.query.url as string;
+
+  if (!url) {
+    return res.status(400).json({ error: 'url is required' });
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'Mozilla/5.0',
+    },
+  });
+
+  const data = await response.json();
+  res.status(response.status).json(data);
+}
+```
+
+Вызывай так:
+
+```text
+/api/proxy?url=https://gamma-api.polymarket.com/events?slug=...
+```
+
+WebSocket при этом можно оставить прямым.
+
+---
+
+## 7. Полезные сниппеты
+
+### WebSocket manager
+
+```ts
+class MarketWebSocket {
+  private ws: WebSocket | null = null;
+  private pending: string[] = [];
+  private reconnectAttempt = 0;
+
+  constructor(
+    private url: string,
+    private onMessage: (msg: any) => void,
+  ) {}
+
+  connect() {
+    this.ws = new WebSocket(this.url);
+
+    this.ws.onopen = () => {
+      this.reconnectAttempt = 0;
+      this.pending.forEach((msg) => this.ws?.send(msg));
+      this.pending = [];
+    };
+
+    this.ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (Array.isArray(data)) {
+        data.forEach(this.onMessage);
+      } else {
+        this.onMessage(data);
+      }
+    };
+
+    this.ws.onclose = () => {
+      this.reconnectAttempt += 1;
+      const delay = Math.min(1000 * 2 ** this.reconnectAttempt, 30000);
+      setTimeout(() => this.connect(), delay);
+    };
+  }
+
+  subscribe(message: unknown) {
+    const json = JSON.stringify(message);
+
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(json);
+    } else {
+      this.pending.push(json);
+    }
+  }
+}
+```
+
+---
+
+## 8. Важно про текущие реалии Polymarket
+
+По состоянию на 2025/2026:
+
+- Основной публичный API — Gamma API и CLOB API.
+- Старый Strapi API (`strapi.polymarket.com`) считается устаревшим.
+- WebSocket CLOB работает, но формат сообщений может немного отличаться в зависимости от канала.
+- Некоторые public REST endpoints могут требовать правильные заголовки `Accept: application/json`.
+- Некоторые данные могут быть закрыты для определённых юрисдикций.
+- Никогда не вставляй приватные ключи/API-ключи в frontend.
+- Используй только публичные market-данные.
+
+Перед началом разработки обязательно:
+
+1. Открой официальный сайт Polymarket.
+2. Открой DevTools → Network.
+3. Найди WebSocket соединение `wss://ws-subscriptions-clob.polymarket.com/ws/market`.
+4. Посмотри реальные подписки и сообщения.
+5. Повтори их в своём коде.
+
+---
+
+## 9. Рекомендованная структура файлов
+
+```text
+src/
+  api/
+    gamma.ts
+    clob.ts
+    ws.ts
+  store/
+    market.ts
+    price.ts
+  hooks/
+    useMarket.ts
+    usePriceSeries.ts
+  components/
+    Chart.tsx
+    TimeframeSelector.tsx
+  utils/
+    aggregate.ts
+    time.ts
+```
+
+---
+
+Если нужно, могу расписать какой-то из блоков ещё детальнее — например, полный код `usePriceSeries` или более точную обработку WebSocket-сообщений для канала `market`.

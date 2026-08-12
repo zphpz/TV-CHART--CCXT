@@ -1,0 +1,397 @@
+1. Архитектура и стек технологий приложения
+
+▫️ **Клиентский стек**: TypeScript + Vite + Lightweight Charts (v4.x).
+▫️ **Двухуровневая архитектура для исключения лагов**:
+▫️ **Web Worker (Data & Processing Engine)**: Выносит сетевые запросы к Polymarket (WebSocket, REST API), парсинг входящего потока тиков, их фильтрацию и агрегацию по таймфреймам в отдельный поток. Это гарантирует, что тяжелая обработка данных не заблокирует UI.
+▫️ **Main Thread (UI & Lightweight Charts)**: Занимается только отрисовкой интерфейса и передачей уже готовых скомпонованных точек/свечей в график через метод `series.update()`.
+▫️ **In-Memory Буфер тиков**: Хранение сырых посекундных тиков за последние N часов в кольцевом буфере Web Worker. Это позволяет мгновенно переключать таймфреймы (1s, 5s, 15s, 30s, 1m) без повторных запросов на сервер.
+
+—
+
+2. Взаимодействие с API и WebSocket Polymarket
+
+▫️ **Получение идентификаторов текущего rolling-рынка (Gamma API)**:
+▫️ Каждые 5 минут Polymarket создает новый контракт с уникальными `conditionId` и `clobTokenIds`.
+▫️ Первичный запрос выполняется к Gamma API (`[https://gamma-api.polymarket.com/events?slug=btc-updown-5m-](https://gamma-api.polymarket.com/events?slug=btc-updown-5m-)...`), откуда извлекаются токены исходов: `Up` (YES) и `Down` (NO).
+▫️ Для построения графика отслеживается цена токена `Up`, которая находится в диапазоне от `$0.00` до `$1.00` (что соответствует 0–100 cents).
+▫️ **Подключение к CLOB WebSocket (`wss://[ws-subscriptions-clob.polymarket.com/ws/market](https://ws-subscriptions-clob.polymarket.com/ws/market)`)**:
+▫️ Отправка сообщения подписки на канал рынка:
+
+```json
+{
+  "type": "market",
+  "assets_ids": ["<UP_TOKEN_ID>"]
+}
+
+```
+
+▫️ Для получения максимальной частоты обновлений (1 секунда и чаще) считываются события `last_trade_price` или рассчитывается справедливая Mid-Price цена стакана по формуле `(best_bid + best_ask) / 2`.
+▫️ **Механизм бесшовного переключения рынков (Rolling Switcher)**:
+▫️ За 10–15 секунд до завершения текущей 5-минутки Worker делает фоновый запрос к API и запрашивает `token_id` будущего рынка.
+▫️ В момент наступления времени $T_{expire}$ отправляется команда `unsubscribe` для старого токена и `subscribe` для нового.
+▫️ WebSocket-соединение при этом не пересоздается, что исключает задержки в получении цен.
+
+—
+
+3. Агрегация тиков, таймфреймы и сквозная история
+
+▫️ **Посекундный агрегатор (Tick-to-Timeframe Engine)**:
+▫️ Каждая входящая цена привязывается к временному слоту выбранного таймфрейма:
+`bucketTimestamp = Math.floor(eventTimestamp / timeframeInSeconds) * timeframeInSeconds`.
+▫️ Внутри Worker формируется текущая свеча или точка линии (`time`, `open`, `high`, `low`, `close`).
+▫️ **Переключение таймфреймов на лету**:
+▫️ При нажатии кнопок ТФ (1s, 5s, 15s, 30s, 1m) Worker за миллисекунды пересчитывает сохраненный массив сырых тиков под новый шаг времени и отправляет единый массив в `series.setData()`.
+▫️ **Сквозная склейка исторического графика**:
+▫️ При старте приложения запрашивается история прошлых завершенных 5-минуток через Polymarket History API (`[https://clob.polymarket.com/prices-history?market=](https://clob.polymarket.com/prices-history?market=)<condition_id>&interval=max&fidelity=1`).
+▫️ Прошлые интервалы последовательно склеиваются в единый непрерывный временной массив.
+
+—
+
+4. Интеграция с Lightweight Charts и оптимизация рендеринга
+
+▫️ **Инициализация и фиксация шкалы цен**:
+▫️ Для корректного отображения цен от 0 до 100 центов настраивается жесткий диапазон шкалы Y:
+
+```javascript
+import { createChart, PriceScaleMode } from 'lightweight-charts';
+
+const chart = createChart(document.getElementById('chart'), {
+  layout: { background: { color: '#111' }, textColor: '#ccc' },
+  rightPriceScale: {
+    autoScale: false,
+    mode: PriceScaleMode.Normal,
+    minValue: 0,
+    maxValue: 100,
+  },
+  timeScale: {
+    timeVisible: true,
+    secondsVisible: true,
+  },
+});
+
+const lineSeries = chart.addLineSeries({
+  color: '#26a69a',
+  lineWidth: 2,
+  priceFormat: {
+    type: 'custom',
+    formatter: (price) => `${price.toFixed(1)}¢`,
+  },
+});
+
+```
+
+▫️ **Дроттлинг рендеринга (Throttling)**:
+▫️ Если входящий поток обновлений превышает 10 тиков в секунду, обновления накапливаются в микро-буфер UI-потока и передаются в `lineSeries.update()` пакетами через `requestAnimationFrame` (раз в 100–200 мс).
+▫️ Это устраняет микрофризы браузера при резких скачках активности на рынке.
+
+—
+
+5. Критические ошибки, подводные камни и решение проблем
+
+▫️ **Проблема вертикальных скачков при смене rolling-рынка (Price Discontinuity)**:
+▫️ Новый 5-минутный рынок всегда открывается около 50¢, тогда как предыдущий рынок завершается близко к 100¢ или 0¢.
+▫️ *Решение*: Чтобы линия графика не рисовала резкий вертикальный сброс с 99¢ до 50¢, между рынками передается элемент Whitespace Data (`{ time: timestamp }` без поля `value`). Lightweight Charts разрывает линию на стыке рынков. Дополнительно граница 5-минутки отмечается маркером `series.setMarkers()`.
+▫️ **Ошибка монотоности времени в Lightweight Charts**:
+▫️ Библиотека мгновенно выбрасывает исключение, если попытаться передать точку с `time <= previous_time`.
+▫️ *Решение*: В агрегаторе строго контролируется условие: если тик пришел в пределах той же секунды/таймслота, выполянется обновление существующей точки (`series.update()`), а не добавление новой.
+▫️ **Задержки создания стакана Polymarket при смене 5-минуток**:
+▫️ В редких случаях сервер Polymarket активирует новый контракт с задержкой в 1–3 секунды после окончания предыдущего.
+▫️ *Решение*: Внедрить Retry-петлю с интервалом 300–500 мс для фонового опроса Gamma API до момента появления активного `token_id`.
+▫️ **Рассинхронизация системного времени клиента**:
+▫️ Если время на компьютере пользователя спешит или отстает, расчёт интервалов таймфреймов сдвинется относительно серверов Polymarket.
+▫️ *Решение*: При запуске рассчитывается смещение времени `serverOffset = polymarketServerTime - Date.now()`, которое применяются ко всем входящим timestamps.
+▫️ **Обрывы WebSocket и лимиты**:
+▫️ Настройка периодического Ping/Pong (раз в 10 секунд).
+▫️ При обрыве соединения запускается реконнект с экспоненциальной задержкой (Exponential Backoff), а пропущенный за время оффлайна отрезок графика запрашивается через REST API.
+
+далее всего лишь пример
+
+1. Код Web Worker (`polymarketWorker.ts`)
+
+▫️ Этот модуль выполняется в отдельном потоке браузера. Он удерживает WebSocket-соединение с Polymarket, сохраняет сырой поток тиков в кольцевой буфер и осуществляет агрегацию данных по таймфреймам (1s, 5s, 15s, 30s, 1m).
+
+```typescript
+// polymarketWorker.ts
+
+interface Tick {
+  timestamp: number; // Unix timestamp в секундах
+  price: number;     // Цена в центах (0 - 100)
+}
+
+interface ChartDataPoint {
+  time: number;
+  value?: number; // Поле value отсутствует для точек разрыва (Whitespace Data)
+}
+
+interface WorkerConfig {
+  tokenId: string;
+  timeframe: number; // В секундах: 1, 5, 15, 30, 60
+}
+
+let currentConfig: WorkerConfig = {
+  tokenId: '',
+  timeframe: 1,
+};
+
+let ws: WebSocket | null = null;
+const rawTicksBuffer: Tick[] = [];
+let lastEmittedTimestamp = 0;
+
+// Слушатель сообщений от главного потока (Main Thread)
+self.onmessage = (e: MessageEvent) => {
+  const { action, payload } = e.data;
+
+  if (action === 'INIT' || action === 'SWITCH_MARKET') {
+    const { tokenId, timeframe, isNewMarket } = payload;
+    currentConfig.tokenId = tokenId;
+    if (timeframe) currentConfig.timeframe = timeframe;
+
+    if (isNewMarket) {
+      // Отправляем Whitespace point для разрыва линии на стыке 5-минуток
+      const now = Math.floor(Date.now() / 1000);
+      self.postMessage({
+        type: 'WHITESPACE',
+        data: { time: now }
+      });
+    }
+
+    connectWebSocket(tokenId);
+  }
+
+  if (action === 'CHANGE_TIMEFRAME') {
+    currentConfig.timeframe = payload.timeframe;
+    recalculateAndSendAll();
+  }
+};
+
+function connectWebSocket(tokenId: string) {
+  if (ws) {
+    ws.close();
+  }
+
+  ws = new WebSocket('wss://ws-subscriptions-clob.polymarket.com/ws/market');
+
+  ws.onopen = () => {
+    const subscribeMsg = JSON.stringify({
+      type: 'market',
+      assets_ids: [tokenId]
+    });
+    ws?.send(subscribeMsg);
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      handleWsMessage(data);
+    } catch (err) {
+      console.error('Ошибка парсинга WS сообщения:', err);
+    }
+  };
+
+  ws.onerror = (err) => {
+    console.error('Ошибка WebSocket:', err);
+  };
+
+  ws.onclose = () => {
+    // Автоматический реконнект при обрыве
+    setTimeout(() => {
+      if (currentConfig.tokenId === tokenId) {
+        connectWebSocket(tokenId);
+      }
+    }, 1500);
+  };
+}
+
+function handleWsMessage(data: any) {
+  let priceCents: number | null = null;
+
+  // Извлечение цены из структуры WebSocket Polymarket (диапазон 0.00 - 1.00 -> 0 - 100 центов)
+  if (data.event_type === 'last_trade_price' && data.price !== undefined) {
+    priceCents = parseFloat(data.price) * 100;
+  } else if (data.price !== undefined) {
+    priceCents = parseFloat(data.price) * 100;
+  } else if (data.bids && data.asks && data.bids.length > 0 && data.asks.length > 0) {
+    const bestBid = parseFloat(data.bids[0].price);
+    const bestAsk = parseFloat(data.asks[0].price);
+    priceCents = ((bestBid + bestAsk) / 2) * 100;
+  }
+
+  if (priceCents === null || isNaN(priceCents)) return;
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const tick: Tick = { timestamp: nowSeconds, price: priceCents };
+
+  // Сохраняем в in-memory буфер (ограничиваем последние 20,000 тиков)
+  rawTicksBuffer.push(tick);
+  if (rawTicksBuffer.length > 20000) {
+    rawTicksBuffer.shift();
+  }
+
+  processSingleTick(tick);
+}
+
+function processSingleTick(tick: Tick) {
+  const tf = currentConfig.timeframe;
+  const bucketTime = Math.floor(tick.timestamp / tf) * tf;
+
+  // Жесткое правило Lightweight Charts: время точек должно строго расти
+  if (bucketTime < lastEmittedTimestamp) return;
+
+  const point: ChartDataPoint = {
+    time: bucketTime,
+    value: tick.price
+  };
+
+  lastEmittedTimestamp = bucketTime;
+
+  self.postMessage({
+    type: 'TICK_UPDATE',
+    data: point
+  });
+}
+
+function recalculateAndSendAll() {
+  if (rawTicksBuffer.length === 0) return;
+
+  const tf = currentConfig.timeframe;
+  const aggregatedMap = new Map<number, number>();
+
+  // Группировка по таймслотам выбранного ТФ
+  for (const tick of rawTicksBuffer) {
+    const bucketTime = Math.floor(tick.timestamp / tf) * tf;
+    aggregatedMap.set(bucketTime, tick.price); // Берем последнюю цену в интервале
+  }
+
+  const seriesData: ChartDataPoint[] = [];
+  const sortedTimes = Array.from(aggregatedMap.keys()).sort((a, b) => a - b);
+
+  for (const time of sortedTimes) {
+    seriesData.push({
+      time,
+      value: aggregatedMap.get(time)
+    });
+  }
+
+  if (seriesData.length > 0) {
+    lastEmittedTimestamp = seriesData[seriesData.length - 1].time;
+  }
+
+  self.postMessage({
+    type: 'SET_FULL_DATA',
+    data: seriesData
+  });
+}
+
+```
+
+—
+
+2. Код главного UI-потока (`main.ts`)
+
+▫️ Модуль отвечает за инициализацию Lightweight Charts, фиксирование вертикальной оси 0–100¢, прием данных из Web Worker через буфер `requestAnimationFrame` и управление переключением таймфреймов.
+
+```typescript
+// main.ts
+import { createChart, PriceScaleMode, IChartApi, ISeriesApi } from 'lightweight-charts';
+
+const container = document.getElementById('chart-container') as HTMLElement;
+
+// 1. Инициализация графика с настройкой фиксированной шкалы цен
+const chart: IChartApi = createChart(container, {
+  width: container.clientWidth,
+  height: 550,
+  layout: {
+    background: { color: '#0f172a' },
+    textColor: '#94a3b8',
+  },
+  grid: {
+    vertLines: { color: '#1e293b' },
+    horzLines: { color: '#1e293b' },
+  },
+  rightPriceScale: {
+    autoScale: false, // Отключаем авто-масштабирование
+    mode: PriceScaleMode.Normal,
+    minValue: 0,    // Нижняя граница 0¢
+    maxValue: 100,  // Верхняя граница 100¢
+  },
+  timeScale: {
+    timeVisible: true,
+    secondsVisible: true,
+  },
+});
+
+// Создаем линейную серию (LineSeries)
+const lineSeries: ISeriesApi<'Line'> = chart.addLineSeries({
+  color: '#38bdf8',
+  lineWidth: 2,
+  priceFormat: {
+    type: 'custom',
+    formatter: (price: number) => `${price.toFixed(1)}¢`,
+  },
+});
+
+// 2. Подключение Web Worker
+const worker = new Worker(new URL('./polymarketWorker.ts', import.meta.url), { type: 'module' });
+
+// Троттлинг обновлений через requestAnimationFrame для защиты UI от подвисаний
+let pendingUpdate: { time: number; value?: number } | null = null;
+let animFrameId: number | null = null;
+
+worker.onmessage = (e: MessageEvent) => {
+  const { type, data } = e.data;
+
+  if (type === 'SET_FULL_DATA') {
+    lineSeries.setData(data);
+  } else if (type === 'WHITESPACE') {
+    lineSeries.update(data); // Разрыв линии между 5-минутками
+  } else if (type === 'TICK_UPDATE') {
+    pendingUpdate = data;
+    if (!animFrameId) {
+      animFrameId = requestAnimationFrame(() => {
+        if (pendingUpdate) {
+          lineSeries.update(pendingUpdate);
+          pendingUpdate = null;
+        }
+        animFrameId = null;
+      });
+    }
+  }
+};
+
+// Функция переключения или старта отслеживания токена рынка
+export function switchMarket(tokenId: string, isNewMarket = false) {
+  worker.postMessage({
+    action: 'SWITCH_MARKET',
+    payload: { tokenId, timeframe: 1, isNewMarket }
+  });
+}
+
+// Функция смены таймфрейма (1s, 5s, 15s, 30s, 60s)
+export function setTimeframe(tfSeconds: number) {
+  worker.postMessage({
+    action: 'CHANGE_TIMEFRAME',
+    payload: { timeframe: tfSeconds }
+  });
+}
+
+// Привязка кнопок UI переключения ТФ
+document.getElementById('btn-1s')?.addEventListener('click', () => setTimeframe(1));
+document.getElementById('btn-5s')?.addEventListener('click', () => setTimeframe(5));
+document.getElementById('btn-15s')?.addEventListener('click', () => setTimeframe(15));
+document.getElementById('btn-30s')?.addEventListener('click', () => setTimeframe(30));
+document.getElementById('btn-1m')?.addEventListener('click', () => setTimeframe(60));
+
+// Автоматический адаптив под размер экрана
+window.addEventListener('resize', () => {
+  chart.applyOptions({ width: container.clientWidth });
+});
+
+```
+
+—
+
+3. Ключевые архитектурные решения в коде
+
+▫️ **Защита UI от зависания (Throttling)**: Метод `requestAnimationFrame` в `main.ts` накапливает быстро идущие тики из WebSocket и обновляет график не чаще 60 кадров в секунду.
+▫️ **Разрыв графиков без вертикальных скачков (Whitespace Point)**: При наступлении новой 5-минутки передается объект `{ time: timestamp }` без свойства `value`. Lightweight Charts оставляет визуальный разрыв между скачком цены с ~100¢ до 50¢.
+▫️ **Мгновенный пересчет ТФ**: Вся агрегация и хранение сырой истории вынесены в `rawTicksBuffer` внутри Worker, благодаря чему клик по кнопкам 1s/5s/15s/30s/1m мгновенно перестраивает график без сетевых задержек.
