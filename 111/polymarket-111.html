@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Polymarket BTC Up/Down — Live Single File App</title>
-  <meta name="description" content="Real-time Polymarket BTC Up/Down rolling market chart. Standalone single file app with enhanced mobile interface." />
+  <title>Polymarket BTC Up/Down — Live Chart</title>
+  <meta name="description" content="Real-time Polymarket BTC Up/Down rolling market chart. Responsive live application for desktop and mobile." />
   
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -13,7 +13,7 @@
 
   <style>
     /* ═══════════════════════════════════════════════════════════════════════════
-       SECTION 1: CSS DESIGN SYSTEM & MOBILE RESPONSIVE STYLES
+       SECTION 1: CSS DESIGN SYSTEM — DESKTOP DEFAULT & MOBILE RESPONSIVE
        ═══════════════════════════════════════════════════════════════════════════ */
     *, *::before, *::after {
       box-sizing: border-box;
@@ -51,9 +51,9 @@
       --line-red:       #ff4d6d;
       --line-neutral:   #4dabf7;
 
-      /* Dynamic Heights */
+      /* Standard Heights */
       --header-h:       52px;
-      --pricebar-h:     50px;
+      --pricebar-h:     48px;
       --toolbar-h:      42px;
       --footer-h:       30px;
 
@@ -70,9 +70,8 @@
       color: var(--text-primary);
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
       font-size: 13px;
-      line-height: 1.2;
+      line-height: 1;
       overflow: hidden;
-      touch-action: manipulation;
       -webkit-font-smoothing: antialiased;
     }
 
@@ -87,14 +86,13 @@
       position: relative;
     }
 
-    /* ── Header ───────────────────────────────────────────── */
+    /* ── DESKTOP HEADER ───────────────────────────────────── */
     #main-header {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 12px;
+      gap: 16px;
       height: var(--header-h);
-      padding: 0 14px;
+      padding: 0 16px;
       background: var(--bg-secondary);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
@@ -105,14 +103,15 @@
     #brand {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
+      min-width: 130px;
     }
 
     #brand-logo {
       width: 32px;
       height: 32px;
-      background: linear-gradient(135deg, rgba(0,212,170,0.18), rgba(59,130,246,0.18));
-      border: 1px solid rgba(0,212,170,0.35);
+      background: linear-gradient(135deg, rgba(0,212,170,0.15), rgba(59,130,246,0.15));
+      border: 1px solid rgba(0,212,170,0.3);
       border-radius: 8px;
       display: flex;
       align-items: center;
@@ -123,26 +122,24 @@
     #brand-text {
       display: flex;
       flex-direction: column;
-      gap: 1px;
+      gap: 2px;
     }
     #brand-name {
       font-size: 12px;
       font-weight: 700;
       letter-spacing: 0.08em;
       color: var(--text-primary);
-      white-space: nowrap;
     }
     #brand-sub {
       font-size: 10px;
       color: var(--text-muted);
       letter-spacing: 0.05em;
-      white-space: nowrap;
     }
 
     /* Market switcher */
     #market-switcher {
       display: flex;
-      gap: 3px;
+      gap: 4px;
       background: var(--bg-primary);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -157,11 +154,11 @@
       font-size: 12px;
       font-weight: 600;
       letter-spacing: 0.05em;
-      padding: 6px 12px;
+      padding: 5px 14px;
       border-radius: 6px;
       cursor: pointer;
       transition: all var(--tr-fast);
-      min-height: 32px;
+      min-height: 30px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -176,9 +173,10 @@
 
     /* Status panel */
     #status-panel {
+      margin-left: auto;
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 20px;
     }
 
     #status-indicator {
@@ -191,14 +189,14 @@
     }
 
     #status-dot {
-      width: 8px; height: 8px;
+      width: 7px; height: 7px;
       border-radius: 50%;
       animation: pulse 2s ease infinite;
     }
 
-    .status-live #status-dot       { background: var(--green); box-shadow: 0 0 8px var(--green); }
-    .status-connecting #status-dot { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
-    .status-error #status-dot      { background: var(--red); box-shadow: 0 0 8px var(--red); animation: none; }
+    .status-live #status-dot       { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .status-connecting #status-dot { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+    .status-error #status-dot      { background: var(--red); box-shadow: 0 0 6px var(--red); animation: none; }
 
     .status-live #status-text       { color: var(--green); }
     .status-connecting #status-text { color: var(--yellow); }
@@ -206,42 +204,33 @@
 
     @keyframes pulse {
       0%, 100% { opacity: 1; }
-      50%       { opacity: 0.35; }
+      50%       { opacity: 0.4; }
     }
 
-    /* ── Price Bar ────────────────────────────────────────── */
+    /* ── DESKTOP PRICE BAR ────────────────────────────────── */
     #price-bar {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      min-height: var(--pricebar-h);
-      padding: 4px 14px;
-      gap: 8px;
+      height: var(--pricebar-h);
+      padding: 0 16px;
+      gap: 0;
       background: var(--bg-panel);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
       overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    .price-group {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-shrink: 0;
     }
 
     .price-item {
       display: flex;
       flex-direction: column;
-      justify-content: center;
-      gap: 2px;
-      min-width: 60px;
+      gap: 3px;
+      padding: 0 18px;
+      min-width: 80px;
     }
 
     .price-divider {
       width: 1px;
-      height: 26px;
+      height: 28px;
       background: var(--border);
       flex-shrink: 0;
     }
@@ -256,15 +245,15 @@
 
     .price-value {
       font-family: 'JetBrains Mono', monospace;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 500;
       color: var(--text-primary);
       transition: color var(--tr-fast);
     }
-    .price-value.large { font-size: 17px; font-weight: 700; color: var(--accent-teal); }
+    .price-value.large { font-size: 18px; font-weight: 700; color: var(--accent-teal); }
     .price-value.green { color: var(--green); }
     .price-value.red   { color: var(--red); }
-    .price-value.muted { color: var(--text-secondary); font-size: 11px; }
+    .price-value.muted { color: var(--text-secondary); font-size: 12px; }
     .price-value.small { font-size: 11px; }
 
     .price-flash-up   { animation: flashUp 0.4s ease; }
@@ -273,8 +262,10 @@
     @keyframes flashUp   { 0% { color: var(--green); } 100% { } }
     @keyframes flashDown { 0% { color: var(--red); }   100% { } }
 
-    /* Center Timer */
+    /* Center Timer on Desktop */
     #timer-center {
+      margin-left: auto;
+      margin-right: auto;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -282,8 +273,8 @@
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 4px 12px;
-      min-width: 84px;
+      padding: 3px 14px;
+      min-width: 90px;
       flex-shrink: 0;
     }
 
@@ -296,23 +287,24 @@
 
     #timer-value {
       font-family: 'JetBrains Mono', monospace;
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 700;
-      color: var(--accent-teal);
+      color: var(--text-primary);
     }
     #timer-value.urgent { color: var(--red); animation: pulse 1s infinite; }
 
-    /* Outcome Switcher */
+    /* Outcome Switcher on Desktop */
     #outcome-switcher {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
+      margin-left: auto;
       flex-shrink: 0;
     }
 
     #outcome-buttons {
       display: flex;
-      gap: 3px;
+      gap: 4px;
       background: var(--bg-primary);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -330,8 +322,9 @@
       border-radius: 6px;
       cursor: pointer;
       transition: all var(--tr-fast);
-      min-height: 30px;
+      min-height: 28px;
     }
+    .outcome-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
     .outcome-btn:active { transform: scale(0.96); }
 
     #btn-outcome-up.active {
@@ -346,26 +339,22 @@
       box-shadow: 0 0 10px rgba(239,68,68,0.4);
     }
 
-    /* ── Chart Toolbar ────────────────────────────────────── */
+    /* ── DESKTOP CHART TOOLBAR ────────────────────────────── */
     #chart-toolbar {
       display: flex;
       align-items: center;
-      justify-content: space-between;
       height: var(--toolbar-h);
       padding: 0 12px;
-      gap: 12px;
+      gap: 16px;
       background: var(--bg-secondary);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
     }
 
     #tf-switcher {
       display: flex;
       align-items: center;
-      gap: 6px;
-      flex-shrink: 0;
+      gap: 8px;
     }
 
     .tf-label {
@@ -396,7 +385,6 @@
       cursor: pointer;
       transition: all var(--tr-fast);
       letter-spacing: 0.04em;
-      min-height: 28px;
     }
     .tf-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
     .tf-btn:active { transform: scale(0.95); }
@@ -413,8 +401,7 @@
       gap: 6px;
       font-size: 11px;
       color: var(--text-muted);
-      white-space: nowrap;
-      overflow: hidden;
+      margin-left: 8px;
     }
 
     .info-label {
@@ -433,7 +420,7 @@
       border: 1px solid var(--border);
       border-radius: 4px;
       padding: 2px 6px;
-      max-width: 170px;
+      max-width: 180px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -445,26 +432,17 @@
       color: var(--text-secondary);
     }
 
-    #chart-actions {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-shrink: 0;
-    }
+    #chart-actions { margin-left: auto; }
 
     .action-btn {
       background: var(--bg-primary);
       border: 1px solid var(--border);
       color: var(--text-secondary);
-      border-radius: 6px;
-      padding: 6px 10px;
+      border-radius: 5px;
+      padding: 5px 7px;
       cursor: pointer;
       transition: all var(--tr-fast);
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      font-size: 11px;
-      min-height: 28px;
+      display: flex; align-items: center;
     }
     .action-btn:hover { color: var(--text-primary); border-color: var(--border-bright); }
     .action-btn:active { transform: scale(0.95); }
@@ -475,8 +453,6 @@
       position: relative;
       overflow: hidden;
       background: var(--bg-primary);
-      width: 100%;
-      min-height: 200px;
     }
 
     #chart-container {
@@ -499,7 +475,7 @@
     }
 
     #loading-spinner {
-      width: 42px; height: 42px;
+      width: 40px; height: 40px;
       border: 3px solid var(--border);
       border-top-color: var(--accent-teal);
       border-radius: 50%;
@@ -510,7 +486,7 @@
 
     #loading-text {
       font-size: 14px;
-      font-weight: 600;
+      font-weight: 500;
       color: var(--text-primary);
     }
     #loading-sub {
@@ -530,12 +506,10 @@
       justify-content: center;
       gap: 12px;
       z-index: 20;
-      padding: 20px;
-      text-align: center;
     }
 
     #error-icon { font-size: 40px; }
-    #error-text { font-size: 15px; font-weight: 600; color: var(--red); }
+    #error-text { font-size: 16px; font-weight: 600; color: var(--red); }
     #error-sub  { font-size: 12px; color: var(--text-muted); }
 
     #btn-retry {
@@ -544,13 +518,12 @@
       border: none;
       color: var(--bg-primary);
       font-family: 'Inter', sans-serif;
-      font-weight: 700;
-      font-size: 13px;
-      padding: 10px 24px;
-      border-radius: 8px;
+      font-weight: 600;
+      font-size: 12px;
+      padding: 8px 20px;
+      border-radius: 6px;
       cursor: pointer;
       transition: all var(--tr-fast);
-      min-height: 40px;
     }
     #btn-retry:hover { background: var(--accent-teal-d); transform: translateY(-1px); }
     #btn-retry:active { transform: scale(0.96); }
@@ -589,37 +562,34 @@
     .toast {
       position: fixed;
       top: 16px;
-      left: 50%;
-      transform: translate(-50%, -100px);
+      right: 16px;
       background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px 18px;
-      font-size: 13px;
-      font-weight: 500;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 12px;
       color: var(--text-primary);
       z-index: 100;
-      opacity: 0;
-      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      transform: translateX(120%);
+      transition: transform 0.3s ease;
       display: flex;
       align-items: center;
       gap: 8px;
-      max-width: 90vw;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
-      white-space: nowrap;
+      max-width: 320px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
     }
-    .toast.show { transform: translate(-50%, 0); opacity: 1; }
-    .toast.info  { border-left: 4px solid var(--accent-teal); }
-    .toast.warn  { border-left: 4px solid var(--yellow); }
-    .toast.error { border-left: 4px solid var(--red); }
+    .toast.show { transform: translateX(0); }
+    .toast.info  { border-left: 3px solid var(--accent-teal); }
+    .toast.warn  { border-left: 3px solid var(--yellow); }
+    .toast.error { border-left: 3px solid var(--red); }
 
     /* ── Scrollbars ───────────────────────────────────────── */
-    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: var(--bg-primary); }
-    ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
 
     /* ═══════════════════════════════════════════════════════════════════════════
-       MOBILE OPTIMIZATIONS (KРУТАЯ МОБИЛЬНАЯ ВЕРСИЯ)
+       MOBILE RESPONSIVE OVERRIDES (ONLY ON MOBILE SCREENS <= 768px)
        ═══════════════════════════════════════════════════════════════════════════ */
     @media (max-width: 768px) {
       :root {
@@ -629,81 +599,50 @@
         --footer-h: 24px;
       }
 
-      #brand-sub { display: none; }
-      #market-info { display: none; }
+      #brand-sub, #market-info, .info-sep, #market-window-display { display: none; }
 
-      /* Mobile Price Bar: 2-column or wrapping grid */
       #price-bar {
         display: grid;
-        grid-template-columns: 1fr 1fr auto;
+        grid-template-columns: repeat(4, 1fr);
         grid-template-areas: 
-          "price timer outcome"
-          "metrics metrics metrics";
+          "price price timer outcome"
+          "bid ask mid spread";
         padding: 6px 10px;
-        gap: 6px;
-        background: var(--bg-panel);
-      }
-
-      .price-group-main {
-        grid-area: price;
-        display: flex;
+        gap: 6px 8px;
+        height: auto;
         align-items: center;
       }
 
-      #timer-center {
-        grid-area: timer;
-        padding: 2px 8px;
-        min-width: 70px;
-      }
-      #timer-value { font-size: 13px; }
-
-      #outcome-switcher {
-        grid-area: outcome;
-        justify-self: end;
-      }
+      #price-current-wrap { grid-area: price; padding: 0; min-width: 0; }
+      #timer-center { grid-area: timer; margin: 0; padding: 3px 8px; min-width: 0; }
+      #outcome-switcher { grid-area: outcome; margin: 0; justify-self: end; }
       #outcome-switcher .price-label { display: none; }
-      .outcome-btn { padding: 4px 10px; font-size: 11px; min-height: 28px; }
 
-      /* Mobile metric bar inside price-bar */
-      .mobile-metrics-row {
-        grid-area: metrics;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        background: var(--bg-primary);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 4px 8px;
-        margin-top: 2px;
-      }
+      .price-divider { display: none; }
+      
+      /* Hide minor items on small mobile screens to prevent overflow */
+      .price-item:nth-of-type(5), /* LAST */
+      .price-item:nth-of-type(7)  /* UPDATED */
+      { display: none; }
 
-      .price-item {
-        min-width: auto;
-        padding: 0;
-      }
+      .price-item { padding: 0; min-width: 0; }
+      .price-item .price-label { font-size: 8px; }
+      .price-item .price-value { font-size: 11px; }
       .price-value.large { font-size: 16px; }
-      .price-value { font-size: 11px; }
-      .price-label { font-size: 8px; }
 
-      .price-divider { height: 18px; margin: 0 2px; }
-
-      /* Mobile toolbar */
-      #chart-toolbar {
-        padding: 0 8px;
-      }
+      #chart-toolbar { padding: 0 8px; gap: 8px; }
       .tf-label { display: none; }
-      .tf-btn { padding: 3px 8px; font-size: 10px; min-height: 26px; }
+      .tf-btn { padding: 3px 8px; font-size: 10px; }
 
-      /* Footer mobile */
       #footer-center { display: none; }
       #main-footer { padding: 0 10px; }
-    }
 
-    @media (max-width: 480px) {
-      #brand-name { font-size: 11px; }
-      .mkt-btn { padding: 4px 8px; font-size: 11px; min-height: 28px; }
-      .price-value.large { font-size: 15px; }
-      #timer-value { font-size: 12px; }
+      .toast {
+        top: 12px;
+        right: 12px;
+        left: 12px;
+        max-width: none;
+      }
     }
   </style>
 </head>
@@ -714,7 +653,7 @@
     <header id="main-header">
       <div id="brand">
         <div id="brand-logo">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
             <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#00d4aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
@@ -741,12 +680,36 @@
 
     <!-- ═══════════════ PRICE BAR ═══════════════ -->
     <div id="price-bar">
-      <!-- Main Price Display -->
-      <div class="price-group-main">
-        <div class="price-item" id="price-current-wrap">
-          <span class="price-label">PRICE</span>
-          <span class="price-value large" id="price-current">--.-¢</span>
-        </div>
+      <!-- Left: prices -->
+      <div class="price-item" id="price-current-wrap">
+        <span class="price-label">PRICE</span>
+        <span class="price-value large" id="price-current">--.-¢</span>
+      </div>
+      <div class="price-divider"></div>
+      <div class="price-item">
+        <span class="price-label">BID</span>
+        <span class="price-value green" id="price-bid">--.-¢</span>
+      </div>
+      <div class="price-item">
+        <span class="price-label">ASK</span>
+        <span class="price-value red" id="price-ask">--.-¢</span>
+      </div>
+      <div class="price-item">
+        <span class="price-label">MID</span>
+        <span class="price-value" id="price-mid">--.-¢</span>
+      </div>
+      <div class="price-item">
+        <span class="price-label">LAST</span>
+        <span class="price-value" id="price-last">--.-¢</span>
+      </div>
+      <div class="price-divider"></div>
+      <div class="price-item">
+        <span class="price-label">SPREAD</span>
+        <span class="price-value muted" id="price-spread">--.-¢</span>
+      </div>
+      <div class="price-item">
+        <span class="price-label">UPDATED</span>
+        <span class="price-value muted small" id="price-age">---</span>
       </div>
 
       <!-- CENTER: countdown timer -->
@@ -755,45 +718,12 @@
         <span id="timer-value">--:--</span>
       </div>
 
-      <!-- Outcome Toggle (UP / DOWN) -->
+      <!-- Right: UP/DOWN toggle -->
       <div id="outcome-switcher">
         <span class="price-label">OUTCOME</span>
         <div id="outcome-buttons">
           <button class="outcome-btn active" id="btn-outcome-up">▲ UP</button>
           <button class="outcome-btn" id="btn-outcome-down">▼ DOWN</button>
-        </div>
-      </div>
-
-      <!-- Secondary Metrics Row (auto-adapts for Mobile / Desktop) -->
-      <div class="mobile-metrics-row">
-        <div class="price-item">
-          <span class="price-label">BID</span>
-          <span class="price-value green" id="price-bid">--.-¢</span>
-        </div>
-        <div class="price-divider"></div>
-        <div class="price-item">
-          <span class="price-label">ASK</span>
-          <span class="price-value red" id="price-ask">--.-¢</span>
-        </div>
-        <div class="price-divider"></div>
-        <div class="price-item">
-          <span class="price-label">MID</span>
-          <span class="price-value" id="price-mid">--.-¢</span>
-        </div>
-        <div class="price-divider"></div>
-        <div class="price-item">
-          <span class="price-label">LAST</span>
-          <span class="price-value" id="price-last">--.-¢</span>
-        </div>
-        <div class="price-divider"></div>
-        <div class="price-item">
-          <span class="price-label">SPREAD</span>
-          <span class="price-value muted" id="price-spread">--.-¢</span>
-        </div>
-        <div class="price-divider"></div>
-        <div class="price-item">
-          <span class="price-label">AGE</span>
-          <span class="price-value muted small" id="price-age">---</span>
         </div>
       </div>
     </div>
@@ -821,7 +751,6 @@
       <div id="chart-actions">
         <button id="btn-reset-zoom" class="action-btn" title="Reset zoom">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
-          <span>Reset</span>
         </button>
       </div>
     </div>
@@ -858,7 +787,7 @@
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v1.2 (Single File)</span>
+        <span id="app-version">v1.3</span>
       </div>
     </footer>
 
@@ -874,7 +803,7 @@
   'use strict';
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 1: PRICE ENGINE (js/price.js)
+     MODULE 1: PRICE ENGINE
      ═══════════════════════════════════════════════════════════════════════════ */
   window.PriceEngine = (() => {
     let _bid = null;
@@ -956,7 +885,7 @@
   })();
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 2: TICK BUFFER (js/buffer.js)
+     MODULE 2: TICK BUFFER
      ═══════════════════════════════════════════════════════════════════════════ */
   window.TickBuffer = (() => {
     const MAX_TICKS = 10800; // 3 hours of 1s ticks
@@ -1029,7 +958,7 @@
   })();
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 3: MARKET MANAGER (js/market.js)
+     MODULE 3: MARKET MANAGER (5m & 15m Robust Discovery & Rollover)
      ═══════════════════════════════════════════════════════════════════════════ */
   window.MarketManager = (() => {
     const GAMMA_BASE  = 'https://gamma-api.polymarket.com';
@@ -1136,47 +1065,62 @@
     }
 
     async function fetchMidpoint(tokenId) {
-      const data = await _fetchWithRetry(`${CLOB_BASE}/midpoint?token_id=${tokenId}`, 2);
-      if (!data) return null;
-      const mid = parseFloat(data.mid);
-      return isNaN(mid) ? null : mid;
+      if (!tokenId) return null;
+      let data = await _fetchWithRetry(`${CLOB_BASE}/midpoint?token_id=${tokenId}`, 2);
+      if (data && data.mid) {
+        const mid = parseFloat(data.mid);
+        if (!isNaN(mid) && mid > 0) return mid;
+      }
+      
+      // Fallback: query CLOB orderbook REST endpoint
+      const book = await _fetchWithRetry(`${CLOB_BASE}/book?token_id=${tokenId}`, 2);
+      if (book && Array.isArray(book.bids) && Array.isArray(book.asks) && book.bids.length > 0 && book.asks.length > 0) {
+        const bestBid = parseFloat(book.bids[book.bids.length - 1].price);
+        const bestAsk = parseFloat(book.asks[book.asks.length - 1].price);
+        if (!isNaN(bestBid) && !isNaN(bestAsk)) {
+          return (bestBid + bestAsk) / 2;
+        }
+      }
+      return null;
     }
 
     async function loadCurrentMarket(tfMinutes) {
       _marketTf = tfMinutes;
       const interval = _intervalSec(tfMinutes);
       const nowSec = Math.floor(Date.now() / 1000);
+      const curTs = Math.floor(nowSec / interval) * interval;
       
-      const candidates = [
-        _getWindowTs(tfMinutes),
-        _getWindowTs(tfMinutes) - interval,
-        _getWindowTs(tfMinutes) + interval,
+      const candidateTimestamps = [
+        curTs,
+        curTs + interval,
+        curTs - interval,
+        curTs + 2 * interval,
+        curTs - 2 * interval,
       ];
 
-      for (const ts of candidates) {
+      let fallbackMarket = null;
+
+      for (const ts of candidateTimestamps) {
         const slug = makeSlug(tfMinutes, ts);
         console.log('[MarketManager] Trying slug:', slug);
         const md = await fetchMarketData(slug);
         if (!md) continue;
-        if (md.endTs && md.endTs < nowSec - 10) continue;
-        console.log('[MarketManager] Found market:', md);
-        return md;
-      }
 
-      console.warn('[MarketManager] Fallback: searching by slug_contains');
-      const arr = await _fetchWithRetry(
-        `${GAMMA_BASE}/events?slug_contains=btc-updown-${tfMinutes}m&active=true&closed=false&limit=5`
-      );
-      if (Array.isArray(arr) && arr.length > 0) {
-        const sorted = arr
-          .map(e => ({ ...e, _endTs: _parseTs(e.endDate) }))
-          .filter(e => e._endTs && e._endTs > nowSec)
-          .sort((a, b) => a._endTs - b._endTs);
-        
-        if (sorted.length > 0) {
-          return fetchMarketData(sorted[0].slug);
+        if (!fallbackMarket || (md.endTs && md.endTs > (fallbackMarket.endTs || 0))) {
+          fallbackMarket = md;
+        }
+
+        if (md.endTs && md.endTs >= nowSec - 30) {
+          console.log('[MarketManager] Found active market:', md.slug);
+          return md;
         }
       }
+
+      if (fallbackMarket) {
+        console.warn('[MarketManager] Using fallback market:', fallbackMarket.slug);
+        return fallbackMarket;
+      }
+
       return null;
     }
 
@@ -1268,7 +1212,7 @@
   })();
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 4: WEBSOCKET CLIENT (js/ws.js)
+     MODULE 4: WEBSOCKET CLIENT (Fixed Unsubscribe & Dynamic Token Switching)
      ═══════════════════════════════════════════════════════════════════════════ */
   window.PolyWS = (() => {
     const WS_URL = 'wss://ws-subscriptions-clob.polymarket.com/ws/market';
@@ -1277,14 +1221,15 @@
     const MAX_RECONNECT_MS  = 30_000;
     const BASE_RECONNECT_MS = 1_000;
 
-    let _ws              = null;
-    let _currentTokenId  = null;
-    let _pingTimer       = null;
-    let _watchdogTimer   = null;
-    let _reconnectTimer  = null;
+    let _ws               = null;
+    let _currentTokenId   = null;
+    let _subscribedTokenId = null;
+    let _pingTimer        = null;
+    let _watchdogTimer    = null;
+    let _reconnectTimer   = null;
     let _reconnectAttempt = 0;
-    let _destroyed       = false;
-    let _lastDataMs      = 0;
+    let _destroyed        = false;
+    let _lastDataMs       = 0;
 
     const handlers = {
       onBook:           null,
@@ -1312,7 +1257,10 @@
       _ws.onopen = () => {
         _reconnectAttempt = 0;
         _lastDataMs = Date.now();
-        if (_currentTokenId) _sendSubscribe(_currentTokenId);
+        if (_currentTokenId) {
+          _sendSubscribe(_currentTokenId);
+          _subscribedTokenId = _currentTokenId;
+        }
         _startPing();
         _startWatchdog();
         if (handlers.onConnected) handlers.onConnected();
@@ -1368,17 +1316,27 @@
       _send(JSON.stringify({ assets_ids: [tokenId], type: 'market', operation: 'unsubscribe' }));
     }
 
-    function clearTokenFilter() { _currentTokenId = null; }
+    function clearTokenFilter() {
+      _currentTokenId = null;
+    }
 
     function subscribe(newTokenId) {
-      const prev = _currentTokenId;
+      if (!newTokenId) return;
+      const prev = _subscribedTokenId;
+      _subscribedTokenId = newTokenId;
       _currentTokenId = newTokenId;
 
       if (_ws && _ws.readyState === WebSocket.OPEN) {
-        if (prev && prev !== newTokenId) _sendUnsubscribe(prev);
+        if (prev && prev !== newTokenId) {
+          console.log('[PolyWS] Unsubscribing from old token:', prev);
+          _sendUnsubscribe(prev);
+        }
+        console.log('[PolyWS] Subscribing to new token:', newTokenId);
         _sendSubscribe(newTokenId);
       } else {
-        if (!_ws || _ws.readyState === WebSocket.CLOSED) connect();
+        if (!_ws || _ws.readyState === WebSocket.CLOSED) {
+          connect();
+        }
       }
     }
 
@@ -1461,7 +1419,7 @@
   })();
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 5: CHART MANAGER (js/chart.js)
+     MODULE 5: CHART MANAGER
      ═══════════════════════════════════════════════════════════════════════════ */
   window.ChartManager = (() => {
     const LC = window.LightweightCharts;
@@ -1709,7 +1667,7 @@
   })();
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 6: MAIN APPLICATION COORDINATOR (js/app.js)
+     MODULE 6: MAIN APPLICATION COORDINATOR
      ═══════════════════════════════════════════════════════════════════════════ */
   (async function AppMain() {
     const $ = id => document.getElementById(id);
@@ -1861,30 +1819,31 @@
     }
 
     async function loadMarket(tfMinutes) {
-      showLoading('Fetching market data…');
+      showLoading(`Fetching BTC ${tfMinutes}M market data…`);
       _loadingRetries = 0;
       PriceEngine.reset();
 
       let market = null;
       while (!market && _loadingRetries < 5) {
-        setLoadingSub(`Trying Gamma API… attempt ${_loadingRetries + 1}`);
+        setLoadingSub(`Loading ${tfMinutes}m market metadata… attempt ${_loadingRetries + 1}`);
         market = await MarketManager.loadCurrentMarket(tfMinutes);
         if (!market) {
           _loadingRetries++;
-          if (_loadingRetries < 5) await _sleep(2000);
+          if (_loadingRetries < 5) await _sleep(1500);
         }
       }
 
       if (!market) {
-        showError('Could not find active market. Retrying in 30s…');
+        showError(`Could not find active BTC ${tfMinutes}M market. Retrying in 30s…`);
         setTimeout(() => loadMarket(_currentTfMinutes), 30000);
         return;
       }
 
+      console.log(`[App] ${tfMinutes}M Market loaded:`, market);
       MarketManager.setCurrentMarket(market);
       _updateMarketUI(market);
 
-      setLoadingSub('Getting initial price…');
+      setLoadingSub('Fetching initial price data…');
       const mid = await MarketManager.fetchMidpoint(market.upTokenId);
       if (mid !== null) {
         const displayCents = _toDisplayCents(mid);
@@ -1895,7 +1854,7 @@
         _updatePriceUI();
       }
 
-      setLoadingSub('Connecting to live feed…');
+      setLoadingSub('Connecting to WebSocket feed…');
       PolyWS.clearTokenFilter();
       PolyWS.subscribe(market.upTokenId);
       if (!PolyWS.isConnected()) PolyWS.connect();

@@ -151,61 +151,66 @@ window.MarketManager = (() => {
 
   // ─── Fetch initial midpoint from CLOB REST ─────────────────────────
   async function fetchMidpoint(tokenId) {
-    const data = await _fetchWithRetry(`${CLOB_BASE}/midpoint?token_id=${tokenId}`, 2);
-    if (!data) return null;
-    const mid = parseFloat(data.mid);
-    return isNaN(mid) ? null : mid;
+    if (!tokenId) return null;
+    let data = await _fetchWithRetry(`${CLOB_BASE}/midpoint?token_id=${tokenId}`, 2);
+    if (data && data.mid) {
+      const mid = parseFloat(data.mid);
+      if (!isNaN(mid) && mid > 0) return mid;
+    }
+    
+    // Fallback: query CLOB orderbook REST endpoint
+    const book = await _fetchWithRetry(`${CLOB_BASE}/book?token_id=${tokenId}`, 2);
+    if (book && Array.isArray(book.bids) && Array.isArray(book.asks) && book.bids.length > 0 && book.asks.length > 0) {
+      const bestBid = parseFloat(book.bids[book.bids.length - 1].price);
+      const bestAsk = parseFloat(book.asks[book.asks.length - 1].price);
+      if (!isNaN(bestBid) && !isNaN(bestAsk)) {
+        return (bestBid + bestAsk) / 2;
+      }
+    }
+    return null;
   }
 
   // ─── Market initialization ─────────────────────────────────────────
   /**
    * Find and load the current active market for given TF.
-   * Tries current window, then current-1, then current+1.
+   * Tries current window and surrounding candidate windows.
    * Returns market data or null.
    */
   async function loadCurrentMarket(tfMinutes) {
     _marketTf = tfMinutes;
     const interval = _intervalSec(tfMinutes);
     const nowSec = Math.floor(Date.now() / 1000);
+    const curTs = Math.floor(nowSec / interval) * interval;
     
-    // Try current window and surrounding ones
-    const candidates = [
-      _getWindowTs(tfMinutes),
-      _getWindowTs(tfMinutes) - interval,
-      _getWindowTs(tfMinutes) + interval,
+    const candidateTimestamps = [
+      curTs,
+      curTs + interval,
+      curTs - interval,
+      curTs + 2 * interval,
+      curTs - 2 * interval,
     ];
 
-    for (const ts of candidates) {
+    let fallbackMarket = null;
+
+    for (const ts of candidateTimestamps) {
       const slug = makeSlug(tfMinutes, ts);
       console.log('[MarketManager] Trying slug:', slug);
-      
       const md = await fetchMarketData(slug);
       if (!md) continue;
 
-      // Check if this market is currently active (endTs in future)
-      if (md.endTs && md.endTs < nowSec - 10) continue; // already expired
-      
-      console.log('[MarketManager] Found market:', md);
-      return md;
+      if (!fallbackMarket || (md.endTs && md.endTs > (fallbackMarket.endTs || 0))) {
+        fallbackMarket = md;
+      }
+
+      if (md.endTs && md.endTs >= nowSec - 30) {
+        console.log('[MarketManager] Found active market:', md.slug);
+        return md;
+      }
     }
 
-    // Last resort: search by slug_contains
-    console.warn('[MarketManager] Fallback: searching by slug_contains');
-    const arr = await _fetchWithRetry(
-      `${GAMMA_BASE}/events?slug_contains=btc-updown-${tfMinutes}m&active=true&closed=false&limit=5`
-    );
-    if (Array.isArray(arr) && arr.length > 0) {
-      // Sort by endDate ascending, pick the soonest
-      const sorted = arr
-        .map(e => ({ ...e, _endTs: _parseTs(e.endDate) }))
-        .filter(e => e._endTs && e._endTs > nowSec)
-        .sort((a, b) => a._endTs - b._endTs);
-      
-      if (sorted.length > 0) {
-        const ev = sorted[0];
-        // Re-fetch full market data
-        return fetchMarketData(ev.slug);
-      }
+    if (fallbackMarket) {
+      console.warn('[MarketManager] Using fallback market:', fallbackMarket.slug);
+      return fallbackMarket;
     }
 
     return null;

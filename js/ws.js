@@ -170,6 +170,8 @@ window.PolyWS = (() => {
    * This prevents the message filter from blocking messages from the new token
    * during the brief window when both old and new tokens are being switched.
    */
+  let _subscribedTokenId = null;
+
   function clearTokenFilter() {
     _currentTokenId = null;
   }
@@ -178,13 +180,17 @@ window.PolyWS = (() => {
    * Subscribe to a new token. Unsubscribes from previous if needed.
    */
   function subscribe(newTokenId) {
-    const prev = _currentTokenId;
+    if (!newTokenId) return;
+    const prev = _subscribedTokenId;
+    _subscribedTokenId = newTokenId;
     _currentTokenId = newTokenId;
 
     if (_ws && _ws.readyState === WebSocket.OPEN) {
       if (prev && prev !== newTokenId) {
+        console.log('[PolyWS] Unsubscribing from old token:', prev);
         _sendUnsubscribe(prev);
       }
+      console.log('[PolyWS] Subscribing to new token:', newTokenId);
       _sendSubscribe(newTokenId);
     } else {
       if (!_ws || _ws.readyState === WebSocket.CLOSED) {
