@@ -19,8 +19,9 @@ window.ChartManager = (() => {
   let _chart  = null;
   let _series = null;
   let _markers = [];
-  let _lastTime = 0;  // monotone guard
-  let _currentTf = 1; // seconds
+  let _lastTime = 0;
+  let _currentTf = 1;
+  let _outcomeMode = 'up'; // 'up' | 'down'
 
   // requestAnimationFrame throttle
   let _pendingUpdate = null;
@@ -206,9 +207,9 @@ window.ChartManager = (() => {
         try {
           _series.update({ time, value });
           _lastTime = Math.max(_lastTime, time);
-          _updateSeriesColor(value);
+          _updateSeriesColor(value, _outcomeMode);
         } catch (e) {
-          // Usually: "Cannot update with non-monotonically increasing time" — ignore
+          // "Cannot update with non-monotonically increasing time" — ignore
         }
       }
       _rafId = requestAnimationFrame(loop);
@@ -229,14 +230,15 @@ window.ChartManager = (() => {
   }
 
   /**
-   * Color the line based on position vs 50¢ (above=green, below=red)
+   * Color the line: UP mode → green/red vs 50, DOWN mode → opposite
    */
-  function _updateSeriesColor(valueCents) {
+  function _updateSeriesColor(valueCents, outcomeMode) {
     if (!_series) return;
     let color;
-    if (valueCents > 52) color = '#00d4aa';
-    else if (valueCents < 48) color = '#ff4d6d';
-    else color = '#4dabf7'; // near 50 = blue
+    const isDown = outcomeMode === 'down';
+    if (valueCents > 52) color = isDown ? '#ff4d6d' : '#00d4aa';
+    else if (valueCents < 48) color = isDown ? '#00d4aa' : '#ff4d6d';
+    else color = '#4dabf7'; // near 50 = neutral blue
     _series.applyOptions({ color });
   }
 
@@ -311,6 +313,18 @@ window.ChartManager = (() => {
     });
   }
 
+  // ─── Outcome mode ────────────────────────────────────────────────────
+
+  function setOutcomeMode(mode) {
+    _outcomeMode = mode;
+    // Update the last rendered color
+    const last = _series;
+    if (last) {
+      const lastTime = _lastTime;
+      // Color will update on next tick; no immediate data change needed here
+    }
+  }
+
   // ─── Cleanup ─────────────────────────────────────────────────────────
 
   function destroy() {
@@ -330,6 +344,7 @@ window.ChartManager = (() => {
     addMarketBoundaryMarker,
     clearMarkers,
     setTimeframe,
+    setOutcomeMode,
     getCurrentTf,
     getLastTime,
     resetZoom,

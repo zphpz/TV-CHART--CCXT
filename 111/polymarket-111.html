@@ -1,0 +1,2094 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Polymarket BTC Up/Down — Live Single File App</title>
+  <meta name="description" content="Real-time Polymarket BTC Up/Down rolling market chart. Standalone single file app with enhanced mobile interface." />
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ═══════════════════════════════════════════════════════════════════════════
+       SECTION 1: CSS DESIGN SYSTEM & MOBILE RESPONSIVE STYLES
+       ═══════════════════════════════════════════════════════════════════════════ */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    :root {
+      /* Palette */
+      --bg-primary:     #080b0f;
+      --bg-secondary:   #0d1117;
+      --bg-panel:       #111720;
+      --bg-card:        #161d27;
+      --bg-hover:       #1a2230;
+      --border:         #1e2a38;
+      --border-bright:  #2a3a50;
+
+      --text-primary:   #e2e8f0;
+      --text-secondary: #8899aa;
+      --text-muted:     #4a5568;
+
+      --accent-teal:    #00d4aa;
+      --accent-teal-d:  #00a882;
+      --accent-blue:    #3b82f6;
+      --accent-purple:  #8b5cf6;
+
+      --green:          #22c55e;
+      --green-d:        #16a34a;
+      --red:            #ef4444;
+      --red-d:          #dc2626;
+      --yellow:         #eab308;
+
+      --line-green:     #00d4aa;
+      --line-red:       #ff4d6d;
+      --line-neutral:   #4dabf7;
+
+      /* Dynamic Heights */
+      --header-h:       52px;
+      --pricebar-h:     50px;
+      --toolbar-h:      42px;
+      --footer-h:       30px;
+
+      /* Transitions */
+      --tr-fast: 120ms ease;
+      --tr-med:  200ms ease;
+    }
+
+    html, body {
+      height: 100%;
+      height: 100dvh;
+      width: 100vw;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      line-height: 1.2;
+      overflow: hidden;
+      touch-action: manipulation;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── App Layout ───────────────────────────────────────── */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+      width: 100%;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* ── Header ───────────────────────────────────────────── */
+    #main-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      height: var(--header-h);
+      padding: 0 14px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      position: relative;
+      z-index: 10;
+    }
+
+    #brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #brand-logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, rgba(0,212,170,0.18), rgba(59,130,246,0.18));
+      border: 1px solid rgba(0,212,170,0.35);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    #brand-text {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    #brand-name {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--text-primary);
+      white-space: nowrap;
+    }
+    #brand-sub {
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+
+    /* Market switcher */
+    #market-switcher {
+      display: flex;
+      gap: 3px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 3px;
+    }
+
+    .mkt-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-family: 'Inter', sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all var(--tr-fast);
+      min-height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .mkt-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+    .mkt-btn:active { transform: scale(0.96); }
+    .mkt-btn.active {
+      background: linear-gradient(135deg, var(--accent-teal), var(--accent-blue));
+      color: #fff;
+      box-shadow: 0 0 12px rgba(0,212,170,0.3);
+    }
+
+    /* Status panel */
+    #status-panel {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+    }
+
+    #status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      animation: pulse 2s ease infinite;
+    }
+
+    .status-live #status-dot       { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .status-connecting #status-dot { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+    .status-error #status-dot      { background: var(--red); box-shadow: 0 0 8px var(--red); animation: none; }
+
+    .status-live #status-text       { color: var(--green); }
+    .status-connecting #status-text { color: var(--yellow); }
+    .status-error #status-text      { color: var(--red); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.35; }
+    }
+
+    /* ── Price Bar ────────────────────────────────────────── */
+    #price-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: var(--pricebar-h);
+      padding: 4px 14px;
+      gap: 8px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .price-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .price-item {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      min-width: 60px;
+    }
+
+    .price-divider {
+      width: 1px;
+      height: 26px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+
+    .price-label {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .price-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-primary);
+      transition: color var(--tr-fast);
+    }
+    .price-value.large { font-size: 17px; font-weight: 700; color: var(--accent-teal); }
+    .price-value.green { color: var(--green); }
+    .price-value.red   { color: var(--red); }
+    .price-value.muted { color: var(--text-secondary); font-size: 11px; }
+    .price-value.small { font-size: 11px; }
+
+    .price-flash-up   { animation: flashUp 0.4s ease; }
+    .price-flash-down { animation: flashDown 0.4s ease; }
+
+    @keyframes flashUp   { 0% { color: var(--green); } 100% { } }
+    @keyframes flashDown { 0% { color: var(--red); }   100% { } }
+
+    /* Center Timer */
+    #timer-center {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 4px 12px;
+      min-width: 84px;
+      flex-shrink: 0;
+    }
+
+    #timer-label-top {
+      font-size: 8px;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+    }
+
+    #timer-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--accent-teal);
+    }
+    #timer-value.urgent { color: var(--red); animation: pulse 1s infinite; }
+
+    /* Outcome Switcher */
+    #outcome-switcher {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    #outcome-buttons {
+      display: flex;
+      gap: 3px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 2px;
+    }
+
+    .outcome-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-family: 'Inter', sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all var(--tr-fast);
+      min-height: 30px;
+    }
+    .outcome-btn:active { transform: scale(0.96); }
+
+    #btn-outcome-up.active {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
+      box-shadow: 0 0 10px rgba(16,185,129,0.4);
+    }
+
+    #btn-outcome-down.active {
+      background: linear-gradient(135deg, #ef4444, #dc2626);
+      color: #fff;
+      box-shadow: 0 0 10px rgba(239,68,68,0.4);
+    }
+
+    /* ── Chart Toolbar ────────────────────────────────────── */
+    #chart-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: var(--toolbar-h);
+      padding: 0 12px;
+      gap: 12px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    #tf-switcher {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .tf-label {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+    }
+
+    #tf-buttons {
+      display: flex;
+      gap: 2px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px;
+    }
+
+    .tf-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-family: 'Inter', sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all var(--tr-fast);
+      letter-spacing: 0.04em;
+      min-height: 28px;
+    }
+    .tf-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+    .tf-btn:active { transform: scale(0.95); }
+    .tf-btn.active {
+      background: var(--accent-teal);
+      color: var(--bg-primary);
+      font-weight: 700;
+      box-shadow: 0 0 8px rgba(0,212,170,0.4);
+    }
+
+    #market-info {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    .info-label {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+    }
+    .info-sep { color: var(--border-bright); }
+
+    #market-slug-display {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--text-secondary);
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 6px;
+      max-width: 170px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #market-window-display {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--text-secondary);
+    }
+
+    #chart-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .action-btn {
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: all var(--tr-fast);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      min-height: 28px;
+    }
+    .action-btn:hover { color: var(--text-primary); border-color: var(--border-bright); }
+    .action-btn:active { transform: scale(0.95); }
+
+    /* ── Chart Wrapper ────────────────────────────────────── */
+    #chart-wrapper {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: var(--bg-primary);
+      width: 100%;
+      min-height: 200px;
+    }
+
+    #chart-container {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Loading Overlay ──────────────────────────────────── */
+    #loading-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(8, 11, 15, 0.92);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      z-index: 20;
+      backdrop-filter: blur(4px);
+    }
+
+    #loading-spinner {
+      width: 42px; height: 42px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent-teal);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #loading-text {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    #loading-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ── Error Overlay ────────────────────────────────────── */
+    #error-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(8, 11, 15, 0.95);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      z-index: 20;
+      padding: 20px;
+      text-align: center;
+    }
+
+    #error-icon { font-size: 40px; }
+    #error-text { font-size: 15px; font-weight: 600; color: var(--red); }
+    #error-sub  { font-size: 12px; color: var(--text-muted); }
+
+    #btn-retry {
+      margin-top: 8px;
+      background: var(--accent-teal);
+      border: none;
+      color: var(--bg-primary);
+      font-family: 'Inter', sans-serif;
+      font-weight: 700;
+      font-size: 13px;
+      padding: 10px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all var(--tr-fast);
+      min-height: 40px;
+    }
+    #btn-retry:hover { background: var(--accent-teal-d); transform: translateY(-1px); }
+    #btn-retry:active { transform: scale(0.96); }
+
+    /* ── Footer ───────────────────────────────────────────── */
+    #main-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: var(--footer-h);
+      padding: 0 14px;
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    #footer-left, #footer-right {
+      font-size: 10px;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    #footer-center {
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+    .attr-text { color: var(--text-muted); }
+    .attr-link {
+      color: var(--text-secondary);
+      text-decoration: none;
+      transition: color var(--tr-fast);
+    }
+    .attr-link:hover { color: var(--accent-teal); }
+
+    /* ── Toast notification ───────────────────────────────── */
+    .toast {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translate(-50%, -100px);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 18px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-primary);
+      z-index: 100;
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      max-width: 90vw;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+      white-space: nowrap;
+    }
+    .toast.show { transform: translate(-50%, 0); opacity: 1; }
+    .toast.info  { border-left: 4px solid var(--accent-teal); }
+    .toast.warn  { border-left: 4px solid var(--yellow); }
+    .toast.error { border-left: 4px solid var(--red); }
+
+    /* ── Scrollbars ───────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: var(--bg-primary); }
+    ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+
+    /* ═══════════════════════════════════════════════════════════════════════════
+       MOBILE OPTIMIZATIONS (KРУТАЯ МОБИЛЬНАЯ ВЕРСИЯ)
+       ═══════════════════════════════════════════════════════════════════════════ */
+    @media (max-width: 768px) {
+      :root {
+        --header-h: 48px;
+        --pricebar-h: auto;
+        --toolbar-h: 38px;
+        --footer-h: 24px;
+      }
+
+      #brand-sub { display: none; }
+      #market-info { display: none; }
+
+      /* Mobile Price Bar: 2-column or wrapping grid */
+      #price-bar {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        grid-template-areas: 
+          "price timer outcome"
+          "metrics metrics metrics";
+        padding: 6px 10px;
+        gap: 6px;
+        background: var(--bg-panel);
+      }
+
+      .price-group-main {
+        grid-area: price;
+        display: flex;
+        align-items: center;
+      }
+
+      #timer-center {
+        grid-area: timer;
+        padding: 2px 8px;
+        min-width: 70px;
+      }
+      #timer-value { font-size: 13px; }
+
+      #outcome-switcher {
+        grid-area: outcome;
+        justify-self: end;
+      }
+      #outcome-switcher .price-label { display: none; }
+      .outcome-btn { padding: 4px 10px; font-size: 11px; min-height: 28px; }
+
+      /* Mobile metric bar inside price-bar */
+      .mobile-metrics-row {
+        grid-area: metrics;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 4px 8px;
+        margin-top: 2px;
+      }
+
+      .price-item {
+        min-width: auto;
+        padding: 0;
+      }
+      .price-value.large { font-size: 16px; }
+      .price-value { font-size: 11px; }
+      .price-label { font-size: 8px; }
+
+      .price-divider { height: 18px; margin: 0 2px; }
+
+      /* Mobile toolbar */
+      #chart-toolbar {
+        padding: 0 8px;
+      }
+      .tf-label { display: none; }
+      .tf-btn { padding: 3px 8px; font-size: 10px; min-height: 26px; }
+
+      /* Footer mobile */
+      #footer-center { display: none; }
+      #main-footer { padding: 0 10px; }
+    }
+
+    @media (max-width: 480px) {
+      #brand-name { font-size: 11px; }
+      .mkt-btn { padding: 4px 8px; font-size: 11px; min-height: 28px; }
+      .price-value.large { font-size: 15px; }
+      #timer-value { font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+
+    <!-- ═══════════════ HEADER ═══════════════ -->
+    <header id="main-header">
+      <div id="brand">
+        <div id="brand-logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#00d4aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div id="brand-text">
+          <span id="brand-name">PM CHART</span>
+          <span id="brand-sub">Polymarket Live</span>
+        </div>
+      </div>
+
+      <!-- Market switcher: 5m / 15m -->
+      <div id="market-switcher">
+        <button class="mkt-btn active" id="btn-mkt-5m" data-tf="5">BTC 5M</button>
+        <button class="mkt-btn" id="btn-mkt-15m" data-tf="15">BTC 15M</button>
+      </div>
+
+      <!-- Status indicator -->
+      <div id="status-panel">
+        <div id="status-indicator" class="status-connecting">
+          <span id="status-dot"></span>
+          <span id="status-text">CONNECTING</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ═══════════════ PRICE BAR ═══════════════ -->
+    <div id="price-bar">
+      <!-- Main Price Display -->
+      <div class="price-group-main">
+        <div class="price-item" id="price-current-wrap">
+          <span class="price-label">PRICE</span>
+          <span class="price-value large" id="price-current">--.-¢</span>
+        </div>
+      </div>
+
+      <!-- CENTER: countdown timer -->
+      <div id="timer-center">
+        <span id="timer-label-top">ENDS IN</span>
+        <span id="timer-value">--:--</span>
+      </div>
+
+      <!-- Outcome Toggle (UP / DOWN) -->
+      <div id="outcome-switcher">
+        <span class="price-label">OUTCOME</span>
+        <div id="outcome-buttons">
+          <button class="outcome-btn active" id="btn-outcome-up">▲ UP</button>
+          <button class="outcome-btn" id="btn-outcome-down">▼ DOWN</button>
+        </div>
+      </div>
+
+      <!-- Secondary Metrics Row (auto-adapts for Mobile / Desktop) -->
+      <div class="mobile-metrics-row">
+        <div class="price-item">
+          <span class="price-label">BID</span>
+          <span class="price-value green" id="price-bid">--.-¢</span>
+        </div>
+        <div class="price-divider"></div>
+        <div class="price-item">
+          <span class="price-label">ASK</span>
+          <span class="price-value red" id="price-ask">--.-¢</span>
+        </div>
+        <div class="price-divider"></div>
+        <div class="price-item">
+          <span class="price-label">MID</span>
+          <span class="price-value" id="price-mid">--.-¢</span>
+        </div>
+        <div class="price-divider"></div>
+        <div class="price-item">
+          <span class="price-label">LAST</span>
+          <span class="price-value" id="price-last">--.-¢</span>
+        </div>
+        <div class="price-divider"></div>
+        <div class="price-item">
+          <span class="price-label">SPREAD</span>
+          <span class="price-value muted" id="price-spread">--.-¢</span>
+        </div>
+        <div class="price-divider"></div>
+        <div class="price-item">
+          <span class="price-label">AGE</span>
+          <span class="price-value muted small" id="price-age">---</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════ CHART TOOLBAR ═══════════════ -->
+    <div id="chart-toolbar">
+      <div id="tf-switcher">
+        <span class="tf-label">TIMEFRAME</span>
+        <div id="tf-buttons">
+          <button class="tf-btn active" id="btn-tf-1s" data-tf="1">1s</button>
+          <button class="tf-btn" id="btn-tf-5s" data-tf="5">5s</button>
+          <button class="tf-btn" id="btn-tf-15s" data-tf="15">15s</button>
+          <button class="tf-btn" id="btn-tf-30s" data-tf="30">30s</button>
+          <button class="tf-btn" id="btn-tf-1m" data-tf="60">1m</button>
+        </div>
+      </div>
+
+      <div id="market-info">
+        <span class="info-label">MARKET</span>
+        <span id="market-slug-display">---</span>
+        <span class="info-sep">→</span>
+        <span id="market-window-display">--:-- – --:--</span>
+      </div>
+
+      <div id="chart-actions">
+        <button id="btn-reset-zoom" class="action-btn" title="Reset zoom">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+          <span>Reset</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ═══════════════ CHART WRAPPER ═══════════════ -->
+    <div id="chart-wrapper">
+      <div id="chart-container"></div>
+
+      <!-- Loading overlay -->
+      <div id="loading-overlay">
+        <div id="loading-spinner"></div>
+        <div id="loading-text">Fetching market data…</div>
+        <div id="loading-sub" style="display:none"></div>
+      </div>
+
+      <!-- Error overlay -->
+      <div id="error-overlay" style="display:none">
+        <div id="error-icon">⚠</div>
+        <div id="error-text">Connection lost</div>
+        <div id="error-sub">Reconnecting…</div>
+        <button id="btn-retry">Retry Now</button>
+      </div>
+    </div>
+
+    <!-- ═══════════════ FOOTER ═══════════════ -->
+    <footer id="main-footer">
+      <div id="footer-left">
+        <span id="market-count-display"></span>
+      </div>
+      <div id="footer-center">
+        <span class="attr-text">Charts powered by </span>
+        <a href="https://www.tradingview.com/" target="_blank" class="attr-link">TradingView</a>
+        <span class="attr-text"> · Data from </span>
+        <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket</a>
+      </div>
+      <div id="footer-right">
+        <span id="app-version">v1.2 (Single File)</span>
+      </div>
+    </footer>
+
+  </div><!-- /#app -->
+
+  <!-- Lightweight Charts v5 CDN -->
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════════
+     SECTION 2: ALL JAVASCRIPT MODULES INLINED & UNIFIED
+     ═══════════════════════════════════════════════════════════════════════════ -->
+  <script>
+  'use strict';
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MODULE 1: PRICE ENGINE (js/price.js)
+     ═══════════════════════════════════════════════════════════════════════════ */
+  window.PriceEngine = (() => {
+    let _bid = null;
+    let _ask = null;
+    let _last = null;
+    let _lastUpdateMs = 0;
+
+    function effectivePrice() {
+      if (_bid !== null && _ask !== null) {
+        const spread = _ask - _bid;
+        const mid = (_bid + _ask) / 2;
+        if (spread > 0.10 && _last !== null) {
+          return _last;
+        }
+        return mid;
+      }
+      if (_last !== null) return _last;
+      return 0.50; // fallback: 50¢
+    }
+
+    function getMid() {
+      if (_bid !== null && _ask !== null) return (_bid + _ask) / 2;
+      if (_last !== null) return _last;
+      return 0.50;
+    }
+
+    function getSpread() {
+      if (_bid !== null && _ask !== null) return _ask - _bid;
+      return null;
+    }
+
+    function toBid()  { return _bid; }
+    function toAsk()  { return _ask; }
+    function toLast() { return _last; }
+    function getLastUpdateMs() { return _lastUpdateMs; }
+
+    function toCents(raw) {
+      const n = parseFloat(raw);
+      if (isNaN(n)) return null;
+      return Math.max(0, Math.min(100, n * 100));
+    }
+
+    function updateBidAsk(bid, ask) {
+      const b = parseFloat(bid);
+      const a = parseFloat(ask);
+      if (!isNaN(b) && b > 0) _bid = b;
+      if (!isNaN(a) && a > 0) _ask = a;
+      _lastUpdateMs = Date.now();
+    }
+
+    function updateLastTrade(price) {
+      const p = parseFloat(price);
+      if (!isNaN(p) && p > 0) {
+        _last = p;
+        _lastUpdateMs = Date.now();
+      }
+    }
+
+    function reset() {
+      _bid = null;
+      _ask = null;
+      _last = null;
+      _lastUpdateMs = 0;
+    }
+
+    return {
+      effectivePrice,
+      getMid,
+      getSpread,
+      toBid,
+      toAsk,
+      toLast,
+      toCents,
+      updateBidAsk,
+      updateLastTrade,
+      getLastUpdateMs,
+      reset,
+    };
+  })();
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MODULE 2: TICK BUFFER (js/buffer.js)
+     ═══════════════════════════════════════════════════════════════════════════ */
+  window.TickBuffer = (() => {
+    const MAX_TICKS = 10800; // 3 hours of 1s ticks
+    let _ticks = []; 
+    let _marketBoundaries = [];
+
+    function addTick(unixSec, valueCents) {
+      if (typeof valueCents !== 'number' || isNaN(valueCents)) return;
+      valueCents = Math.max(0, Math.min(100, valueCents));
+
+      const last = _ticks[_ticks.length - 1];
+      if (last && last.time === unixSec) {
+        last.value = valueCents;
+      } else {
+        _ticks.push({ time: unixSec, value: valueCents });
+      }
+
+      if (_ticks.length > MAX_TICKS) {
+        _ticks = _ticks.slice(_ticks.length - MAX_TICKS);
+      }
+    }
+
+    function aggregate(tfSeconds, outcomeMode) {
+      if (_ticks.length === 0) return [];
+      const invert = outcomeMode === 'down';
+
+      if (tfSeconds === 1) {
+        if (!invert) return [..._ticks];
+        return _ticks.map(t => ({ time: t.time, value: 100 - t.value }));
+      }
+
+      const buckets = new Map();
+      for (const tick of _ticks) {
+        const bt = Math.floor(tick.time / tfSeconds) * tfSeconds;
+        const v = invert ? 100 - tick.value : tick.value;
+        buckets.set(bt, v);
+      }
+
+      return Array.from(buckets.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([time, value]) => ({ time, value }));
+    }
+
+    function getRawTicks() { return [..._ticks]; }
+    function getRecent(count) { return _ticks.slice(-count); }
+    function getLastTick() { return _ticks[_ticks.length - 1] || null; }
+    function getCount() { return _ticks.length; }
+
+    function addMarketBoundary(unixSec) { _marketBoundaries.push(unixSec); }
+    function getMarketBoundaries() { return [..._marketBoundaries]; }
+
+    function reset(keepHistory = false) {
+      if (!keepHistory) {
+        _ticks = [];
+        _marketBoundaries = [];
+      }
+    }
+
+    return {
+      addTick,
+      aggregate,
+      getRawTicks,
+      getRecent,
+      getLastTick,
+      getCount,
+      addMarketBoundary,
+      getMarketBoundaries,
+      reset,
+    };
+  })();
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MODULE 3: MARKET MANAGER (js/market.js)
+     ═══════════════════════════════════════════════════════════════════════════ */
+  window.MarketManager = (() => {
+    const GAMMA_BASE  = 'https://gamma-api.polymarket.com';
+    const CLOB_BASE   = 'https://clob.polymarket.com';
+
+    let _currentMarket = null;
+    let _nextMarket    = null;
+    let _rolloverTimer = null;
+    let _prefetchTimer = null;
+    let _onSwitchCb    = null;
+    let _marketTf      = 5;
+
+    function _intervalSec(tfMinutes) { return tfMinutes * 60; }
+    function _getWindowTs(tfMinutes, now) {
+      const interval = _intervalSec(tfMinutes);
+      const nowSec = Math.floor((now || Date.now()) / 1000);
+      return Math.floor(nowSec / interval) * interval;
+    }
+
+    function makeSlug(tfMinutes, windowTs) { return `btc-updown-${tfMinutes}m-${windowTs}`; }
+    function getCurrentSlug(tfMinutes) { return makeSlug(tfMinutes, _getWindowTs(tfMinutes)); }
+    function getNextSlug(tfMinutes) {
+      const cur = _getWindowTs(tfMinutes);
+      return makeSlug(tfMinutes, cur + _intervalSec(tfMinutes));
+    }
+
+    async function _fetchWithRetry(url, retries = 3, delayMs = 800) {
+      let lastErr;
+      for (let i = 0; i < retries; i++) {
+        try {
+          const resp = await fetch(url, {
+            headers: { 'Accept': 'application/json', 'User-Agent': 'PM-Chart/1.0' },
+          });
+          if (resp.ok) return await resp.json();
+          if (resp.status === 404) return null;
+          if (resp.status === 429) {
+            await _sleep(delayMs * Math.pow(2, i));
+            continue;
+          }
+          throw new Error(`HTTP ${resp.status}`);
+        } catch (e) {
+          lastErr = e;
+          if (i < retries - 1) await _sleep(delayMs * Math.pow(2, i));
+        }
+      }
+      console.warn('[MarketManager] fetchWithRetry failed:', url, lastErr);
+      return null;
+    }
+
+    function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function fetchMarketData(slug) {
+      let data = await _fetchWithRetry(`${GAMMA_BASE}/events/slug/${slug}`);
+      if (!data) {
+        const arr = await _fetchWithRetry(`${GAMMA_BASE}/events?slug=${encodeURIComponent(slug)}&limit=1`);
+        if (Array.isArray(arr) && arr.length > 0) data = arr[0];
+        else if (arr && arr.id) data = arr;
+      }
+      if (!data) return null;
+
+      const markets = data.markets || [];
+      if (markets.length === 0) return null;
+      const market = markets[0];
+
+      let tokenIds, outcomes;
+      try {
+        tokenIds = typeof market.clobTokenIds === 'string' ? JSON.parse(market.clobTokenIds) : market.clobTokenIds;
+        outcomes = typeof market.outcomes === 'string' ? JSON.parse(market.outcomes) : market.outcomes;
+      } catch (e) {
+        console.error('[MarketManager] Failed to parse clobTokenIds/outcomes:', e);
+        return null;
+      }
+
+      if (!Array.isArray(tokenIds) || tokenIds.length < 2) return null;
+
+      const upIdx = outcomes.findIndex(o => /^up$/i.test(String(o).trim()) || /^yes$/i.test(String(o).trim()));
+      const upTokenId   = tokenIds[upIdx !== -1 ? upIdx : 0];
+      const downTokenId = tokenIds[upIdx !== -1 ? (upIdx === 0 ? 1 : 0) : 1];
+
+      if (!upTokenId) return null;
+
+      let startTs = null;
+      const slugMatch = slug.match(/(\d+)$/);
+      if (slugMatch) startTs = parseInt(slugMatch[1], 10);
+      
+      const tf = slug.includes('-15m-') ? 900 : 300;
+      const endTs = startTs ? startTs + tf : _parseTs(data.endDate || market.endDate || null);
+
+      return {
+        slug,
+        upTokenId,
+        downTokenId,
+        startTs,
+        endTs,
+        conditionId: market.conditionId || null,
+      };
+    }
+
+    function _parseTs(val) {
+      if (!val) return null;
+      if (typeof val === 'number') return val > 10_000_000_000 ? Math.floor(val / 1000) : val;
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? null : Math.floor(d.getTime() / 1000);
+    }
+
+    async function fetchMidpoint(tokenId) {
+      const data = await _fetchWithRetry(`${CLOB_BASE}/midpoint?token_id=${tokenId}`, 2);
+      if (!data) return null;
+      const mid = parseFloat(data.mid);
+      return isNaN(mid) ? null : mid;
+    }
+
+    async function loadCurrentMarket(tfMinutes) {
+      _marketTf = tfMinutes;
+      const interval = _intervalSec(tfMinutes);
+      const nowSec = Math.floor(Date.now() / 1000);
+      
+      const candidates = [
+        _getWindowTs(tfMinutes),
+        _getWindowTs(tfMinutes) - interval,
+        _getWindowTs(tfMinutes) + interval,
+      ];
+
+      for (const ts of candidates) {
+        const slug = makeSlug(tfMinutes, ts);
+        console.log('[MarketManager] Trying slug:', slug);
+        const md = await fetchMarketData(slug);
+        if (!md) continue;
+        if (md.endTs && md.endTs < nowSec - 10) continue;
+        console.log('[MarketManager] Found market:', md);
+        return md;
+      }
+
+      console.warn('[MarketManager] Fallback: searching by slug_contains');
+      const arr = await _fetchWithRetry(
+        `${GAMMA_BASE}/events?slug_contains=btc-updown-${tfMinutes}m&active=true&closed=false&limit=5`
+      );
+      if (Array.isArray(arr) && arr.length > 0) {
+        const sorted = arr
+          .map(e => ({ ...e, _endTs: _parseTs(e.endDate) }))
+          .filter(e => e._endTs && e._endTs > nowSec)
+          .sort((a, b) => a._endTs - b._endTs);
+        
+        if (sorted.length > 0) {
+          return fetchMarketData(sorted[0].slug);
+        }
+      }
+      return null;
+    }
+
+    function scheduleRollover(market, onSwitch) {
+      if (!market || !market.endTs) return;
+      _onSwitchCb = onSwitch;
+      clearTimeout(_rolloverTimer);
+      clearTimeout(_prefetchTimer);
+      _nextMarket = null;
+
+      const nowMs = Date.now();
+      const endMs = market.endTs * 1000;
+      const msUntilEnd = endMs - nowMs;
+
+      const prefetchDelay = Math.max(0, msUntilEnd - 20000);
+
+      _prefetchTimer = setTimeout(() => {
+        _prefetchNextMarket(market);
+      }, prefetchDelay);
+
+      _rolloverTimer = setTimeout(() => {
+        _doRollover();
+      }, Math.max(0, msUntilEnd));
+    }
+
+    async function _prefetchNextMarket(currentMarket) {
+      const nextSlug = makeSlug(_marketTf, currentMarket.endTs);
+      for (let i = 0; i < 20; i++) {
+        const md = await fetchMarketData(nextSlug);
+        if (md) {
+          _nextMarket = md;
+          return;
+        }
+        await _sleep(1000);
+      }
+    }
+
+    async function _doRollover() {
+      let next = _nextMarket;
+      if (!next) {
+        const interval = _intervalSec(_marketTf);
+        const nextTs = _currentMarket ? _currentMarket.endTs : _getWindowTs(_marketTf) + interval;
+        const nextSlug = makeSlug(_marketTf, nextTs);
+        for (let i = 0; i < 10; i++) {
+          next = await fetchMarketData(nextSlug);
+          if (next) break;
+          await _sleep(1000);
+        }
+      }
+
+      if (!next) next = await loadCurrentMarket(_marketTf);
+
+      if (next) {
+        const prev = _currentMarket;
+        _currentMarket = next;
+        _nextMarket = null;
+
+        if (_onSwitchCb) _onSwitchCb(next, prev);
+        scheduleRollover(next, _onSwitchCb);
+      } else {
+        setTimeout(_doRollover, 5000);
+      }
+    }
+
+    function setCurrentMarket(market) { _currentMarket = market; }
+    function getCurrentMarket() { return _currentMarket; }
+    function getNextMarket()    { return _nextMarket; }
+    function getMarketTf()      { return _marketTf; }
+
+    function getSecondsRemaining() {
+      if (!_currentMarket || !_currentMarket.endTs) return null;
+      return Math.max(0, _currentMarket.endTs - Math.floor(Date.now() / 1000));
+    }
+
+    return {
+      makeSlug,
+      getCurrentSlug,
+      getNextSlug,
+      fetchMarketData,
+      fetchMidpoint,
+      loadCurrentMarket,
+      scheduleRollover,
+      setCurrentMarket,
+      getCurrentMarket,
+      getNextMarket,
+      getMarketTf,
+      getSecondsRemaining,
+    };
+  })();
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MODULE 4: WEBSOCKET CLIENT (js/ws.js)
+     ═══════════════════════════════════════════════════════════════════════════ */
+  window.PolyWS = (() => {
+    const WS_URL = 'wss://ws-subscriptions-clob.polymarket.com/ws/market';
+    const PING_INTERVAL_MS  = 10_000;
+    const WATCHDOG_MS       = 15_000;
+    const MAX_RECONNECT_MS  = 30_000;
+    const BASE_RECONNECT_MS = 1_000;
+
+    let _ws              = null;
+    let _currentTokenId  = null;
+    let _pingTimer       = null;
+    let _watchdogTimer   = null;
+    let _reconnectTimer  = null;
+    let _reconnectAttempt = 0;
+    let _destroyed       = false;
+    let _lastDataMs      = 0;
+
+    const handlers = {
+      onBook:           null,
+      onPriceChange:    null,
+      onLastTrade:      null,
+      onBestBidAsk:     null,
+      onNewMarket:      null,
+      onMarketResolved: null,
+      onTickSizeChange: null,
+      onConnected:      null,
+      onDisconnected:   null,
+      onError:          null,
+    };
+
+    function connect() {
+      if (_destroyed) return;
+      try {
+        _ws = new WebSocket(WS_URL);
+      } catch (e) {
+        console.error('[PolyWS] WebSocket creation failed:', e);
+        _scheduleReconnect();
+        return;
+      }
+
+      _ws.onopen = () => {
+        _reconnectAttempt = 0;
+        _lastDataMs = Date.now();
+        if (_currentTokenId) _sendSubscribe(_currentTokenId);
+        _startPing();
+        _startWatchdog();
+        if (handlers.onConnected) handlers.onConnected();
+      };
+
+      _ws.onmessage = (evt) => {
+        if (evt.data === 'PONG') {
+          _lastDataMs = Date.now();
+          return;
+        }
+        let data;
+        try { data = JSON.parse(evt.data); } catch { return; }
+        _lastDataMs = Date.now();
+
+        if (Array.isArray(data)) data.forEach(_handleMessage);
+        else if (data) _handleMessage(data);
+      };
+
+      _ws.onerror = (e) => {
+        if (handlers.onError) handlers.onError(e);
+      };
+
+      _ws.onclose = (evt) => {
+        _clearTimers();
+        if (handlers.onDisconnected) handlers.onDisconnected();
+        if (!_destroyed) _scheduleReconnect();
+      };
+    }
+
+    function _handleMessage(msg) {
+      if (!msg || !msg.event_type) return;
+      if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+
+      switch (msg.event_type) {
+        case 'book':             if (handlers.onBook) handlers.onBook(msg); break;
+        case 'price_change':     if (handlers.onPriceChange) handlers.onPriceChange(msg); break;
+        case 'last_trade_price': if (handlers.onLastTrade) handlers.onLastTrade(msg); break;
+        case 'best_bid_ask':     if (handlers.onBestBidAsk) handlers.onBestBidAsk(msg); break;
+        case 'new_market':       if (handlers.onNewMarket) handlers.onNewMarket(msg); break;
+        case 'market_resolved':   if (handlers.onMarketResolved) handlers.onMarketResolved(msg); break;
+        case 'tick_size_change': if (handlers.onTickSizeChange) handlers.onTickSizeChange(msg); break;
+        default: break;
+      }
+    }
+
+    function _sendSubscribe(tokenId, useCustomFeature = true) {
+      const msg = { assets_ids: [tokenId], type: 'market' };
+      if (useCustomFeature) msg.custom_feature_enabled = true;
+      _send(JSON.stringify(msg));
+    }
+
+    function _sendUnsubscribe(tokenId) {
+      _send(JSON.stringify({ assets_ids: [tokenId], type: 'market', operation: 'unsubscribe' }));
+    }
+
+    function clearTokenFilter() { _currentTokenId = null; }
+
+    function subscribe(newTokenId) {
+      const prev = _currentTokenId;
+      _currentTokenId = newTokenId;
+
+      if (_ws && _ws.readyState === WebSocket.OPEN) {
+        if (prev && prev !== newTokenId) _sendUnsubscribe(prev);
+        _sendSubscribe(newTokenId);
+      } else {
+        if (!_ws || _ws.readyState === WebSocket.CLOSED) connect();
+      }
+    }
+
+    function _send(data) {
+      if (_ws && _ws.readyState === WebSocket.OPEN) {
+        try { _ws.send(data); } catch (e) {}
+      }
+    }
+
+    function _startPing() {
+      clearInterval(_pingTimer);
+      _pingTimer = setInterval(() => {
+        if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send('PING');
+      }, PING_INTERVAL_MS);
+    }
+
+    function _startWatchdog() {
+      clearInterval(_watchdogTimer);
+      _lastDataMs = Date.now();
+      _watchdogTimer = setInterval(() => {
+        const silence = Date.now() - _lastDataMs;
+        if (silence > WATCHDOG_MS) {
+          if (_ws) _ws.close();
+        }
+      }, 5000);
+    }
+
+    function _scheduleReconnect() {
+      clearTimeout(_reconnectTimer);
+      const delay = Math.min(BASE_RECONNECT_MS * Math.pow(2, _reconnectAttempt), MAX_RECONNECT_MS);
+      _reconnectAttempt++;
+      _reconnectTimer = setTimeout(connect, delay);
+    }
+
+    function _clearTimers() {
+      clearInterval(_pingTimer);
+      clearInterval(_watchdogTimer);
+      clearTimeout(_reconnectTimer);
+      _pingTimer = null;
+      _watchdogTimer = null;
+      _reconnectTimer = null;
+    }
+
+    function destroy() {
+      _destroyed = true;
+      _clearTimers();
+      if (_ws) {
+        _ws.onclose = null;
+        _ws.close();
+        _ws = null;
+      }
+    }
+
+    function isConnected() { return _ws && _ws.readyState === WebSocket.OPEN; }
+    function getStatus() {
+      if (!_ws) return 'disconnected';
+      switch (_ws.readyState) {
+        case WebSocket.CONNECTING: return 'connecting';
+        case WebSocket.OPEN:       return 'connected';
+        case WebSocket.CLOSING:    return 'closing';
+        case WebSocket.CLOSED:     return 'disconnected';
+        default: return 'unknown';
+      }
+    }
+
+    function getLastDataAge() { return _lastDataMs ? Date.now() - _lastDataMs : null; }
+    function getCurrentTokenId() { return _currentTokenId; }
+
+    return {
+      connect,
+      subscribe,
+      clearTokenFilter,
+      destroy,
+      isConnected,
+      getStatus,
+      getLastDataAge,
+      getCurrentTokenId,
+      handlers,
+    };
+  })();
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MODULE 5: CHART MANAGER (js/chart.js)
+     ═══════════════════════════════════════════════════════════════════════════ */
+  window.ChartManager = (() => {
+    const LC = window.LightweightCharts;
+
+    let _chart  = null;
+    let _series = null;
+    let _markers = [];
+    let _lastTime = 0;
+    let _currentTf = 1;
+    let _outcomeMode = 'up';
+
+    let _pendingUpdate = null;
+    let _rafId = null;
+
+    function init(container) {
+      if (!LC) {
+        console.error('[ChartManager] LightweightCharts not loaded!');
+        return false;
+      }
+
+      _chart = LC.createChart(container, {
+        layout: {
+          background: { type: 'solid', color: '#080b0f' },
+          textColor: '#8899aa',
+          fontFamily: "'JetBrains Mono', 'Inter', monospace",
+          fontSize: 11,
+        },
+        grid: {
+          vertLines: { color: '#0d1117', style: 1 },
+          horzLines: { color: '#111720', style: 1 },
+        },
+        crosshair: {
+          mode: LC.CrosshairMode?.Normal ?? 0,
+          vertLine: { color: '#2a3a50', labelBackgroundColor: '#0d1117' },
+          horzLine: { color: '#2a3a50', labelBackgroundColor: '#0d1117' },
+        },
+        rightPriceScale: {
+          borderColor: '#1e2a38',
+          scaleMargins: { top: 0.02, bottom: 0.02 },
+          autoScale: false,
+          entireTextOnly: false,
+        },
+        timeScale: {
+          borderColor: '#1e2a38',
+          timeVisible: true,
+          secondsVisible: true,
+          rightOffset: 8,
+          tickMarkFormatter: (time) => {
+            const d = new Date(time * 1000);
+            const h = String(d.getHours()).padStart(2, '0');
+            const m = String(d.getMinutes()).padStart(2, '0');
+            const s = String(d.getSeconds()).padStart(2, '0');
+            return `${h}:${m}:${s}`;
+          },
+        },
+        localization: { priceFormatter: (p) => p.toFixed(1) + '¢' },
+        handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
+        handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+        watermark: { visible: false },
+      });
+
+      _series = _chart.addSeries(LC.LineSeries, {
+        color: '#00d4aa',
+        lineWidth: 2,
+        lineType: 0,
+        lastValueVisible: true,
+        priceLineVisible: true,
+        priceLineColor: 'rgba(0, 212, 170, 0.4)',
+        priceLineWidth: 1,
+        priceLineStyle: 1,
+        crosshairMarkerVisible: true,
+        crosshairMarkerRadius: 4,
+        crosshairMarkerBackgroundColor: '#00d4aa',
+        autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+        priceFormat: {
+          type: 'custom',
+          formatter: (v) => v.toFixed(1) + '¢',
+          minMove: 0.1,
+        },
+      });
+
+      _addReferenceLine(50, '#2a3a50', '50¢');
+
+      _chart.priceScale('right').applyOptions({ autoScale: false });
+      _setScaleAnchors();
+      _setupResize(container);
+      _startRenderLoop();
+
+      return true;
+    }
+
+    function _addReferenceLine(price, color, title) {
+      if (!_series) return;
+      _series.createPriceLine({ price, color, lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title });
+    }
+
+    function _setScaleAnchors() {
+      if (!_series) return;
+      _series.createPriceLine({ price: 0,   color: 'transparent', lineWidth: 1, lineStyle: 0, axisLabelVisible: false, title: '' });
+      _series.createPriceLine({ price: 100, color: 'transparent', lineWidth: 1, lineStyle: 0, axisLabelVisible: false, title: '' });
+    }
+
+    function setData(data) {
+      if (!_series || !data || data.length === 0) return;
+      const map = new Map();
+      for (const pt of data) {
+        if (typeof pt.time === 'number' && typeof pt.value === 'number' && !isNaN(pt.value)) {
+          map.set(pt.time, pt.value);
+        }
+      }
+      const sorted = Array.from(map.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([time, value]) => ({ time, value }));
+
+      if (sorted.length === 0) return;
+
+      _lastTime = sorted[sorted.length - 1].time;
+      _series.setData(sorted);
+      _updateSeriesColor(sorted[sorted.length - 1].value, _outcomeMode);
+      _chart.timeScale().scrollToRealTime();
+    }
+
+    function pushTick(unixSec, valueCents) {
+      if (isNaN(valueCents) || isNaN(unixSec)) return;
+      const bucket = Math.floor(unixSec / _currentTf) * _currentTf;
+      if (bucket < _lastTime) return;
+      _pendingUpdate = { time: bucket, value: valueCents };
+    }
+
+    function _startRenderLoop() {
+      function loop() {
+        if (_pendingUpdate && _series) {
+          const { time, value } = _pendingUpdate;
+          _pendingUpdate = null;
+          try {
+            _series.update({ time, value });
+            _lastTime = Math.max(_lastTime, time);
+            _updateSeriesColor(value, _outcomeMode);
+          } catch (e) {}
+        }
+        _rafId = requestAnimationFrame(loop);
+      }
+      _rafId = requestAnimationFrame(loop);
+    }
+
+    function addWhitespace(unixSec) {
+      if (!_series) return;
+      const t = Math.max(unixSec, _lastTime + 1);
+      try {
+        _series.update({ time: t });
+        _lastTime = t;
+      } catch {}
+    }
+
+    function _updateSeriesColor(valueCents, outcomeMode) {
+      if (!_series) return;
+      let color;
+      const isDown = outcomeMode === 'down';
+      if (valueCents > 52) color = isDown ? '#ff4d6d' : '#00d4aa';
+      else if (valueCents < 48) color = isDown ? '#00d4aa' : '#ff4d6d';
+      else color = '#4dabf7';
+      _series.applyOptions({ color });
+    }
+
+    function addMarketBoundaryMarker(unixSec, label) {
+      _markers.push({
+        time: unixSec,
+        position: 'belowBar',
+        color: '#4dabf7',
+        shape: 'arrowUp',
+        text: label || 'New Market',
+        size: 1,
+      });
+      _markers.sort((a, b) => a.time - b.time);
+      try { _series.setMarkers(_markers); } catch {}
+    }
+
+    function clearMarkers() {
+      _markers = [];
+      try { _series.setMarkers([]); } catch {}
+    }
+
+    function setTimeframe(tfSeconds) { _currentTf = tfSeconds; }
+    function getCurrentTf() { return _currentTf; }
+    function getLastTime()  { return _lastTime; }
+
+    function resetZoom() {
+      if (_chart) {
+        _chart.timeScale().scrollToRealTime();
+        _chart.timeScale().resetTimeScale();
+      }
+    }
+
+    function _setupResize(container) {
+      const ro = new ResizeObserver(() => {
+        if (_chart && container) {
+          _chart.applyOptions({
+            width:  container.clientWidth,
+            height: container.clientHeight,
+          });
+        }
+      });
+      ro.observe(container);
+    }
+
+    function updateTickSize(tickSize) {
+      if (!_series) return;
+      const ts = parseFloat(tickSize);
+      if (isNaN(ts) || ts <= 0) return;
+      _series.applyOptions({
+        priceFormat: {
+          type: 'custom',
+          formatter: (v) => v.toFixed(ts < 0.01 ? 2 : 1) + '¢',
+          minMove: ts * 100,
+        },
+      });
+    }
+
+    function setOutcomeMode(mode) { _outcomeMode = mode; }
+
+    function destroy() {
+      if (_rafId) cancelAnimationFrame(_rafId);
+      if (_chart) {
+        _chart.remove();
+        _chart = null;
+        _series = null;
+      }
+    }
+
+    return {
+      init,
+      setData,
+      pushTick,
+      addWhitespace,
+      addMarketBoundaryMarker,
+      clearMarkers,
+      setTimeframe,
+      setOutcomeMode,
+      getCurrentTf,
+      getLastTime,
+      resetZoom,
+      updateTickSize,
+      destroy,
+    };
+  })();
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MODULE 6: MAIN APPLICATION COORDINATOR (js/app.js)
+     ═══════════════════════════════════════════════════════════════════════════ */
+  (async function AppMain() {
+    const $ = id => document.getElementById(id);
+
+    const el = {
+      chartContainer:    $('chart-container'),
+      loadingOverlay:    $('loading-overlay'),
+      loadingSub:        $('loading-sub'),
+      errorOverlay:      $('error-overlay'),
+      errorText:         $('error-text'),
+
+      statusIndicator:   $('status-indicator'),
+      statusText:        $('status-text'),
+      timerValue:        $('timer-value'),
+
+      priceCurrent:      $('price-current'),
+      priceBid:          $('price-bid'),
+      priceAsk:          $('price-ask'),
+      priceMid:          $('price-mid'),
+      priceLast:         $('price-last'),
+      priceSpread:       $('price-spread'),
+      priceAge:          $('price-age'),
+
+      marketSlug:        $('market-slug-display'),
+      marketWindow:      $('market-window-display'),
+      marketCount:       $('market-count-display'),
+
+      btnMkt5m:          $('btn-mkt-5m'),
+      btnMkt15m:         $('btn-mkt-15m'),
+      btnOutcomeUp:      $('btn-outcome-up'),
+      btnOutcomeDown:    $('btn-outcome-down'),
+      btnResetZoom:      $('btn-reset-zoom'),
+      btnRetry:          $('btn-retry'),
+    };
+
+    let _currentTfMinutes = 5;
+    let _currentTfSeconds = 1;
+    let _isInitialized    = false;
+    let _marketSwitchCount = 0;
+    let _loadingRetries   = 0;
+    let _outcomeMode      = 'up';
+
+    const chartOk = ChartManager.init(el.chartContainer);
+    if (!chartOk) {
+      showError('Failed to initialize chart. Please refresh.');
+      return;
+    }
+
+    function _toDisplayCents(rawPrice01) {
+      const cents = rawPrice01 * 100;
+      return _outcomeMode === 'down' ? (100 - cents) : cents;
+    }
+
+    PolyWS.handlers.onConnected = () => {
+      setStatus('live', 'LIVE');
+      hideError();
+    };
+
+    PolyWS.handlers.onDisconnected = () => { setStatus('connecting', 'RECONNECTING'); };
+    PolyWS.handlers.onError = () => { setStatus('connecting', 'ERROR'); };
+
+    PolyWS.handlers.onBook = (msg) => {
+      const bids = msg.bids || [];
+      const asks = msg.asks || [];
+      if (bids.length > 0 && asks.length > 0) {
+        const bestBid = parseFloat(bids[bids.length - 1].price);
+        const bestAsk = parseFloat(asks[asks.length - 1].price);
+        if (!isNaN(bestBid) && !isNaN(bestAsk)) {
+          PriceEngine.updateBidAsk(bestBid, bestAsk);
+          _emitPrice();
+        }
+      }
+      if (msg.lastTradePrice) PriceEngine.updateLastTrade(msg.lastTradePrice);
+    };
+
+    PolyWS.handlers.onPriceChange = (msg) => {
+      if (msg.best_bid !== undefined && msg.best_ask !== undefined) {
+        PriceEngine.updateBidAsk(msg.best_bid, msg.best_ask);
+      } else if (msg.price !== undefined) {
+        if (msg.side === 'BUY')  PriceEngine.updateBidAsk(msg.price, PriceEngine.toAsk());
+        if (msg.side === 'SELL') PriceEngine.updateBidAsk(PriceEngine.toBid(), msg.price);
+      }
+      _emitPrice();
+    };
+
+    PolyWS.handlers.onLastTrade = (msg) => {
+      if (msg.price !== undefined) {
+        PriceEngine.updateLastTrade(msg.price);
+        _emitPrice();
+      }
+    };
+
+    PolyWS.handlers.onBestBidAsk = (msg) => {
+      if (msg.best_bid !== undefined && msg.best_ask !== undefined) {
+        PriceEngine.updateBidAsk(msg.best_bid, msg.best_ask);
+        _emitPrice();
+      }
+    };
+
+    PolyWS.handlers.onTickSizeChange = (msg) => {
+      if (msg.tick_size) ChartManager.updateTickSize(msg.tick_size);
+    };
+
+    function _emitPrice() {
+      const rawPrice = PriceEngine.effectivePrice();
+      const displayCents = _toDisplayCents(rawPrice);
+      const nowSec = Math.floor(Date.now() / 1000);
+
+      TickBuffer.addTick(nowSec, displayCents);
+      ChartManager.pushTick(nowSec, displayCents);
+      _updatePriceUI();
+    }
+
+    function _updatePriceUI() {
+      const bid    = PriceEngine.toBid();
+      const ask    = PriceEngine.toAsk();
+      const last   = PriceEngine.toLast();
+      const mid    = PriceEngine.getMid();
+      const eff    = PriceEngine.effectivePrice();
+      const spread = PriceEngine.getSpread();
+      const ageMs  = PriceEngine.getLastUpdateMs();
+
+      const newCurrent = _toDisplayCents(eff).toFixed(1) + '¢';
+      const prevCurrent = el.priceCurrent.textContent;
+
+      el.priceCurrent.textContent = newCurrent;
+      el.priceBid.textContent    = bid !== null ? (_outcomeMode === 'down' ? (100 - ask * 100) : bid * 100).toFixed(1) + '¢' : '--.-¢';
+      el.priceAsk.textContent    = ask !== null ? (_outcomeMode === 'down' ? (100 - bid * 100) : ask * 100).toFixed(1) + '¢' : '--.-¢';
+      el.priceMid.textContent    = (_toDisplayCents(mid)).toFixed(1) + '¢';
+      el.priceLast.textContent   = last !== null ? _toDisplayCents(last).toFixed(1) + '¢' : '--.-¢';
+      el.priceSpread.textContent = spread !== null ? (spread * 100).toFixed(1) + '¢' : '--.-¢';
+
+      if (newCurrent !== prevCurrent && prevCurrent !== '--.-¢') {
+        const prev = parseFloat(prevCurrent);
+        const cur  = parseFloat(newCurrent);
+        if (!isNaN(prev) && !isNaN(cur)) {
+          el.priceCurrent.classList.remove('price-flash-up', 'price-flash-down');
+          void el.priceCurrent.offsetWidth;
+          if (cur > prev) el.priceCurrent.classList.add('price-flash-up');
+          else if (cur < prev) el.priceCurrent.classList.add('price-flash-down');
+        }
+      }
+
+      if (ageMs) {
+        const ageSec = Math.round((Date.now() - ageMs) / 1000);
+        el.priceAge.textContent = ageSec < 2 ? 'LIVE' : `${ageSec}s ago`;
+        el.priceAge.style.color = ageSec > 10 ? 'var(--red)' : '';
+      }
+    }
+
+    async function loadMarket(tfMinutes) {
+      showLoading('Fetching market data…');
+      _loadingRetries = 0;
+      PriceEngine.reset();
+
+      let market = null;
+      while (!market && _loadingRetries < 5) {
+        setLoadingSub(`Trying Gamma API… attempt ${_loadingRetries + 1}`);
+        market = await MarketManager.loadCurrentMarket(tfMinutes);
+        if (!market) {
+          _loadingRetries++;
+          if (_loadingRetries < 5) await _sleep(2000);
+        }
+      }
+
+      if (!market) {
+        showError('Could not find active market. Retrying in 30s…');
+        setTimeout(() => loadMarket(_currentTfMinutes), 30000);
+        return;
+      }
+
+      MarketManager.setCurrentMarket(market);
+      _updateMarketUI(market);
+
+      setLoadingSub('Getting initial price…');
+      const mid = await MarketManager.fetchMidpoint(market.upTokenId);
+      if (mid !== null) {
+        const displayCents = _toDisplayCents(mid);
+        const nowSec = Math.floor(Date.now() / 1000);
+        TickBuffer.addTick(nowSec, displayCents);
+        ChartManager.setData([{ time: nowSec, value: displayCents }]);
+        PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+        _updatePriceUI();
+      }
+
+      setLoadingSub('Connecting to live feed…');
+      PolyWS.clearTokenFilter();
+      PolyWS.subscribe(market.upTokenId);
+      if (!PolyWS.isConnected()) PolyWS.connect();
+
+      MarketManager.scheduleRollover(market, _onMarketSwitch);
+      hideLoading();
+      _isInitialized = true;
+    }
+
+    async function _onMarketSwitch(newMarket, prevMarket) {
+      _marketSwitchCount++;
+      const boundaryTs = prevMarket ? prevMarket.endTs : Math.floor(Date.now() / 1000);
+      ChartManager.addWhitespace(boundaryTs);
+      ChartManager.addMarketBoundaryMarker(boundaryTs + 1, '│ New Market');
+      TickBuffer.addMarketBoundary(boundaryTs);
+
+      PriceEngine.reset();
+      PolyWS.clearTokenFilter();
+      PolyWS.subscribe(newMarket.upTokenId);
+
+      _updateMarketUI(newMarket);
+      el.marketCount.textContent = `Markets: ${_marketSwitchCount + 1}`;
+
+      const mid = await MarketManager.fetchMidpoint(newMarket.upTokenId);
+      if (mid !== null) {
+        const displayCents = _toDisplayCents(mid);
+        const nowSec = Math.floor(Date.now() / 1000);
+        TickBuffer.addTick(nowSec, displayCents);
+        ChartManager.pushTick(nowSec, displayCents);
+        PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+        _updatePriceUI();
+      }
+
+      showToast(`New market: ${newMarket.slug}`, 'info', 4000);
+    }
+
+    function _switchOutcome(mode) {
+      if (_outcomeMode === mode) return;
+      _outcomeMode = mode;
+
+      el.btnOutcomeUp?.classList.toggle('active', mode === 'up');
+      el.btnOutcomeDown?.classList.toggle('active', mode === 'down');
+
+      const rawTicks = TickBuffer.getRawTicks();
+      if (rawTicks.length > 0) {
+        const converted = TickBuffer.aggregate(_currentTfSeconds, mode);
+        ChartManager.setData(converted);
+      }
+
+      ChartManager.setOutcomeMode(mode);
+      showToast(mode === 'up' ? '📈 Showing UP probability' : '📉 Showing DOWN probability', 'info', 2000);
+    }
+
+    function switchTf(tfSeconds) {
+      _currentTfSeconds = tfSeconds;
+      ChartManager.setTimeframe(tfSeconds);
+      const aggregated = TickBuffer.aggregate(tfSeconds, _outcomeMode);
+      if (aggregated.length > 0) {
+        ChartManager.setData(aggregated);
+      }
+    }
+
+    function _updateMarketUI(market) {
+      el.marketSlug.textContent = market.slug || '---';
+      if (market.startTs && market.endTs) {
+        const fmtTime = ts => {
+          const d = new Date(ts * 1000);
+          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+        };
+        el.marketWindow.textContent = `${fmtTime(market.startTs)} – ${fmtTime(market.endTs)}`;
+      }
+    }
+
+    function setStatus(type, text) {
+      el.statusIndicator.className = `status-${type}`;
+      el.statusText.textContent = text;
+    }
+
+    function showLoading(text) {
+      el.loadingOverlay.style.display = 'flex';
+      el.loadingOverlay.querySelector('#loading-text').textContent = text;
+      el.errorOverlay.style.display = 'none';
+    }
+
+    function setLoadingSub(text) {
+      el.loadingSub.textContent = text;
+      el.loadingSub.style.display = 'block';
+    }
+
+    function hideLoading() {
+      el.loadingOverlay.style.display = 'none';
+      el.loadingSub.style.display = 'none';
+    }
+
+    function showError(text) {
+      el.errorOverlay.style.display = 'flex';
+      el.errorText.textContent = text;
+      hideLoading();
+    }
+
+    function hideError() { el.errorOverlay.style.display = 'none'; }
+
+    function showToast(message, type = 'info', duration = 3000) {
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.add('show'));
+      setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 400);
+      }, duration);
+    }
+
+    function _startTimer() {
+      setInterval(() => {
+        const secs = MarketManager.getSecondsRemaining();
+        if (secs === null) {
+          el.timerValue.textContent = '--:--';
+          return;
+        }
+        const m = Math.floor(secs / 60);
+        const s = secs % 60;
+        el.timerValue.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        el.timerValue.classList.toggle('urgent', secs <= 30);
+      }, 500);
+    }
+
+    function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // Event listeners
+    el.btnMkt5m?.addEventListener('click', () => {
+      if (_currentTfMinutes === 5) return;
+      _currentTfMinutes = 5;
+      el.btnMkt5m.classList.add('active');
+      el.btnMkt15m.classList.remove('active');
+      TickBuffer.reset(false);
+      ChartManager.clearMarkers();
+      loadMarket(5);
+    });
+
+    el.btnMkt15m?.addEventListener('click', () => {
+      if (_currentTfMinutes === 15) return;
+      _currentTfMinutes = 15;
+      el.btnMkt15m.classList.add('active');
+      el.btnMkt5m.classList.remove('active');
+      TickBuffer.reset(false);
+      ChartManager.clearMarkers();
+      loadMarket(15);
+    });
+
+    el.btnOutcomeUp?.addEventListener('click', () => _switchOutcome('up'));
+    el.btnOutcomeDown?.addEventListener('click', () => _switchOutcome('down'));
+
+    const tfBtns = {
+      'btn-tf-1s':  1,
+      'btn-tf-5s':  5,
+      'btn-tf-15s': 15,
+      'btn-tf-30s': 30,
+      'btn-tf-1m':  60,
+    };
+
+    Object.entries(tfBtns).forEach(([id, secs]) => {
+      const btn = $(id);
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        switchTf(secs);
+      });
+    });
+
+    el.btnResetZoom?.addEventListener('click', () => ChartManager.resetZoom());
+    el.btnRetry?.addEventListener('click', () => {
+      hideError();
+      loadMarket(_currentTfMinutes);
+    });
+
+    setInterval(_updatePriceUI, 1000);
+    _startTimer();
+
+    setStatus('connecting', 'CONNECTING');
+    await loadMarket(_currentTfMinutes);
+
+  })().catch(err => {
+    console.error('[App] Fatal error:', err);
+    const eo = document.getElementById('error-overlay');
+    const et = document.getElementById('error-text');
+    if (eo) {
+      eo.style.display = 'flex';
+      et.textContent = 'Startup error: ' + err.message;
+    }
+  });
+  </script>
+</body>
+</html>

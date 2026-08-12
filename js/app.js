@@ -1,8 +1,10 @@
 /**
- * app.js — Main application coordinator
+ * app.js — Main application coordinator v1.1
  * 
- * Orchestrates: MarketManager, PolyWS, TickBuffer, PriceEngine, ChartManager
- * Handles: UI events, status updates, price display, timer countdown
+ * Changes v1.1:
+ * - Fixed: data stops after market rollover (WS filter was blocking new token)
+ * - Added: UP / DOWN outcome selector (inverts price: DOWN = 100 - UP)
+ * - Moved: countdown timer to price bar (center, larger)
  */
 'use strict';
 
@@ -35,27 +37,34 @@
 
     btnMkt5m:          $('btn-mkt-5m'),
     btnMkt15m:         $('btn-mkt-15m'),
-    btnTf1s:           $('btn-tf-1s'),
-    btnTf5s:           $('btn-tf-5s'),
-    btnTf15s:          $('btn-tf-15s'),
-    btnTf30s:          $('btn-tf-30s'),
-    btnTf1m:           $('btn-tf-1m'),
+    btnOutcomeUp:      $('btn-outcome-up'),
+    btnOutcomeDown:    $('btn-outcome-down'),
     btnResetZoom:      $('btn-reset-zoom'),
     btnRetry:          $('btn-retry'),
   };
 
   // ─── App state ────────────────────────────────────────────────────
-  let _currentTfMinutes = 5;      // 5 or 15 minutes market
-  let _currentTfSeconds = 1;      // 1s / 5s / 15s / 30s / 60s chart TF
+  let _currentTfMinutes = 5;
+  let _currentTfSeconds = 1;
   let _isInitialized    = false;
   let _marketSwitchCount = 0;
   let _loadingRetries   = 0;
+
+  // UP/DOWN outcome state: 'up' shows Up-token price, 'down' shows 100-price
+  let _outcomeMode = 'up'; // 'up' | 'down'
 
   // ─── Init chart ───────────────────────────────────────────────────
   const chartOk = ChartManager.init(el.chartContainer);
   if (!chartOk) {
     showError('Failed to initialize chart. Please refresh.');
     return;
+  }
+
+  // ─── Price conversion based on outcome mode ────────────────────────
+  function _toDisplayCents(rawPrice01) {
+    // rawPrice01 is 0.00–1.00 (Up token price)
+    const cents = rawPrice01 * 100;
+    return _outcomeMode === 'down' ? (100 - cents) : cents;
   }
 
   // ─── WS event handlers ────────────────────────────────────────────
@@ -74,13 +83,11 @@
   };
 
   PolyWS.handlers.onBook = (msg) => {
-    // Full order book snapshot — extract best bid/ask
     const bids = msg.bids || [];
     const asks = msg.asks || [];
 
     if (bids.length > 0 && asks.length > 0) {
-      // bids are ascending sorted → best bid = last element
-      // asks are descending sorted → best ask = last element
+      // bids ascending → best bid = last; asks descending → best ask = last
       const bestBid = parseFloat(bids[bids.length - 1].price);
       const bestAsk = parseFloat(asks[asks.length - 1].price);
       if (!isNaN(bestBid) && !isNaN(bestAsk)) {
@@ -89,18 +96,15 @@
       }
     }
 
-    // Book snapshot also carries lastTradePrice
     if (msg.lastTradePrice) {
       PriceEngine.updateLastTrade(msg.lastTradePrice);
     }
   };
 
   PolyWS.handlers.onPriceChange = (msg) => {
-    // price_change carries best_bid and best_ask
-    if (msg.best_bid !== undefined) {
+    if (msg.best_bid !== undefined && msg.best_ask !== undefined) {
       PriceEngine.updateBidAsk(msg.best_bid, msg.best_ask);
     } else if (msg.price !== undefined) {
-      // Single side update
       if (msg.side === 'BUY')  PriceEngine.updateBidAsk(msg.price, PriceEngine.toAsk());
       if (msg.side === 'SELL') PriceEngine.updateBidAsk(PriceEngine.toBid(), msg.price);
     }
@@ -115,7 +119,6 @@
   };
 
   PolyWS.handlers.onBestBidAsk = (msg) => {
-    // best_bid_ask event (requires custom_feature_enabled: true)
     if (msg.best_bid !== undefined && msg.best_ask !== undefined) {
       PriceEngine.updateBidAsk(msg.best_bid, msg.best_ask);
       _emitPrice();
@@ -124,12 +127,10 @@
 
   PolyWS.handlers.onMarketResolved = (msg) => {
     console.log('[App] Market resolved:', msg);
-    // Visual confirmation — the rollover timer will handle the actual switch
   };
 
   PolyWS.handlers.onNewMarket = (msg) => {
     console.log('[App] New market event received:', msg);
-    // The rollover scheduler handles this via timer — this is just a backup signal
   };
 
   PolyWS.handlers.onTickSizeChange = (msg) => {
@@ -141,49 +142,48 @@
   // ─── Price emission ───────────────────────────────────────────────
   function _emitPrice() {
     const rawPrice = PriceEngine.effectivePrice(); // 0.00–1.00
-    const priceCents = rawPrice * 100;             // 0–100¢
+    const displayCents = _toDisplayCents(rawPrice); // 0–100¢ adjusted for mode
 
     const nowSec = Math.floor(Date.now() / 1000);
 
-    // Push to buffer
-    TickBuffer.addTick(nowSec, priceCents);
+    TickBuffer.addTick(nowSec, displayCents);
+    ChartManager.pushTick(nowSec, displayCents);
 
-    // Push to chart (via RAF throttle)
-    ChartManager.pushTick(nowSec, priceCents);
-
-    // Update UI price displays
     _updatePriceUI();
   }
 
   function _updatePriceUI() {
-    const bid   = PriceEngine.toBid();
-    const ask   = PriceEngine.toAsk();
-    const last  = PriceEngine.toLast();
-    const mid   = PriceEngine.getMid();
-    const eff   = PriceEngine.effectivePrice();
+    const bid    = PriceEngine.toBid();
+    const ask    = PriceEngine.toAsk();
+    const last   = PriceEngine.toLast();
+    const mid    = PriceEngine.getMid();
+    const eff    = PriceEngine.effectivePrice();
     const spread = PriceEngine.getSpread();
-    const ageMs = PriceEngine.getLastUpdateMs();
+    const ageMs  = PriceEngine.getLastUpdateMs();
 
-    const fmt = v => v !== null ? (v * 100).toFixed(1) + '¢' : '--.-¢';
-    const fmtDirect = v => v !== null ? v.toFixed(1) + '¢' : '--.-¢';
+    // In DOWN mode, invert bid/ask: bid becomes (1-ask), ask becomes (1-bid)
+    const fmtRaw = v => v !== null
+      ? (_outcomeMode === 'down' ? (100 - v * 100) : v * 100).toFixed(1) + '¢'
+      : '--.-¢';
 
+    const newCurrent = _toDisplayCents(eff).toFixed(1) + '¢';
     const prevCurrent = el.priceCurrent.textContent;
-    const newCurrent = fmtDirect(eff * 100);
 
     el.priceCurrent.textContent = newCurrent;
-    el.priceBid.textContent     = fmt(bid);
-    el.priceAsk.textContent     = fmt(ask);
-    el.priceMid.textContent     = fmtDirect(mid * 100);
-    el.priceLast.textContent    = fmt(last);
-    el.priceSpread.textContent  = spread !== null ? (spread * 100).toFixed(1) + '¢' : '--.-¢';
+    // In down mode, bid/ask are swapped visually
+    el.priceBid.textContent    = bid !== null ? (_outcomeMode === 'down' ? (100 - ask * 100) : bid * 100).toFixed(1) + '¢' : '--.-¢';
+    el.priceAsk.textContent    = ask !== null ? (_outcomeMode === 'down' ? (100 - bid * 100) : ask * 100).toFixed(1) + '¢' : '--.-¢';
+    el.priceMid.textContent    = (_toDisplayCents(mid)).toFixed(1) + '¢';
+    el.priceLast.textContent   = last !== null ? _toDisplayCents(last).toFixed(1) + '¢' : '--.-¢';
+    el.priceSpread.textContent = spread !== null ? (spread * 100).toFixed(1) + '¢' : '--.-¢';
 
-    // Flash animation on price change
+    // Flash on price change
     if (newCurrent !== prevCurrent && prevCurrent !== '--.-¢') {
       const prev = parseFloat(prevCurrent);
       const cur  = parseFloat(newCurrent);
       if (!isNaN(prev) && !isNaN(cur)) {
         el.priceCurrent.classList.remove('price-flash-up', 'price-flash-down');
-        void el.priceCurrent.offsetWidth; // reflow
+        void el.priceCurrent.offsetWidth;
         if (cur > prev) el.priceCurrent.classList.add('price-flash-up');
         else if (cur < prev) el.priceCurrent.classList.add('price-flash-down');
       }
@@ -228,16 +228,18 @@
     setLoadingSub('Getting initial price…');
     const mid = await MarketManager.fetchMidpoint(market.upTokenId);
     if (mid !== null) {
-      const midCents = mid * 100;
+      const displayCents = _toDisplayCents(mid);
       const nowSec = Math.floor(Date.now() / 1000);
-      TickBuffer.addTick(nowSec, midCents);
-      ChartManager.setData([{ time: nowSec, value: midCents }]);
+      TickBuffer.addTick(nowSec, displayCents);
+      ChartManager.setData([{ time: nowSec, value: displayCents }]);
       PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
       _updatePriceUI();
     }
 
     // Connect WebSocket and subscribe
     setLoadingSub('Connecting to live feed…');
+    // FIX: clear the WS token filter BEFORE subscribing so new token isn't blocked
+    PolyWS.clearTokenFilter();
     PolyWS.subscribe(market.upTokenId);
     if (!PolyWS.isConnected()) {
       PolyWS.connect();
@@ -255,41 +257,65 @@
     console.log('[App] Switching market:', prevMarket?.slug, '→', newMarket.slug);
     _marketSwitchCount++;
 
-    // Add visual boundary marker to chart
+    // Visual boundary on chart
     const boundaryTs = prevMarket ? prevMarket.endTs : Math.floor(Date.now() / 1000);
     ChartManager.addWhitespace(boundaryTs);
     ChartManager.addMarketBoundaryMarker(boundaryTs + 1, '│ New Market');
     TickBuffer.addMarketBoundary(boundaryTs);
 
-    // Reset price engine for new market
+    // Reset price engine
     PriceEngine.reset();
 
-    // Update WebSocket subscription (no WS reconnect needed!)
+    // FIX: clear token filter so new subscription isn't blocked by old token check
+    PolyWS.clearTokenFilter();
     PolyWS.subscribe(newMarket.upTokenId);
 
     // Update UI
     _updateMarketUI(newMarket);
     el.marketCount.textContent = `Markets: ${_marketSwitchCount + 1}`;
 
-    // Fetch initial price for new market
+    // Get initial price for new market
     const mid = await MarketManager.fetchMidpoint(newMarket.upTokenId);
     if (mid !== null) {
+      const displayCents = _toDisplayCents(mid);
       const nowSec = Math.floor(Date.now() / 1000);
-      TickBuffer.addTick(nowSec, mid * 100);
-      ChartManager.pushTick(nowSec, mid * 100);
+      TickBuffer.addTick(nowSec, displayCents);
+      ChartManager.pushTick(nowSec, displayCents);
       PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+      _updatePriceUI();
     }
 
     showToast(`New market: ${newMarket.slug}`, 'info', 4000);
+  }
+
+  // ─── Outcome mode switch (UP / DOWN) ─────────────────────────────
+  function _switchOutcome(mode) {
+    if (_outcomeMode === mode) return;
+    _outcomeMode = mode;
+
+    // Update button states
+    el.btnOutcomeUp?.classList.toggle('active', mode === 'up');
+    el.btnOutcomeDown?.classList.toggle('active', mode === 'down');
+
+    // Rebuild chart from buffer with new display
+    const rawTicks = TickBuffer.getRawTicks();
+    if (rawTicks.length > 0) {
+      // Re-convert all ticks according to new mode
+      const converted = TickBuffer.aggregate(_currentTfSeconds, mode);
+      ChartManager.setData(converted);
+    }
+
+    // Update color scheme
+    ChartManager.setOutcomeMode(mode);
+
+    showToast(mode === 'up' ? '📈 Showing UP probability' : '📉 Showing DOWN probability', 'info', 2000);
   }
 
   // ─── Timeframe switch ─────────────────────────────────────────────
   function switchTf(tfSeconds) {
     _currentTfSeconds = tfSeconds;
     ChartManager.setTimeframe(tfSeconds);
-
-    // Re-aggregate all stored ticks
-    const aggregated = TickBuffer.aggregate(tfSeconds);
+    const aggregated = TickBuffer.aggregate(tfSeconds, _outcomeMode);
     if (aggregated.length > 0) {
       ChartManager.setData(aggregated);
     }
@@ -339,7 +365,7 @@
     el.errorOverlay.style.display = 'none';
   }
 
-  // ─── Toast notifications ─────────────────────────────────────────
+  // ─── Toast ────────────────────────────────────────────────────────
   function showToast(message, type = 'info', duration = 3000) {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
@@ -373,7 +399,7 @@
   // ─── UI event listeners ───────────────────────────────────────────
 
   // Market TF switch (5m / 15m)
-  el.btnMkt5m.addEventListener('click', () => {
+  el.btnMkt5m?.addEventListener('click', () => {
     if (_currentTfMinutes === 5) return;
     _currentTfMinutes = 5;
     el.btnMkt5m.classList.add('active');
@@ -383,7 +409,7 @@
     loadMarket(5);
   });
 
-  el.btnMkt15m.addEventListener('click', () => {
+  el.btnMkt15m?.addEventListener('click', () => {
     if (_currentTfMinutes === 15) return;
     _currentTfMinutes = 15;
     el.btnMkt15m.classList.add('active');
@@ -392,6 +418,10 @@
     ChartManager.clearMarkers();
     loadMarket(15);
   });
+
+  // UP / DOWN outcome buttons
+  el.btnOutcomeUp?.addEventListener('click', () => _switchOutcome('up'));
+  el.btnOutcomeDown?.addEventListener('click', () => _switchOutcome('down'));
 
   // Chart TF switch (1s / 5s / 15s / 30s / 1m)
   const tfBtns = {
@@ -412,21 +442,17 @@
     });
   });
 
-  // Reset zoom
-  el.btnResetZoom?.addEventListener('click', () => {
-    ChartManager.resetZoom();
-  });
+  el.btnResetZoom?.addEventListener('click', () => ChartManager.resetZoom());
 
-  // Retry button
   el.btnRetry?.addEventListener('click', () => {
     hideError();
     loadMarket(_currentTfMinutes);
   });
 
-  // ─── Start price age updater ──────────────────────────────────────
+  // ─── Periodic UI updater ─────────────────────────────────────────
   setInterval(_updatePriceUI, 1000);
 
-  // ─── Start countdown timer ────────────────────────────────────────
+  // ─── Start timer ─────────────────────────────────────────────────
   _startTimer();
 
   // ─── Boot ─────────────────────────────────────────────────────────
