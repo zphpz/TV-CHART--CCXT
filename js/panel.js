@@ -363,10 +363,15 @@ window.HistoryPanel = (() => {
       ChartManager.setData(aggregated);
     }
 
-    // Now place winner badge markers matching valid points in aggregated data
+    // Now place winner badge markers and dashed blue session dividers
     ChartManager.clearMarkers();
+    const boundaries = [];
+
     if (aggregated.length > 0) {
       for (const s of allSessions) {
+        if (s.startTs) boundaries.push(s.startTs);
+        if (s.endTs) boundaries.push(s.endTs);
+
         if (s.winner && s.winner !== 'PENDING') {
           const isUp = s.winner === 'UP';
           const targetTs = s.endTs || (Array.isArray(s.ticks) && s.ticks.length > 0 ? s.ticks[s.ticks.length - 1][0] : null);
@@ -391,6 +396,7 @@ window.HistoryPanel = (() => {
           }
         }
       }
+      ChartManager.setSessionBoundaries(boundaries);
     }
 
     if (switchView && window.App) {

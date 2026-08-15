@@ -19,6 +19,9 @@ window.ChartManager = (() => {
   let _currentTf     = 1;
   let _outcomeMode   = 'up'; // 'up' | 'down'
   let _tooltipEl     = null;
+  let _overlayCanvas = null;
+  let _overlayCtx    = null;
+  let _sessionBoundaries = new Set(); // set of unixSec timestamps for session dividers
 
   let _pendingUpdate = null;
   let _rafId         = null;
@@ -128,6 +131,24 @@ window.ChartManager = (() => {
     // Anchor invisible price lines at 0 and 100
     _setScaleAnchors();
 
+    // Create overlay canvas for dashed blue session separators
+    _overlayCanvas = document.createElement('canvas');
+    _overlayCanvas.id = 'chart-overlay-canvas';
+    _overlayCanvas.style.position = 'absolute';
+    _overlayCanvas.style.top = '0';
+    _overlayCanvas.style.left = '0';
+    _overlayCanvas.style.width = '100%';
+    _overlayCanvas.style.height = '100%';
+    _overlayCanvas.style.pointerEvents = 'none';
+    _overlayCanvas.style.zIndex = '10';
+    container.style.position = 'relative';
+    container.appendChild(_overlayCanvas);
+    _overlayCtx = _overlayCanvas.getContext('2d');
+
+    // Redraw dashed blue separators on visible range changes & scroll
+    _chart.timeScale().subscribeVisibleTimeRangeChange(_drawSessionDividers);
+    _chart.timeScale().subscribeVisibleLogicalRangeChange(_drawSessionDividers);
+
     // Setup Crosshair Tooltip Hover listener
     _setupCrosshairTooltip(container);
 
@@ -137,7 +158,7 @@ window.ChartManager = (() => {
     // Start RAF rendering loop
     _startRenderLoop();
 
-    console.log('[ChartManager] Lightweight Charts v5 initialized with visible 0–100 scale');
+    console.log('[ChartManager] Lightweight Charts v5 initialized with visible 0–100 scale & session dividers');
     return true;
   }
 
@@ -321,6 +342,68 @@ window.ChartManager = (() => {
     } catch {}
   }
 
+  // ─── Dashed Blue Session Dividers ──────────────────────────────────
+  function _drawSessionDividers() {
+    if (!_overlayCanvas || !_overlayCtx || !_chart) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const w = _overlayCanvas.clientWidth;
+    const h = _overlayCanvas.clientHeight;
+
+    if (_overlayCanvas.width !== w * dpr || _overlayCanvas.height !== h * dpr) {
+      _overlayCanvas.width = w * dpr;
+      _overlayCanvas.height = h * dpr;
+    }
+
+    _overlayCtx.save();
+    _overlayCtx.scale(dpr, dpr);
+    _overlayCtx.clearRect(0, 0, w, h);
+
+    if (_sessionBoundaries.size === 0) {
+      _overlayCtx.restore();
+      return;
+    }
+
+    const timeScale = _chart.timeScale();
+    _overlayCtx.strokeStyle = 'rgba(77, 171, 247, 0.45)'; // Semi-transparent blue dashed line
+    _overlayCtx.lineWidth = 1;
+    _overlayCtx.setLineDash([4, 4]);
+
+    for (const ts of _sessionBoundaries) {
+      const x = timeScale.timeToCoordinate(ts);
+      if (x !== null && x >= 0 && x <= w) {
+        _overlayCtx.beginPath();
+        _overlayCtx.moveTo(Math.round(x) + 0.5, 0);
+        _overlayCtx.lineTo(Math.round(x) + 0.5, h);
+        _overlayCtx.stroke();
+      }
+    }
+
+    _overlayCtx.restore();
+  }
+
+  function addSessionBoundary(unixSec) {
+    if (typeof unixSec === 'number') {
+      _sessionBoundaries.add(unixSec);
+      _drawSessionDividers();
+    }
+  }
+
+  function setSessionBoundaries(timestampsArray) {
+    _sessionBoundaries = new Set();
+    if (Array.isArray(timestampsArray)) {
+      for (const t of timestampsArray) {
+        if (typeof t === 'number') _sessionBoundaries.add(t);
+      }
+    }
+    _drawSessionDividers();
+  }
+
+  function clearSessionBoundaries() {
+    _sessionBoundaries.clear();
+    _drawSessionDividers();
+  }
+
   function clearMarkers() {
     _markers = [];
     try { _series.setMarkers([]); } catch {}
@@ -352,6 +435,7 @@ window.ChartManager = (() => {
           width:  container.clientWidth,
           height: container.clientHeight,
         });
+        _drawSessionDividers();
       }
     });
     ro.observe(container);
@@ -386,6 +470,9 @@ window.ChartManager = (() => {
     addWhitespace,
     addMarketBoundaryMarker,
     addWinnerBadgeMarker,
+    addSessionBoundary,
+    setSessionBoundaries,
+    clearSessionBoundaries,
     clearMarkers,
     setTimeframe,
     setOutcomeMode,

@@ -383,6 +383,7 @@ window.App = (() => {
 
     // 2. Add visual boundary separator to chart
     ChartManager.addWhitespace(boundaryTs);
+    ChartManager.addSessionBoundary(boundaryTs);
     ChartManager.addMarketBoundaryMarker(boundaryTs + 1, '│ New Market');
     TickBuffer.addMarketBoundary(boundaryTs);
 
