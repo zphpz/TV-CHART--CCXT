@@ -1,34 +1,32 @@
 /**
- * ws.js — Polymarket CLOB WebSocket client
+ * ws.js — Polymarket CLOB WebSocket client v1.2
  * 
- * Features:
- * - Connect to wss://ws-subscriptions-clob.polymarket.com/ws/market
- * - Subscribe by asset_id (token ID)
- * - Dynamic subscribe/unsubscribe without reconnect
- * - PING every 10s (text frame "PING")
- * - Exponential backoff reconnect (1s → 30s max)
- * - WATCHDOG: 15s silence → force reconnect (zombie connection detection!)
- * - Dispatches: onBook, onPriceChange, onLastTrade, onBestBidAsk, onNewMarket, onMarketResolved
+ * Handles:
+ * - Direct connection to wss://ws-subscriptions-clob.polymarket.com/ws/market
+ * - Full parsing of price_change, book, best_bid_ask, last_trade_price
+ * - Accurate token matching for price_changes array
+ * - Seamless subscribe / switch / unsubscribe
+ * - Heartbeat PING (10s) and Watchdog (15s) for zero-lag live stream
  */
 'use strict';
 
 window.PolyWS = (() => {
   const WS_URL = 'wss://ws-subscriptions-clob.polymarket.com/ws/market';
-  const PING_INTERVAL_MS  = 10_000;  // 10 seconds
-  const WATCHDOG_MS       = 15_000;  // 15 seconds silence = zombie
+  const PING_INTERVAL_MS  = 10_000;
+  const WATCHDOG_MS       = 15_000;
   const MAX_RECONNECT_MS  = 30_000;
   const BASE_RECONNECT_MS = 1_000;
 
-  let _ws              = null;
-  let _currentTokenId  = null;  // active subscribed token
-  let _pingTimer       = null;
-  let _watchdogTimer   = null;
-  let _reconnectTimer  = null;
+  let _ws               = null;
+  let _currentTokenId   = null;
+  let _pingTimer        = null;
+  let _watchdogTimer    = null;
+  let _reconnectTimer   = null;
   let _reconnectAttempt = 0;
-  let _destroyed       = false;
-  let _lastDataMs      = 0;
+  let _destroyed        = false;
+  let _lastDataMs       = 0;
 
-  // Event handlers (set by caller)
+  // Event handlers (assigned by app.js)
   const handlers = {
     onBook:           null,
     onPriceChange:    null,
@@ -45,7 +43,7 @@ window.PolyWS = (() => {
   // ─── Connect ────────────────────────────────────────────────────────
   function connect() {
     if (_destroyed) return;
-    
+
     try {
       _ws = new WebSocket(WS_URL);
     } catch (e) {
@@ -55,11 +53,10 @@ window.PolyWS = (() => {
     }
 
     _ws.onopen = () => {
-      console.log('[PolyWS] Connected');
+      console.log('[PolyWS] WebSocket Connected to Polymarket CLOB');
       _reconnectAttempt = 0;
       _lastDataMs = Date.now();
 
-      // Subscribe to current token if we have one
       if (_currentTokenId) {
         _sendSubscribe(_currentTokenId);
       }
@@ -71,7 +68,6 @@ window.PolyWS = (() => {
     };
 
     _ws.onmessage = (evt) => {
-      // Handle PONG
       if (evt.data === 'PONG') {
         _lastDataMs = Date.now();
         return;
@@ -84,11 +80,8 @@ window.PolyWS = (() => {
         return;
       }
 
-      // Reset watchdog on any data
       _lastDataMs = Date.now();
-      _resetWatchdog();
 
-      // Handle array or single message
       if (Array.isArray(data)) {
         data.forEach(_handleMessage);
       } else if (data) {
@@ -97,64 +90,89 @@ window.PolyWS = (() => {
     };
 
     _ws.onerror = (e) => {
-      console.warn('[PolyWS] WebSocket error');
+      console.warn('[PolyWS] WebSocket error:', e);
       if (handlers.onError) handlers.onError(e);
     };
 
     _ws.onclose = (evt) => {
-      console.warn(`[PolyWS] Connection closed: code=${evt.code}`);
+      console.warn(`[PolyWS] Connection closed (code=${evt.code})`);
       _clearTimers();
       if (handlers.onDisconnected) handlers.onDisconnected();
       if (!_destroyed) _scheduleReconnect();
     };
   }
 
-  // ─── Message dispatcher ─────────────────────────────────────────────
+  // ─── Message Dispatcher ─────────────────────────────────────────────
   function _handleMessage(msg) {
     if (!msg || !msg.event_type) return;
 
-    // Security: ignore messages from wrong token
-    if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) {
-      return;
-    }
-
     switch (msg.event_type) {
-      case 'book':
+      case 'book': {
+        // Book snapshot for market/token
+        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
         if (handlers.onBook) handlers.onBook(msg);
         break;
-      case 'price_change':
-        if (handlers.onPriceChange) handlers.onPriceChange(msg);
+      }
+
+      case 'price_change': {
+        // In Polymarket CLOB, price_change has price_changes: [ { asset_id, price, best_bid, best_ask, ... } ]
+        if (Array.isArray(msg.price_changes)) {
+          let matched = null;
+          if (_currentTokenId) {
+            matched = msg.price_changes.find(p => p.asset_id === _currentTokenId);
+          }
+          if (!matched && msg.price_changes.length > 0) {
+            matched = msg.price_changes[0];
+          }
+          if (matched && handlers.onPriceChange) {
+            handlers.onPriceChange(matched);
+          }
+        } else {
+          if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+          if (handlers.onPriceChange) handlers.onPriceChange(msg);
+        }
         break;
-      case 'last_trade_price':
-        if (handlers.onLastTrade) handlers.onLastTrade(msg);
-        break;
-      case 'best_bid_ask':
+      }
+
+      case 'best_bid_ask': {
+        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
         if (handlers.onBestBidAsk) handlers.onBestBidAsk(msg);
         break;
-      case 'new_market':
+      }
+
+      case 'last_trade_price': {
+        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+        if (handlers.onLastTrade) handlers.onLastTrade(msg);
+        break;
+      }
+
+      case 'new_market': {
         if (handlers.onNewMarket) handlers.onNewMarket(msg);
         break;
-      case 'market_resolved':
+      }
+
+      case 'market_resolved': {
         if (handlers.onMarketResolved) handlers.onMarketResolved(msg);
         break;
-      case 'tick_size_change':
+      }
+
+      case 'tick_size_change': {
         if (handlers.onTickSizeChange) handlers.onTickSizeChange(msg);
         break;
+      }
+
       default:
-        // Unknown event — ignore
         break;
     }
   }
 
   // ─── Subscribe / Unsubscribe ────────────────────────────────────────
-  function _sendSubscribe(tokenId, useCustomFeature = true) {
+  function _sendSubscribe(tokenId) {
     const msg = {
       assets_ids: [tokenId],
       type: 'market',
+      custom_feature_enabled: true,
     };
-    if (useCustomFeature) {
-      msg.custom_feature_enabled = true; // enables: best_bid_ask, new_market, market_resolved
-    }
     _send(JSON.stringify(msg));
   }
 
@@ -166,9 +184,13 @@ window.PolyWS = (() => {
     }));
   }
 
+  function clearTokenFilter() {
+    _currentTokenId = null;
+  }
+
   /**
-   * Subscribe to a new token. Unsubscribes from previous if needed.
-   * Does NOT reconnect the WebSocket — sends new subscribe frame.
+   * Subscribe to a new token ID.
+   * If already subscribed to a previous token, unsubscribes and subscribes to new one.
    */
   function subscribe(newTokenId) {
     const prev = _currentTokenId;
@@ -179,8 +201,9 @@ window.PolyWS = (() => {
         _sendUnsubscribe(prev);
       }
       _sendSubscribe(newTokenId);
+      // Immediately send PING to assure live pipe
+      _send('PING');
     } else {
-      // Not connected — will subscribe on reconnect
       if (!_ws || _ws.readyState === WebSocket.CLOSED) {
         connect();
       }
@@ -198,33 +221,27 @@ window.PolyWS = (() => {
     }
   }
 
-  // ─── Ping / Pong ────────────────────────────────────────────────────
+  // ─── Heartbeat PING ─────────────────────────────────────────────────
   function _startPing() {
     clearInterval(_pingTimer);
     _pingTimer = setInterval(() => {
       if (_ws && _ws.readyState === WebSocket.OPEN) {
-        _ws.send('PING'); // Must be text, not JSON!
+        _ws.send('PING');
       }
     }, PING_INTERVAL_MS);
   }
 
   // ─── Watchdog ───────────────────────────────────────────────────────
-  // Detects "zombie" connections: open but no data for 15+ seconds
   function _startWatchdog() {
     clearInterval(_watchdogTimer);
     _lastDataMs = Date.now();
     _watchdogTimer = setInterval(() => {
       const silence = Date.now() - _lastDataMs;
       if (silence > WATCHDOG_MS) {
-        console.warn(`[PolyWS] Watchdog triggered: ${Math.round(silence / 1000)}s of silence. Forcing reconnect.`);
+        console.warn(`[PolyWS] Watchdog: ${Math.round(silence / 1000)}s silence detected. Reconnecting...`);
         if (_ws) _ws.close();
       }
     }, 5000);
-  }
-
-  function _resetWatchdog() {
-    // Called on every real message — watchdog timer doesn't need explicit reset
-    // because we just update _lastDataMs
   }
 
   // ─── Reconnect ──────────────────────────────────────────────────────
@@ -245,18 +262,17 @@ window.PolyWS = (() => {
     _reconnectTimer = null;
   }
 
-  // ─── Cleanup ────────────────────────────────────────────────────────
+  // ─── Cleanup ─────────────────────────────────────────────────────────
   function destroy() {
     _destroyed = true;
     _clearTimers();
     if (_ws) {
-      _ws.onclose = null; // prevent reconnect
+      _ws.onclose = null;
       _ws.close();
       _ws = null;
     }
   }
 
-  // ─── Status ─────────────────────────────────────────────────────────
   function isConnected() {
     return _ws && _ws.readyState === WebSocket.OPEN;
   }
@@ -281,6 +297,7 @@ window.PolyWS = (() => {
   return {
     connect,
     subscribe,
+    clearTokenFilter,
     destroy,
     isConnected,
     getStatus,

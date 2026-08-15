@@ -7,7 +7,7 @@
   <meta name="description" content="Real-time Polymarket BTC Up/Down rolling market chart. View probability movements for 5m and 15m BTC prediction markets." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
@@ -39,15 +39,12 @@
           <span id="status-dot"></span>
           <span id="status-text">CONNECTING</span>
         </div>
-        <div id="market-timer">
-          <span id="timer-label">Ends in</span>
-          <span id="timer-value">--:--</span>
-        </div>
       </div>
     </header>
 
     <!-- ═══════════════ PRICE BAR ═══════════════ -->
     <div id="price-bar">
+      <!-- Left prices -->
       <div class="price-item" id="price-current-wrap">
         <span class="price-label">PRICE</span>
         <span class="price-value large" id="price-current">--.-¢</span>
@@ -77,6 +74,23 @@
       <div class="price-item">
         <span class="price-label">UPDATED</span>
         <span class="price-value muted small" id="price-age">---</span>
+      </div>
+
+      <!-- Center: Large countdown timer -->
+      <div class="price-divider"></div>
+      <div id="timer-center">
+        <span id="timer-label-top">ENDS IN</span>
+        <span id="timer-value">--:--</span>
+      </div>
+      <div class="price-divider"></div>
+
+      <!-- Right: UP / DOWN outcome buttons -->
+      <div id="outcome-switcher">
+        <span class="price-label">OUTCOME</span>
+        <div id="outcome-buttons">
+          <button class="outcome-btn active" id="btn-outcome-up">▲ UP</button>
+          <button class="outcome-btn" id="btn-outcome-down">▼ DOWN</button>
+        </div>
       </div>
     </div>
 
@@ -111,6 +125,9 @@
     <div id="chart-wrapper">
       <div id="chart-container"></div>
 
+      <!-- Floating Price Tooltip over Crosshair point -->
+      <div id="chart-tooltip" style="display: none;"></div>
+
       <!-- Loading overlay -->
       <div id="loading-overlay">
         <div id="loading-spinner"></div>
@@ -139,7 +156,7 @@
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v1.0</span>
+        <span id="app-version">v1.2</span>
       </div>
     </footer>
 

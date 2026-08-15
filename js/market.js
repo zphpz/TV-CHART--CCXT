@@ -1,27 +1,28 @@
 /**
- * market.js — Polymarket market discovery & rollover scheduler
+ * market.js — Polymarket market discovery & rollover scheduler v1.2
  * 
  * Responsibilities:
  * - Compute current rolling market slug from timestamp
  * - Fetch market metadata from Gamma API
- * - Parse clobTokenIds / outcomes (JSON strings!)
- * - Schedule rollover at market boundary (pre-fetch + switch)
+ * - Accurately parse clobTokenIds / outcomes (Up vs Down)
+ * - Schedule seamless rollover at market boundary (pre-fetch + switch)
+ * - Guard against stale or expired markets
  */
 'use strict';
 
 window.MarketManager = (() => {
-  const GAMMA_BASE  = 'https://gamma-api.polymarket.com';
-  const CLOB_BASE   = 'https://clob.polymarket.com';
+  const GAMMA_BASE = 'https://gamma-api.polymarket.com';
+  const CLOB_BASE  = 'https://clob.polymarket.com';
 
-  // Current state
-  let _currentMarket = null;   // { slug, upTokenId, downTokenId, startTs, endTs }
-  let _nextMarket    = null;   // preloaded next market
+  let _currentMarket = null; // { slug, upTokenId, downTokenId, startTs, endTs, conditionId }
+  let _nextMarket    = null; // prefetched next market
   let _rolloverTimer = null;
   let _prefetchTimer = null;
-  let _onSwitchCb    = null;   // callback when market switches
-  let _marketTf      = 5;      // 5 or 15 minutes
+  let _onSwitchCb    = null;
+  let _marketTf      = 5;    // 5 or 15 minutes
+  let _isRollingOver = false;
 
-  // ─── Slug calculation ──────────────────────────────────────────────
+  // ─── Slug Calculations ──────────────────────────────────────────────
   function _intervalSec(tfMinutes) {
     return tfMinutes * 60; // 300 or 900
   }
@@ -45,29 +46,28 @@ window.MarketManager = (() => {
     return makeSlug(tfMinutes, cur + _intervalSec(tfMinutes));
   }
 
-  // ─── Gamma API fetch ───────────────────────────────────────────────
-  async function _fetchWithRetry(url, retries = 3, delayMs = 800) {
+  // ─── Gamma API Fetch ────────────────────────────────────────────────
+  async function _fetchWithRetry(url, retries = 3, delayMs = 600) {
     let lastErr;
     for (let i = 0; i < retries; i++) {
       try {
         const resp = await fetch(url, {
           headers: {
             'Accept': 'application/json',
-            'User-Agent': 'PM-Chart/1.0',
           },
         });
         if (resp.ok) {
           return await resp.json();
         }
-        if (resp.status === 404) return null;           // market doesn't exist yet
+        if (resp.status === 404) return null;
         if (resp.status === 429) {
-          await _sleep(delayMs * Math.pow(2, i));
+          await _sleep(delayMs * Math.pow(1.5, i));
           continue;
         }
         throw new Error(`HTTP ${resp.status}`);
       } catch (e) {
         lastErr = e;
-        if (i < retries - 1) await _sleep(delayMs * Math.pow(2, i));
+        if (i < retries - 1) await _sleep(delayMs * Math.pow(1.5, i));
       }
     }
     console.warn('[MarketManager] fetchWithRetry failed:', url, lastErr);
@@ -78,13 +78,13 @@ window.MarketManager = (() => {
 
   /**
    * Fetch market metadata from Gamma API.
-   * Returns { upTokenId, downTokenId, startTs, endTs, slug } or null
+   * Returns { slug, upTokenId, downTokenId, startTs, endTs, conditionId } or null
    */
   async function fetchMarketData(slug) {
-    // Try /events/slug/ first
+    // 1. Try /events/slug/{slug}
     let data = await _fetchWithRetry(`${GAMMA_BASE}/events/slug/${slug}`);
-    
-    // Fallback: try /events?slug=
+
+    // 2. Fallback: try /events?slug={slug}
     if (!data) {
       const arr = await _fetchWithRetry(`${GAMMA_BASE}/events?slug=${encodeURIComponent(slug)}&limit=1`);
       if (Array.isArray(arr) && arr.length > 0) data = arr[0];
@@ -93,12 +93,11 @@ window.MarketManager = (() => {
 
     if (!data) return null;
 
-    // The event has markets[]
     const markets = data.markets || [];
     if (markets.length === 0) return null;
     const market = markets[0];
 
-    // Parse JSON strings (CRITICAL: these are JSON strings, not arrays!)
+    // Parse JSON string token IDs and outcomes
     let tokenIds, outcomes;
     try {
       tokenIds = typeof market.clobTokenIds === 'string'
@@ -108,29 +107,29 @@ window.MarketManager = (() => {
         ? JSON.parse(market.outcomes)
         : market.outcomes;
     } catch (e) {
-      console.error('[MarketManager] Failed to parse clobTokenIds/outcomes:', e);
+      console.error('[MarketManager] Failed to parse tokenIds/outcomes:', e);
       return null;
     }
 
     if (!Array.isArray(tokenIds) || tokenIds.length < 2) return null;
 
-    // Map "Up" outcome to correct token index (don't hardcode index 0!)
-    const upIdx = outcomes.findIndex(o => /^up$/i.test(String(o).trim()) || /^yes$/i.test(String(o).trim()));
+    // Map "Up" outcome to correct token index
+    const upIdx = Array.isArray(outcomes)
+      ? outcomes.findIndex(o => /^up$/i.test(String(o).trim()) || /^yes$/i.test(String(o).trim()))
+      : 0;
+
     const upTokenId   = tokenIds[upIdx !== -1 ? upIdx : 0];
     const downTokenId = tokenIds[upIdx !== -1 ? (upIdx === 0 ? 1 : 0) : 1];
 
     if (!upTokenId) return null;
 
-    // Parse timestamps
-    // IMPORTANT: Extract startTs from slug itself (btc-updown-5m-{TIMESTAMP})
-    // The event-level startDate can be for the whole series, not this 5m window
+    // Derive startTs from slug timestamp
     let startTs = null;
     const slugMatch = slug.match(/(\d+)$/);
     if (slugMatch) startTs = parseInt(slugMatch[1], 10);
-    
-    // endTs = start + duration
-    const tf = slug.includes('-15m-') ? 900 : 300;
-    const endTs = startTs ? startTs + tf : _parseTs(data.endDate || market.endDate || null);
+
+    const tfSec = slug.includes('-15m-') ? 900 : 300;
+    const endTs = startTs ? (startTs + tfSec) : _parseTs(data.endDate || market.endDate || null);
 
     return {
       slug,
@@ -139,6 +138,7 @@ window.MarketManager = (() => {
       startTs,
       endTs,
       conditionId: market.conditionId || null,
+      question: market.question || data.title || '',
     };
   }
 
@@ -149,7 +149,7 @@ window.MarketManager = (() => {
     return isNaN(d.getTime()) ? null : Math.floor(d.getTime() / 1000);
   }
 
-  // ─── Fetch initial midpoint from CLOB REST ─────────────────────────
+  // ─── Fetch initial midpoint from CLOB REST ──────────────────────────
   async function fetchMidpoint(tokenId) {
     const data = await _fetchWithRetry(`${CLOB_BASE}/midpoint?token_id=${tokenId}`, 2);
     if (!data) return null;
@@ -157,70 +157,61 @@ window.MarketManager = (() => {
     return isNaN(mid) ? null : mid;
   }
 
-  // ─── Market initialization ─────────────────────────────────────────
-  /**
-   * Find and load the current active market for given TF.
-   * Tries current window, then current-1, then current+1.
-   * Returns market data or null.
-   */
+  // ─── Market Initialization & Active Search ─────────────────────────
   async function loadCurrentMarket(tfMinutes) {
     _marketTf = tfMinutes;
     const interval = _intervalSec(tfMinutes);
     const nowSec = Math.floor(Date.now() / 1000);
-    
-    // Try current window and surrounding ones
+
+    // Candidates: current window, next window
     const candidates = [
       _getWindowTs(tfMinutes),
-      _getWindowTs(tfMinutes) - interval,
       _getWindowTs(tfMinutes) + interval,
+      _getWindowTs(tfMinutes) - interval,
     ];
 
     for (const ts of candidates) {
       const slug = makeSlug(tfMinutes, ts);
-      console.log('[MarketManager] Trying slug:', slug);
-      
       const md = await fetchMarketData(slug);
       if (!md) continue;
 
-      // Check if this market is currently active (endTs in future)
-      if (md.endTs && md.endTs < nowSec - 10) continue; // already expired
-      
-      console.log('[MarketManager] Found market:', md);
+      // CRITICAL: Ensure market is active (endTs MUST be in the future!)
+      if (md.endTs && md.endTs <= nowSec) continue;
+
+      console.log('[MarketManager] Active market selected:', md.slug, 'ends in:', md.endTs - nowSec, 's');
       return md;
     }
 
-    // Last resort: search by slug_contains
-    console.warn('[MarketManager] Fallback: searching by slug_contains');
+    // Fallback: search Gamma API for active markets
+    console.warn('[MarketManager] Searching active markets via Gamma search');
     const arr = await _fetchWithRetry(
-      `${GAMMA_BASE}/events?slug_contains=btc-updown-${tfMinutes}m&active=true&closed=false&limit=5`
+      `${GAMMA_BASE}/events?slug_contains=btc-updown-${tfMinutes}m&active=true&closed=false&limit=10`
     );
+
     if (Array.isArray(arr) && arr.length > 0) {
-      // Sort by endDate ascending, pick the soonest
-      const sorted = arr
-        .map(e => ({ ...e, _endTs: _parseTs(e.endDate) }))
-        .filter(e => e._endTs && e._endTs > nowSec)
-        .sort((a, b) => a._endTs - b._endTs);
-      
-      if (sorted.length > 0) {
-        const ev = sorted[0];
-        // Re-fetch full market data
-        return fetchMarketData(ev.slug);
+      const activeEvents = arr
+        .map(e => {
+          const match = (e.slug || '').match(/(\d+)$/);
+          const startTs = match ? parseInt(match[1], 10) : _parseTs(e.startDate);
+          const endTs = startTs ? startTs + interval : _parseTs(e.endDate);
+          return { slug: e.slug, startTs, endTs };
+        })
+        .filter(e => e.endTs && e.endTs > nowSec)
+        .sort((a, b) => a.endTs - b.endTs);
+
+      if (activeEvents.length > 0) {
+        return await fetchMarketData(activeEvents[0].slug);
       }
     }
 
     return null;
   }
 
-  // ─── Rollover scheduler ────────────────────────────────────────────
-  /**
-   * Schedule the rollover for the current market.
-   * - 20s before endTs: start pre-fetching next market
-   * - At endTs: switch to next market
-   */
+  // ─── Rollover Scheduler ────────────────────────────────────────────
   function scheduleRollover(market, onSwitch) {
     if (!market || !market.endTs) return;
     _onSwitchCb = onSwitch;
-    
+
     clearTimeout(_rolloverTimer);
     clearTimeout(_prefetchTimer);
     _nextMarket = null;
@@ -229,11 +220,10 @@ window.MarketManager = (() => {
     const endMs = market.endTs * 1000;
     const msUntilEnd = endMs - nowMs;
 
-    // Pre-fetch 20 seconds before end
-    const prefetchDelay = Math.max(0, msUntilEnd - 20000);
+    // Pre-fetch 25 seconds before market ends
+    const prefetchDelay = Math.max(0, msUntilEnd - 25000);
 
-    console.log(`[MarketManager] Market ends in ${Math.round(msUntilEnd / 1000)}s`);
-    console.log(`[MarketManager] Will pre-fetch next in ${Math.round(prefetchDelay / 1000)}s`);
+    console.log(`[MarketManager] Scheduled rollover in ${Math.round(msUntilEnd / 1000)}s (pre-fetch in ${Math.round(prefetchDelay / 1000)}s)`);
 
     _prefetchTimer = setTimeout(() => {
       _prefetchNextMarket(market);
@@ -242,7 +232,7 @@ window.MarketManager = (() => {
     // Switch at endTs
     _rolloverTimer = setTimeout(() => {
       _doRollover();
-    }, Math.max(0, msUntilEnd));
+    }, Math.max(200, msUntilEnd));
   }
 
   async function _prefetchNextMarket(currentMarket) {
@@ -251,62 +241,67 @@ window.MarketManager = (() => {
 
     console.log('[MarketManager] Pre-fetching next market:', nextSlug);
 
-    // Retry up to 20 times with 1s interval
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 25; i++) {
       const md = await fetchMarketData(nextSlug);
       if (md) {
         _nextMarket = md;
-        console.log('[MarketManager] Next market ready:', md.slug);
+        console.log('[MarketManager] Next market pre-fetched successfully:', md.slug);
         return;
       }
       await _sleep(1000);
     }
-    console.warn('[MarketManager] Could not prefetch next market');
+    console.warn('[MarketManager] Could not pre-fetch next market in advance');
   }
 
   async function _doRollover() {
-    console.log('[MarketManager] Rolling over to next market...');
-    
-    // If we already have next market prefetched, use it
-    let next = _nextMarket;
+    if (_isRollingOver) return;
+    _isRollingOver = true;
 
-    // If not prefetched, try to load it now
-    if (!next) {
-      const interval = _intervalSec(_marketTf);
-      const nextTs = _currentMarket ? _currentMarket.endTs : _getWindowTs(_marketTf) + interval;
-      const nextSlug = makeSlug(_marketTf, nextTs);
-      
-      for (let i = 0; i < 10; i++) {
-        next = await fetchMarketData(nextSlug);
-        if (next) break;
-        await _sleep(1000);
-      }
-    }
+    try {
+      console.log('[MarketManager] Rolling over to new market slot...');
 
-    if (!next) {
-      // Fallback: reload current timeframe
-      next = await loadCurrentMarket(_marketTf);
-    }
+      let next = _nextMarket;
 
-    if (next) {
-      const prev = _currentMarket;
-      _currentMarket = next;
-      _nextMarket = null;
+      if (!next) {
+        const interval = _intervalSec(_marketTf);
+        const nextTs = _currentMarket ? _currentMarket.endTs : _getWindowTs(_marketTf);
+        const nextSlug = makeSlug(_marketTf, nextTs);
 
-      if (_onSwitchCb) {
-        _onSwitchCb(next, prev);
+        for (let i = 0; i < 15; i++) {
+          next = await fetchMarketData(nextSlug);
+          if (next) break;
+          await _sleep(600);
+        }
       }
 
-      // Schedule next rollover
-      scheduleRollover(next, _onSwitchCb);
-    } else {
-      console.error('[MarketManager] Rollover failed: no next market found');
-      // Retry in 5 seconds
-      setTimeout(_doRollover, 5000);
+      if (!next) {
+        next = await loadCurrentMarket(_marketTf);
+      }
+
+      if (next) {
+        const prev = _currentMarket;
+        _currentMarket = next;
+        _nextMarket = null;
+
+        if (_onSwitchCb) {
+          _onSwitchCb(next, prev);
+        }
+
+        scheduleRollover(next, _onSwitchCb);
+      } else {
+        console.error('[MarketManager] Rollover retry: no active market found, retrying in 3s...');
+        setTimeout(() => {
+          _isRollingOver = false;
+          _doRollover();
+        }, 3000);
+        return;
+      }
+    } finally {
+      _isRollingOver = false;
     }
   }
 
-  // ─── Public API ────────────────────────────────────────────────────
+  // ─── Public Getters / Setters ──────────────────────────────────────
   function setCurrentMarket(market) {
     _currentMarket = market;
   }
@@ -315,12 +310,13 @@ window.MarketManager = (() => {
   function getNextMarket()    { return _nextMarket; }
   function getMarketTf()      { return _marketTf; }
 
-  /**
-   * Get seconds remaining until market end
-   */
   function getSecondsRemaining() {
     if (!_currentMarket || !_currentMarket.endTs) return null;
     return Math.max(0, _currentMarket.endTs - Math.floor(Date.now() / 1000));
+  }
+
+  function triggerRollover() {
+    _doRollover();
   }
 
   return {
@@ -336,5 +332,6 @@ window.MarketManager = (() => {
     getNextMarket,
     getMarketTf,
     getSecondsRemaining,
+    triggerRollover,
   };
 })();

@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════
-   Polymarket BTC Up/Down Chart — Premium Dark Theme
+   Polymarket BTC Up/Down Chart — Premium Dark Theme v1.2
    ═══════════════════════════════════════════════════════ */
 
 /* ── Reset & Base ─────────────────────────────────────── */
@@ -36,10 +36,9 @@
 
   /* Sizes */
   --header-h:       52px;
-  --pricebar-h:     48px;
+  --pricebar-h:     54px;
   --toolbar-h:      42px;
   --footer-h:       30px;
-  --chart-h:        calc(100vh - var(--header-h) - var(--pricebar-h) - var(--toolbar-h) - var(--footer-h));
 
   /* Transitions */
   --tr-fast: 120ms ease;
@@ -146,7 +145,7 @@ html, body {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 12px;
 }
 
 #status-indicator {
@@ -156,6 +155,10 @@ html, body {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
+  padding: 4px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
 }
 
 #status-dot {
@@ -177,23 +180,6 @@ html, body {
   50%       { opacity: 0.4; }
 }
 
-#market-timer {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-}
-#timer-label { font-size: 9px; color: var(--text-muted); letter-spacing: 0.05em; text-transform: uppercase; }
-#timer-value {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--text-primary);
-  min-width: 48px;
-  text-align: right;
-}
-#timer-value.urgent { color: var(--red); }
-
 /* ── Price Bar ────────────────────────────────────────── */
 #price-bar {
   display: flex;
@@ -211,8 +197,8 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 0 18px;
-  min-width: 80px;
+  padding: 0 14px;
+  min-width: 70px;
 }
 
 .price-divider {
@@ -233,7 +219,7 @@ html, body {
 .price-value {
   font-family: 'JetBrains Mono', monospace;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-primary);
   transition: color var(--tr-fast);
 }
@@ -246,8 +232,94 @@ html, body {
 .price-flash-up   { animation: flashUp 0.4s ease; }
 .price-flash-down { animation: flashDown 0.4s ease; }
 
-@keyframes flashUp   { 0% { color: var(--green); } 100% { } }
-@keyframes flashDown { 0% { color: var(--red); }   100% { } }
+@keyframes flashUp   { 0% { color: var(--green); text-shadow: 0 0 8px rgba(34,197,94,0.6); } 100% { } }
+@keyframes flashDown { 0% { color: var(--red);   text-shadow: 0 0 8px rgba(239,68,68,0.6); } 100% { } }
+
+/* Timer in Price Bar (Center) */
+#timer-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 20px;
+  min-width: 110px;
+}
+
+#timer-label-top {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+#timer-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.05em;
+  text-align: center;
+  transition: color var(--tr-fast);
+}
+
+#timer-value.urgent {
+  color: #ff4d6d;
+  animation: urgentPulse 1s ease-in-out infinite;
+  text-shadow: 0 0 10px rgba(255, 77, 109, 0.5);
+}
+
+@keyframes urgentPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+/* Outcome Switcher (UP / DOWN) */
+#outcome-switcher {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  padding-left: 14px;
+}
+
+#outcome-buttons {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.outcome-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+  letter-spacing: 0.04em;
+}
+.outcome-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+#btn-outcome-up.active {
+  background: #00d4aa;
+  color: #080b0f;
+  box-shadow: 0 0 10px rgba(0, 212, 170, 0.4);
+}
+
+#btn-outcome-down.active {
+  background: #ff4d6d;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 77, 109, 0.4);
+}
 
 /* ── Chart Toolbar ────────────────────────────────────── */
 #chart-toolbar {
@@ -328,7 +400,7 @@ html, body {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 6px;
-  max-width: 180px;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -367,6 +439,57 @@ html, body {
   height: 100%;
 }
 
+/* ── Floating Crosshair Point Tooltip ─────────────────── */
+#chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 25;
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  background: rgba(13, 17, 23, 0.94);
+  border: 1px solid rgba(0, 212, 170, 0.5);
+  color: #00d4aa;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(6px);
+  transform: translate(-50%, -100%);
+  margin-top: -12px;
+  white-space: nowrap;
+  transition: opacity 80ms ease, transform 60ms ease;
+}
+
+#chart-tooltip.tt-green {
+  border-color: rgba(0, 212, 170, 0.6);
+  color: #00d4aa;
+  box-shadow: 0 0 14px rgba(0, 212, 170, 0.25);
+}
+
+#chart-tooltip.tt-red {
+  border-color: rgba(255, 77, 109, 0.6);
+  color: #ff4d6d;
+  box-shadow: 0 0 14px rgba(255, 77, 109, 0.25);
+}
+
+#chart-tooltip.tt-blue {
+  border-color: rgba(77, 171, 247, 0.6);
+  color: #4dabf7;
+  box-shadow: 0 0 14px rgba(77, 171, 247, 0.25);
+}
+
+/* Tooltip downward caret arrow */
+#chart-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border-width: 5px;
+  border-style: solid;
+  border-color: rgba(13, 17, 23, 0.94) transparent transparent transparent;
+}
+
 /* ── Loading Overlay ──────────────────────────────────── */
 #loading-overlay {
   position: absolute;
@@ -377,7 +500,7 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 14px;
-  z-index: 20;
+  z-index: 30;
   backdrop-filter: blur(4px);
 }
 
@@ -412,7 +535,7 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  z-index: 20;
+  z-index: 30;
 }
 
 #error-icon { font-size: 40px; }
@@ -496,8 +619,9 @@ html, body {
 .toast.error { border-left: 3px solid var(--red); }
 
 /* ── Responsive ───────────────────────────────────────── */
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   #brand-sub, #market-info, .info-sep, #market-window-display { display: none; }
-  .price-item { padding: 0 10px; min-width: 60px; }
+  .price-item { padding: 0 8px; min-width: 55px; }
   .price-value.large { font-size: 15px; }
+  #timer-value { font-size: 16px; }
 }

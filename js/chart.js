@@ -1,36 +1,36 @@
 /**
- * chart.js — Lightweight Charts v5 initialization and data management
- *
- * Key rules:
- * - series.update() for live ticks (never setData per tick!)
- * - series.setData() only on TF switch or market switch
- * - Fixed Y scale 0-100 via autoscaleInfoProvider
- * - timeVisible + secondsVisible = true
- * - Whitespace points for market boundaries
- * - requestAnimationFrame throttle for render
+ * chart.js — Lightweight Charts v5 Manager with Tooltip & Outcome Modes v1.2
+ * 
+ * Features:
+ * - Fixed 0–100¢ Y-axis with custom formatting
+ * - High-precision live ticks via requestAnimationFrame throttle
+ * - Floating price tooltip on crosshair hover (rounded badge above dot)
+ * - Dynamic color transitions for UP / DOWN probability states
+ * - Auto-resizing & full responsiveness
  */
 'use strict';
 
 window.ChartManager = (() => {
-  // Lightweight Charts v5 — global via CDN
-  // Available as: LightweightCharts.createChart, LightweightCharts.LineSeries
   const LC = window.LightweightCharts;
 
-  let _chart  = null;
-  let _series = null;
-  let _markers = [];
-  let _lastTime = 0;  // monotone guard
-  let _currentTf = 1; // seconds
+  let _chart         = null;
+  let _series        = null;
+  let _markers       = [];
+  let _lastTime      = 0;
+  let _currentTf     = 1;
+  let _outcomeMode   = 'up'; // 'up' | 'down'
+  let _tooltipEl     = null;
 
-  // requestAnimationFrame throttle
   let _pendingUpdate = null;
-  let _rafId = null;
+  let _rafId         = null;
 
   function init(container) {
     if (!LC) {
-      console.error('[ChartManager] LightweightCharts not loaded!');
+      console.error('[ChartManager] LightweightCharts library not found!');
       return false;
     }
+
+    _tooltipEl = document.getElementById('chart-tooltip');
 
     _chart = LC.createChart(container, {
       layout: {
@@ -45,19 +45,29 @@ window.ChartManager = (() => {
       },
       crosshair: {
         mode: LC.CrosshairMode?.Normal ?? 0,
-        vertLine: { color: '#2a3a50', labelBackgroundColor: '#0d1117' },
-        horzLine: { color: '#2a3a50', labelBackgroundColor: '#0d1117' },
+        vertLine: {
+          color: '#2a3a50',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#161d27',
+        },
+        horzLine: {
+          color: '#2a3a50',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#161d27',
+        },
       },
       rightPriceScale: {
         borderColor: '#1e2a38',
-        scaleMargins: { top: 0.02, bottom: 0.02 },
+        scaleMargins: { top: 0.03, bottom: 0.03 },
         autoScale: false,
         entireTextOnly: false,
       },
       timeScale: {
         borderColor: '#1e2a38',
-        timeVisible: true,     // REQUIRED: show time on X axis
-        secondsVisible: true,  // REQUIRED: show seconds
+        timeVisible: true,
+        secondsVisible: true,
         rightOffset: 8,
         tickMarkFormatter: (time) => {
           const d = new Date(time * 1000);
@@ -84,21 +94,22 @@ window.ChartManager = (() => {
       watermark: { visible: false },
     });
 
-    // Add LineSeries (v5 API: addSeries(Type, opts))
+    // Create main LineSeries
     _series = _chart.addSeries(LC.LineSeries, {
       color: '#00d4aa',
       lineWidth: 2,
-      lineType: 0, // Simple
+      lineType: 0,
       lastValueVisible: true,
       priceLineVisible: true,
-      priceLineColor: 'rgba(0, 212, 170, 0.4)',
+      priceLineColor: 'rgba(0, 212, 170, 0.5)',
       priceLineWidth: 1,
-      priceLineStyle: 1, // Dashed
+      priceLineStyle: 1,
       crosshairMarkerVisible: true,
-      crosshairMarkerRadius: 4,
+      crosshairMarkerRadius: 5,
       crosshairMarkerBackgroundColor: '#00d4aa',
+      crosshairMarkerBorderColor: '#ffffff',
+      crosshairMarkerBorderWidth: 1,
 
-      // Fixed price range 0-100¢
       autoscaleInfoProvider: () => ({
         priceRange: { minValue: 0, maxValue: 100 },
       }),
@@ -110,23 +121,22 @@ window.ChartManager = (() => {
       },
     });
 
-    // Reference line at 50¢ (starting probability)
+    // Reference line at 50¢
     _addReferenceLine(50, '#2a3a50', '50¢');
 
-    // Force Y axis to always show 0-100 range
-    _chart.priceScale('right').applyOptions({
-      autoScale: false,
-    });
-    // Set initial visible range via invisible anchor points
+    // Anchor lines at 0 and 100
     _setScaleAnchors();
 
-    // Auto-resize on window resize
+    // Setup Crosshair Tooltip Hover listener
+    _setupCrosshairTooltip(container);
+
+    // Auto-resize observer
     _setupResize(container);
 
-    // Start render loop
+    // Start RAF rendering loop
     _startRenderLoop();
 
-    console.log('[ChartManager] Initialized with Lightweight Charts v5');
+    console.log('[ChartManager] Lightweight Charts v5 initialized successfully');
     return true;
   }
 
@@ -136,39 +146,80 @@ window.ChartManager = (() => {
       price,
       color,
       lineWidth: 1,
-      lineStyle: 1, // Dashed
+      lineStyle: 1,
       axisLabelVisible: false,
       title,
     });
   }
 
-  /**
-   * Add invisible price lines at 0 and 100 to anchor the Y scale.
-   * This prevents autoscale from zooming in when price is near center.
-   */
   function _setScaleAnchors() {
     if (!_series) return;
-    // Add transparent anchor lines at extremes to keep scale 0-100
     _series.createPriceLine({ price: 0,   color: 'transparent', lineWidth: 1, lineStyle: 0, axisLabelVisible: false, title: '' });
     _series.createPriceLine({ price: 100, color: 'transparent', lineWidth: 1, lineStyle: 0, axisLabelVisible: false, title: '' });
   }
 
-  // ─── Data management ─────────────────────────────────────────────────
+  // ─── Floating Tooltip on Hover ──────────────────────────────────────
+  function _setupCrosshairTooltip(container) {
+    if (!_chart || !_tooltipEl) return;
 
-  /**
-   * Set full historical data (only on init or TF switch)
-   * data: [{time: unixSec, value: number}]
-   */
+    _chart.subscribeCrosshairMove((param) => {
+      if (
+        !param ||
+        !param.point ||
+        param.point.x < 0 ||
+        param.point.x > container.clientWidth ||
+        param.point.y < 0 ||
+        param.point.y > container.clientHeight
+      ) {
+        _tooltipEl.style.display = 'none';
+        return;
+      }
+
+      const seriesData = param.seriesData.get(_series);
+      if (!seriesData || typeof seriesData.value !== 'number') {
+        _tooltipEl.style.display = 'none';
+        return;
+      }
+
+      const val = seriesData.value;
+      const formattedPrice = val.toFixed(1) + '¢';
+
+      // Time formatting
+      let timeStr = '';
+      if (param.time) {
+        const d = new Date(param.time * 1000);
+        timeStr = d.toLocaleTimeString('en-US', { hour12: false });
+      }
+
+      _tooltipEl.innerHTML = `<span class="tt-val">${formattedPrice}</span>${timeStr ? ` <span class="tt-time" style="font-size:10px; opacity:0.7; font-weight:normal; margin-left:4px;">${timeStr}</span>` : ''}`;
+
+      // Color badge
+      _tooltipEl.className = '';
+      if (val > 52) _tooltipEl.className = 'tt-green';
+      else if (val < 48) _tooltipEl.className = 'tt-red';
+      else _tooltipEl.className = 'tt-blue';
+
+      // Position tooltip directly above the point
+      const x = param.point.x;
+      const y = param.point.y;
+
+      _tooltipEl.style.left = `${x}px`;
+      _tooltipEl.style.top = `${y}px`;
+      _tooltipEl.style.display = 'block';
+    });
+  }
+
+  // ─── Data Management ────────────────────────────────────────────────
   function setData(data) {
     if (!_series || !data || data.length === 0) return;
 
-    // Deduplicate and sort
     const map = new Map();
     for (const pt of data) {
       if (typeof pt.time === 'number' && typeof pt.value === 'number' && !isNaN(pt.value)) {
         map.set(pt.time, pt.value);
       }
     }
+
     const sorted = Array.from(map.entries())
       .sort(([a], [b]) => a - b)
       .map(([time, value]) => ({ time, value }));
@@ -181,22 +232,15 @@ window.ChartManager = (() => {
     _chart.timeScale().scrollToRealTime();
   }
 
-  /**
-   * Add a single new tick (queued via requestAnimationFrame)
-   */
   function pushTick(unixSec, valueCents) {
     if (isNaN(valueCents) || isNaN(unixSec)) return;
     const bucket = Math.floor(unixSec / _currentTf) * _currentTf;
 
-    // Monotone guard: never go backwards in time
     if (bucket < _lastTime) return;
 
     _pendingUpdate = { time: bucket, value: valueCents };
   }
 
-  /**
-   * RAF render loop: drains _pendingUpdate max once per frame
-   */
   function _startRenderLoop() {
     function loop() {
       if (_pendingUpdate && _series) {
@@ -208,7 +252,7 @@ window.ChartManager = (() => {
           _lastTime = Math.max(_lastTime, time);
           _updateSeriesColor(value);
         } catch (e) {
-          // Usually: "Cannot update with non-monotonically increasing time" — ignore
+          // Ignore non-monotone exceptions during boundary transitions
         }
       }
       _rafId = requestAnimationFrame(loop);
@@ -216,32 +260,31 @@ window.ChartManager = (() => {
     _rafId = requestAnimationFrame(loop);
   }
 
-  /**
-   * Add a whitespace point (market boundary — breaks the line visually)
-   */
   function addWhitespace(unixSec) {
     if (!_series) return;
     const t = Math.max(unixSec, _lastTime + 1);
     try {
-      _series.update({ time: t }); // whitespace: no 'value' field
+      _series.update({ time: t });
       _lastTime = t;
     } catch {}
   }
 
-  /**
-   * Color the line based on position vs 50¢ (above=green, below=red)
-   */
   function _updateSeriesColor(valueCents) {
     if (!_series) return;
     let color;
+    // When value > 52¢, winning side is green; below 48¢ losing side is red
     if (valueCents > 52) color = '#00d4aa';
     else if (valueCents < 48) color = '#ff4d6d';
-    else color = '#4dabf7'; // near 50 = blue
-    _series.applyOptions({ color });
+    else color = '#4dabf7';
+
+    _series.applyOptions({
+      color,
+      crosshairMarkerBackgroundColor: color,
+      priceLineColor: color + '88',
+    });
   }
 
-  // ─── Markers ─────────────────────────────────────────────────────────
-
+  // ─── Markers ────────────────────────────────────────────────────────
   function addMarketBoundaryMarker(unixSec, label) {
     _markers.push({
       time: unixSec,
@@ -251,7 +294,6 @@ window.ChartManager = (() => {
       text: label || 'New Market',
       size: 1,
     });
-    // Sort markers by time and apply
     _markers.sort((a, b) => a.time - b.time);
     try {
       _series.setMarkers(_markers);
@@ -263,17 +305,17 @@ window.ChartManager = (() => {
     try { _series.setMarkers([]); } catch {}
   }
 
-  // ─── Timeframe switch ─────────────────────────────────────────────────
-
+  // ─── Controls ───────────────────────────────────────────────────────
   function setTimeframe(tfSeconds) {
     _currentTf = tfSeconds;
-    // The actual data update is done by app.js (which calls setData with re-aggregated buffer)
+  }
+
+  function setOutcomeMode(mode) {
+    _outcomeMode = mode;
   }
 
   function getCurrentTf() { return _currentTf; }
   function getLastTime()  { return _lastTime; }
-
-  // ─── Reset zoom ──────────────────────────────────────────────────────
 
   function resetZoom() {
     if (_chart) {
@@ -281,8 +323,6 @@ window.ChartManager = (() => {
       _chart.timeScale().resetTimeScale();
     }
   }
-
-  // ─── Resize ─────────────────────────────────────────────────────────
 
   function _setupResize(container) {
     const ro = new ResizeObserver(() => {
@@ -296,8 +336,6 @@ window.ChartManager = (() => {
     ro.observe(container);
   }
 
-  // ─── Tick size update ────────────────────────────────────────────────
-
   function updateTickSize(tickSize) {
     if (!_series) return;
     const ts = parseFloat(tickSize);
@@ -310,8 +348,6 @@ window.ChartManager = (() => {
       },
     });
   }
-
-  // ─── Cleanup ─────────────────────────────────────────────────────────
 
   function destroy() {
     if (_rafId) cancelAnimationFrame(_rafId);
@@ -330,6 +366,7 @@ window.ChartManager = (() => {
     addMarketBoundaryMarker,
     clearMarkers,
     setTimeframe,
+    setOutcomeMode,
     getCurrentTf,
     getLastTime,
     resetZoom,
