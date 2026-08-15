@@ -278,10 +278,23 @@ window.HistoryPanel = (() => {
       const tickCount = Array.isArray(s.ticks) ? s.ticks.length : 0;
       const volFmt = s.volume ? '$' + Math.round(s.volume).toLocaleString() : '--';
 
+      let btcFmt = '--';
+      if (s.btcOpen && s.btcClose) {
+        const sign = s.btcClose >= s.btcOpen ? '+' : '';
+        const chg = s.btcChange !== null && s.btcChange !== undefined ? `(${sign}${s.btcChange.toFixed(2)}%)` : '';
+        const cls = s.btcClose >= s.btcOpen ? 'btc-up' : 'btc-down';
+        btcFmt = `<span class="${cls}">$${Math.round(s.btcOpen).toLocaleString()} → $${Math.round(s.btcClose).toLocaleString()} ${chg}</span>`;
+      }
+
       html += `
         <tr data-slug="${s.slug}" class="${isChecked ? 'row-selected' : ''}">
           <td class="col-chk"><input type="checkbox" class="session-chk" data-slug="${s.slug}" ${isChecked} /></td>
-          <td class="col-time"><b>${fmtTime(s.startTs)}</b> <span class="time-sep">→</span> ${fmtTime(s.endTs)}</td>
+          <td class="col-time">
+            <a href="https://polymarket.com/event/${s.slug}" target="_blank" class="session-link-title" title="Open on Polymarket">
+              <b>${s.slug}</b> ↗
+            </a>
+            <div class="session-time-sub">${fmtTime(s.startTs)} <span class="time-sep">→</span> ${fmtTime(s.endTs)} · ${btcFmt}</div>
+          </td>
           <td class="col-tf"><span class="badge-tf">${s.tf}M</span></td>
           <td class="col-winner">${winnerBadge}</td>
           <td class="col-ohlc"><span class="o">${openFmt}</span> / <span class="h">${highFmt}</span> / <span class="l">${lowFmt}</span> / <span class="c">${closeFmt}</span></td>
@@ -390,14 +403,29 @@ window.HistoryPanel = (() => {
       ChartManager.setData(aggregated);
     }
 
-    // Now place winner badge markers and dashed blue session dividers
+    // Now place interactive session cards and dashed blue session dividers
     ChartManager.clearMarkers();
     const boundaries = [];
+    const sessionCards = [];
 
     if (aggregated.length > 0) {
       for (const s of allSessions) {
         if (s.startTs) boundaries.push(s.startTs);
-        if (s.endTs) boundaries.push(s.endTs);
+        if (s.endTs) {
+          boundaries.push(s.endTs);
+          // Add whitespace boundary to disconnect lines between sessions
+          ChartManager.addWhitespace(s.endTs);
+        }
+
+        sessionCards.push({
+          slug: s.slug,
+          startTs: s.startTs,
+          endTs: s.endTs,
+          winner: s.winner,
+          btcOpen: s.btcOpen,
+          btcClose: s.btcClose,
+          btcChange: s.btcChange,
+        });
 
         if (s.winner && s.winner !== 'PENDING') {
           const isUp = s.winner === 'UP';
@@ -424,6 +452,7 @@ window.HistoryPanel = (() => {
         }
       }
       ChartManager.setSessionBoundaries(boundaries);
+      ChartManager.setSessionCardsData(sessionCards);
     }
 
     if (switchView && window.App) {

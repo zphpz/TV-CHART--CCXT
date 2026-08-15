@@ -22,6 +22,8 @@ window.ChartManager = (() => {
   let _overlayCanvas = null;
   let _overlayCtx    = null;
   let _sessionBoundaries = new Set(); // set of unixSec timestamps for session dividers
+  let _sessionCardsData  = [];        // array of session card metadata
+  let _clickableRegions  = [];        // array of interactive clickable bounding boxes
 
   let _pendingUpdate = null;
   let _rafId         = null;
@@ -148,6 +150,9 @@ window.ChartManager = (() => {
     // Redraw dashed blue separators on visible range changes & scroll
     _chart.timeScale().subscribeVisibleTimeRangeChange(_drawSessionDividers);
     _chart.timeScale().subscribeVisibleLogicalRangeChange(_drawSessionDividers);
+
+    // Setup interactive canvas clicks & hover for session badges
+    _setupCanvasInteractions(container);
 
     // Setup Crosshair Tooltip Hover listener
     _setupCrosshairTooltip(container);
@@ -399,7 +404,105 @@ window.ChartManager = (() => {
       }
     }
 
+    // Draw interactive session header cards
+    _drawSessionCards(w, h, timeScale);
+
     _overlayCtx.restore();
+  }
+
+  function _drawSessionCards(w, h, timeScale) {
+    _clickableRegions = [];
+    if (!_sessionCardsData || _sessionCardsData.length === 0) return;
+
+    for (const s of _sessionCardsData) {
+      let xStart = timeScale.timeToCoordinate(s.startTs);
+      let xEnd = timeScale.timeToCoordinate(s.endTs);
+
+      if (xStart === null && xEnd === null) continue;
+      if (xStart === null) xStart = xEnd - 140;
+      if (xEnd === null) xEnd = xStart + 140;
+
+      if (xEnd < 0 || xStart > w) continue;
+      const spanW = xEnd - xStart;
+      if (spanW < 35) continue; // too compact when zoomed far out
+
+      const cardX = Math.max(4, xStart + 6);
+      const cardW = Math.max(140, Math.min(270, spanW - 12));
+      const cardH = 44;
+      const cardY = 10;
+
+      // Card Background
+      _overlayCtx.fillStyle = 'rgba(10, 15, 24, 0.88)';
+      _overlayCtx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
+      _overlayCtx.lineWidth = 1;
+      _roundRect(_overlayCtx, cardX, cardY, cardW, cardH, 5, true, true);
+
+      // 1. Clickable Session Slug Header
+      const slugText = (s.slug || 'Session') + ' ↗';
+      _overlayCtx.font = 'bold 10px "JetBrains Mono", monospace';
+      _overlayCtx.fillStyle = '#60a5fa';
+      _overlayCtx.fillText(slugText, cardX + 8, cardY + 14, cardW - 16);
+
+      _clickableRegions.push({
+        x: cardX,
+        y: cardY,
+        w: cardW,
+        h: 20,
+        slug: s.slug,
+        url: `https://polymarket.com/event/${s.slug}`,
+      });
+
+      // 2. Winner Badge
+      const isUp = s.winner === 'UP';
+      const isDown = s.winner === 'DOWN';
+      const isLive = s.winner === 'LIVE' || s.isLive || s.winner === 'PENDING';
+      const badgeText = isUp ? '🏆 UP WON' : (isDown ? '🏆 DOWN WON' : '⏳ LIVE');
+      const badgeBg = isUp ? '#ffffff' : (isDown ? '#ff4d6d' : '#00d4aa');
+      const badgeFg = isUp ? '#000000' : (isDown ? '#ffffff' : '#000000');
+
+      const badgeW = isLive ? 48 : 72;
+      const badgeH = 16;
+      const badgeX = cardX + 8;
+      const badgeY = cardY + 22;
+
+      _overlayCtx.fillStyle = badgeBg;
+      _roundRect(_overlayCtx, badgeX, badgeY, badgeW, badgeH, 3, true, false);
+
+      _overlayCtx.fillStyle = badgeFg;
+      _overlayCtx.font = 'bold 9px sans-serif';
+      _overlayCtx.fillText(badgeText, badgeX + 4, badgeY + 12);
+
+      // 3. BTC Reference Prices
+      if (s.btcOpen && s.btcClose) {
+        const btcOpenFmt = '$' + Math.round(s.btcOpen).toLocaleString();
+        const btcCloseFmt = '$' + Math.round(s.btcClose).toLocaleString();
+        const btcText = `BTC: ${btcOpenFmt} ➔ ${btcCloseFmt}`;
+        _overlayCtx.fillStyle = s.btcClose >= s.btcOpen ? '#00d4aa' : '#ff4d6d';
+        _overlayCtx.font = '9px "JetBrains Mono", monospace';
+        _overlayCtx.fillText(btcText, badgeX + badgeW + 6, badgeY + 12, cardW - badgeW - 18);
+      }
+    }
+  }
+
+  function _roundRect(ctx, x, y, width, height, radius, fill, stroke) {
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+    if (fill) ctx.fill();
+    if (stroke) ctx.stroke();
+  }
+
+  function setSessionCardsData(cards) {
+    _sessionCardsData = Array.isArray(cards) ? cards : [];
+    _drawSessionDividers();
   }
 
   function addSessionBoundary(unixSec) {
@@ -421,6 +524,7 @@ window.ChartManager = (() => {
 
   function clearSessionBoundaries() {
     _sessionBoundaries.clear();
+    _sessionCardsData = [];
     _drawSessionDividers();
   }
 
@@ -474,6 +578,41 @@ window.ChartManager = (() => {
     });
   }
 
+  function _setupCanvasInteractions(container) {
+    if (!_overlayCanvas) return;
+
+    _overlayCanvas.addEventListener('mousemove', (e) => {
+      const rect = _overlayCanvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+
+      let hovered = false;
+      for (const reg of _clickableRegions) {
+        if (mx >= reg.x && mx <= reg.x + reg.w && my >= reg.y && my <= reg.y + reg.h) {
+          hovered = true;
+          break;
+        }
+      }
+      _overlayCanvas.style.pointerEvents = hovered ? 'auto' : 'none';
+      if (container) container.style.cursor = hovered ? 'pointer' : 'default';
+    });
+
+    _overlayCanvas.addEventListener('click', (e) => {
+      const rect = _overlayCanvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+
+      for (const reg of _clickableRegions) {
+        if (mx >= reg.x && mx <= reg.x + reg.w && my >= reg.y && my <= reg.y + reg.h) {
+          if (reg.url) {
+            window.open(reg.url, '_blank');
+          }
+          break;
+        }
+      }
+    });
+  }
+
   function destroy() {
     if (_rafId) cancelAnimationFrame(_rafId);
     if (_chart) {
@@ -493,6 +632,7 @@ window.ChartManager = (() => {
     addSessionBoundary,
     setSessionBoundaries,
     clearSessionBoundaries,
+    setSessionCardsData,
     clearMarkers,
     setTimeframe,
     setOutcomeMode,

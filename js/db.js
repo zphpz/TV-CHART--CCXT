@@ -312,6 +312,12 @@ window.DBManager = (() => {
       high: sessionData.high !== undefined ? sessionData.high : high,
       low: sessionData.low !== undefined ? sessionData.low : low,
       close: sessionData.close !== undefined ? sessionData.close : close,
+      btcOpen: sessionData.btcOpen !== undefined ? sessionData.btcOpen : (existing ? existing.btcOpen : null),
+      btcClose: sessionData.btcClose !== undefined ? sessionData.btcClose : (existing ? existing.btcClose : null),
+      btcHigh: sessionData.btcHigh !== undefined ? sessionData.btcHigh : (existing ? existing.btcHigh : null),
+      btcLow: sessionData.btcLow !== undefined ? sessionData.btcLow : (existing ? existing.btcLow : null),
+      btcChange: sessionData.btcChange !== undefined ? sessionData.btcChange : (existing ? existing.btcChange : null),
+      quality: sessionData.quality || (existing ? existing.quality : (mergedTicks.length >= 30 ? 'EXCELLENT' : (mergedTicks.length >= 10 ? 'GOOD' : 'SPARSE'))),
       ticks: mergedTicks,
     };
 

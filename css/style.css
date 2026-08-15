@@ -1128,6 +1128,34 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 }
 .attr-link:hover { color: var(--accent-teal); }
 
+/* ── Session Table Title & BTC Indicators ─────────────── */
+.session-link-title {
+  color: var(--blue, #60a5fa);
+  text-decoration: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  display: inline-block;
+  margin-bottom: 2px;
+  transition: color var(--tr-fast);
+}
+.session-link-title:hover {
+  color: #93c5fd;
+  text-decoration: underline;
+}
+.session-time-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+.btc-up {
+  color: var(--accent-teal, #00d4aa);
+  font-weight: 600;
+}
+.btc-down {
+  color: var(--red, #ff4d6d);
+  font-weight: 600;
+}
+
 /* ── Scrollbar ────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-primary); }

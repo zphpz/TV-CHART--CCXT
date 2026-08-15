@@ -122,9 +122,31 @@ window.BackfillEngine = (() => {
       tickMap.set(endTs, upWon ? 100.0 : 0.0);
     }
 
+    // 4. Fetch BTC reference candle from Binance for the exact window
+    let btcOpen = null, btcClose = null, btcHigh = null, btcLow = null, btcChange = null;
+    if (startTs) {
+      try {
+        const kline = await _fetchJSON(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${tfMinutes}m&startTime=${startTs * 1000}&limit=1`);
+        if (Array.isArray(kline) && kline[0]) {
+          btcOpen = parseFloat(kline[0][1]);
+          btcHigh = parseFloat(kline[0][2]);
+          btcLow = parseFloat(kline[0][3]);
+          btcClose = parseFloat(kline[0][4]);
+          if (!isNaN(btcOpen) && !isNaN(btcClose) && btcOpen > 0) {
+            btcChange = Math.round(((btcClose - btcOpen) / btcOpen) * 10000) / 100;
+          }
+        }
+      } catch {}
+    }
+
     const ticks = Array.from(tickMap.entries())
       .sort((a, b) => a[0] - b[0])
       .map(([t, v]) => [t, v]);
+
+    // 5. Compute download quality metric
+    const tickCount = ticks.length;
+    const spanSec = tickCount > 0 ? (ticks[ticks.length - 1][0] - ticks[0][0]) : 0;
+    const quality = tickCount >= 30 ? 'EXCELLENT' : (tickCount >= 10 ? 'GOOD' : 'SPARSE');
 
     // Volume
     const volume = parseFloat(event.volume || market.volume || 0);
@@ -137,6 +159,14 @@ window.BackfillEngine = (() => {
       winner,
       outcomePrices,
       volume,
+      btcOpen,
+      btcClose,
+      btcHigh,
+      btcLow,
+      btcChange,
+      quality,
+      tickCount,
+      spanSec,
       ticks,
     };
   }
