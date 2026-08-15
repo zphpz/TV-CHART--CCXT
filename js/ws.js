@@ -1,12 +1,11 @@
 /**
- * ws.js — Polymarket CLOB WebSocket client v1.2
+ * ws.js — Polymarket CLOB WebSocket Client v1.3
  * 
- * Handles:
- * - Direct connection to wss://ws-subscriptions-clob.polymarket.com/ws/market
- * - Full parsing of price_change, book, best_bid_ask, last_trade_price
- * - Accurate token matching for price_changes array
- * - Seamless subscribe / switch / unsubscribe
- * - Heartbeat PING (10s) and Watchdog (15s) for zero-lag live stream
+ * Fixes in v1.3:
+ * - Proper unsubscription tracking on market/timeframe switch
+ * - Strict token matching for price_changes array (eliminates sawtooth noise from other markets)
+ * - Safe subscribe / unsubscribe state machine
+ * - Heartbeat PING (10s) and Watchdog (15s)
  */
 'use strict';
 
@@ -53,7 +52,7 @@ window.PolyWS = (() => {
     }
 
     _ws.onopen = () => {
-      console.log('[PolyWS] WebSocket Connected to Polymarket CLOB');
+      console.log('[PolyWS] Connected to Polymarket CLOB WS');
       _reconnectAttempt = 0;
       _lastDataMs = Date.now();
 
@@ -108,24 +107,23 @@ window.PolyWS = (() => {
 
     switch (msg.event_type) {
       case 'book': {
-        // Book snapshot for market/token
+        // Only accept orderbook for our currently subscribed token
         if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
         if (handlers.onBook) handlers.onBook(msg);
         break;
       }
 
       case 'price_change': {
-        // In Polymarket CLOB, price_change has price_changes: [ { asset_id, price, best_bid, best_ask, ... } ]
+        // Polymarket CLOB sends price_changes array: [ { asset_id, price, best_bid, best_ask, ... } ]
         if (Array.isArray(msg.price_changes)) {
-          let matched = null;
           if (_currentTokenId) {
-            matched = msg.price_changes.find(p => p.asset_id === _currentTokenId);
-          }
-          if (!matched && msg.price_changes.length > 0) {
-            matched = msg.price_changes[0];
-          }
-          if (matched && handlers.onPriceChange) {
-            handlers.onPriceChange(matched);
+            // STRICT MATCH: Only accept entry that matches our subscribed token!
+            const matched = msg.price_changes.find(p => p.asset_id === _currentTokenId);
+            if (matched && handlers.onPriceChange) {
+              handlers.onPriceChange(matched);
+            }
+          } else if (handlers.onPriceChange && msg.price_changes.length > 0) {
+            handlers.onPriceChange(msg.price_changes[0]);
           }
         } else {
           if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
@@ -184,24 +182,22 @@ window.PolyWS = (() => {
     }));
   }
 
-  function clearTokenFilter() {
-    _currentTokenId = null;
-  }
-
   /**
    * Subscribe to a new token ID.
-   * If already subscribed to a previous token, unsubscribes and subscribes to new one.
+   * Unsubscribes from the previous token cleanly to prevent cross-market data bleed.
    */
   function subscribe(newTokenId) {
+    if (!newTokenId) return;
     const prev = _currentTokenId;
     _currentTokenId = newTokenId;
 
     if (_ws && _ws.readyState === WebSocket.OPEN) {
       if (prev && prev !== newTokenId) {
+        console.log('[PolyWS] Unsubscribing from previous token:', prev);
         _sendUnsubscribe(prev);
       }
+      console.log('[PolyWS] Subscribing to new token:', newTokenId);
       _sendSubscribe(newTokenId);
-      // Immediately send PING to assure live pipe
       _send('PING');
     } else {
       if (!_ws || _ws.readyState === WebSocket.CLOSED) {
@@ -297,7 +293,6 @@ window.PolyWS = (() => {
   return {
     connect,
     subscribe,
-    clearTokenFilter,
     destroy,
     isConnected,
     getStatus,

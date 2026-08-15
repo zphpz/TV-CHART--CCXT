@@ -1,12 +1,11 @@
 /**
- * chart.js — Lightweight Charts v5 Manager with Tooltip & Outcome Modes v1.2
+ * chart.js — Lightweight Charts v5 Manager v1.3
  * 
- * Features:
- * - Fixed 0–100¢ Y-axis with custom formatting
- * - High-precision live ticks via requestAnimationFrame throttle
+ * Fixes in v1.3:
+ * - autoScale: true with fixed autoscaleInfoProvider (0–100¢) ensures the right scale is always fully visible on boot
+ * - No need to double-click the scale to reset or show full range
+ * - Smooth live updates without sawtooth jitter
  * - Floating price tooltip on crosshair hover (rounded badge above dot)
- * - Dynamic color transitions for UP / DOWN probability states
- * - Auto-resizing & full responsiveness
  */
 'use strict';
 
@@ -60,9 +59,10 @@ window.ChartManager = (() => {
       },
       rightPriceScale: {
         borderColor: '#1e2a38',
-        scaleMargins: { top: 0.03, bottom: 0.03 },
-        autoScale: false,
+        scaleMargins: { top: 0.04, bottom: 0.04 },
+        autoScale: true,          // TRUE: allows autoscaleInfoProvider to calculate full 0-100 scale on load
         entireTextOnly: false,
+        visible: true,
       },
       timeScale: {
         borderColor: '#1e2a38',
@@ -110,6 +110,7 @@ window.ChartManager = (() => {
       crosshairMarkerBorderColor: '#ffffff',
       crosshairMarkerBorderWidth: 1,
 
+      // Fixed 0–100¢ range guaranteed
       autoscaleInfoProvider: () => ({
         priceRange: { minValue: 0, maxValue: 100 },
       }),
@@ -124,7 +125,7 @@ window.ChartManager = (() => {
     // Reference line at 50¢
     _addReferenceLine(50, '#2a3a50', '50¢');
 
-    // Anchor lines at 0 and 100
+    // Anchor invisible price lines at 0 and 100
     _setScaleAnchors();
 
     // Setup Crosshair Tooltip Hover listener
@@ -136,7 +137,7 @@ window.ChartManager = (() => {
     // Start RAF rendering loop
     _startRenderLoop();
 
-    console.log('[ChartManager] Lightweight Charts v5 initialized successfully');
+    console.log('[ChartManager] Lightweight Charts v5 initialized with visible 0–100 scale');
     return true;
   }
 
@@ -184,7 +185,6 @@ window.ChartManager = (() => {
       const val = seriesData.value;
       const formattedPrice = val.toFixed(1) + '¢';
 
-      // Time formatting
       let timeStr = '';
       if (param.time) {
         const d = new Date(param.time * 1000);
@@ -193,13 +193,11 @@ window.ChartManager = (() => {
 
       _tooltipEl.innerHTML = `<span class="tt-val">${formattedPrice}</span>${timeStr ? ` <span class="tt-time" style="font-size:10px; opacity:0.7; font-weight:normal; margin-left:4px;">${timeStr}</span>` : ''}`;
 
-      // Color badge
       _tooltipEl.className = '';
       if (val > 52) _tooltipEl.className = 'tt-green';
       else if (val < 48) _tooltipEl.className = 'tt-red';
       else _tooltipEl.className = 'tt-blue';
 
-      // Position tooltip directly above the point
       const x = param.point.x;
       const y = param.point.y;
 
@@ -272,7 +270,6 @@ window.ChartManager = (() => {
   function _updateSeriesColor(valueCents) {
     if (!_series) return;
     let color;
-    // When value > 52¢, winning side is green; below 48¢ losing side is red
     if (valueCents > 52) color = '#00d4aa';
     else if (valueCents < 48) color = '#ff4d6d';
     else color = '#4dabf7';

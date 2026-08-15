@@ -1,13 +1,13 @@
 /**
- * app.js — Main Application Coordinator v1.2
+ * app.js — Main Application Coordinator v1.3
  * 
  * Orchestrates: MarketManager, PolyWS, TickBuffer, PriceEngine, ChartManager
  * Features:
  * - Real-time Polymarket order book & price feeds
- * - Dynamic UP / DOWN outcome toggle (inverting probability & spreads)
- * - Seamless automatic market rollover across 5m/15m cycles
- * - Centered countdown timer with urgency alerts
- * - High-speed timeframe switching & zoom controls
+ * - Clean switching between 5M and 15M markets with full unsubscription
+ * - UP / DOWN outcome toggle with inverted probability math
+ * - Automated 5m/15m rollover with watchdog safeguard
+ * - Centered large countdown timer with urgency state
  */
 'use strict';
 
@@ -80,7 +80,6 @@
     const asks = msg.asks || [];
 
     if (bids.length > 0 && asks.length > 0) {
-      // In book: bids are ascending (best bid = last item), asks are descending (best ask = last item)
       const bestBid = parseFloat(bids[bids.length - 1].price);
       const bestAsk = parseFloat(asks[asks.length - 1].price);
       if (!isNaN(bestBid) && !isNaN(bestAsk)) {
@@ -119,11 +118,11 @@
   };
 
   PolyWS.handlers.onMarketResolved = (msg) => {
-    console.log('[App] Market resolved event received:', msg);
+    console.log('[App] Market resolved event:', msg);
   };
 
   PolyWS.handlers.onNewMarket = (msg) => {
-    console.log('[App] New market event received:', msg);
+    console.log('[App] New market event:', msg);
   };
 
   PolyWS.handlers.onTickSizeChange = (msg) => {
@@ -164,15 +163,12 @@
     let effCents, bidCents, askCents, midCents, lastCents;
 
     if (_outcomeMode === 'down') {
-      // Down mode: Price = 100 - Up
-      // Down Bid = (1 - Up Ask) * 100, Down Ask = (1 - Up Bid) * 100
       effCents  = 100 - (rawEff * 100);
       bidCents  = rawAsk !== null ? (1 - rawAsk) * 100 : null;
       askCents  = rawBid !== null ? (1 - rawBid) * 100 : null;
       midCents  = 100 - (rawMid * 100);
       lastCents = rawLast !== null ? (100 - rawLast * 100) : null;
     } else {
-      // Up mode
       effCents  = rawEff * 100;
       bidCents  = rawBid !== null ? rawBid * 100 : null;
       askCents  = rawAsk !== null ? rawAsk * 100 : null;
@@ -185,12 +181,19 @@
     const prevCurrent = el.priceCurrent.textContent;
     const newCurrent  = fmt(effCents);
 
+    let displaySpread = null;
+    if (askCents !== null && bidCents !== null) {
+      displaySpread = Math.abs(askCents - bidCents);
+    } else if (spread !== null) {
+      displaySpread = Math.abs(spread * 100);
+    }
+
     el.priceCurrent.textContent = newCurrent;
     el.priceBid.textContent     = fmt(bidCents);
     el.priceAsk.textContent     = fmt(askCents);
     el.priceMid.textContent     = fmt(midCents);
     el.priceLast.textContent    = fmt(lastCents);
-    el.priceSpread.textContent  = spread !== null ? (spread * 100).toFixed(1) + '¢' : '--.-¢';
+    el.priceSpread.textContent  = displaySpread !== null ? displaySpread.toFixed(1) + '¢' : '--.-¢';
 
     // Flash animation on change
     if (newCurrent !== prevCurrent && prevCurrent !== '--.-¢') {
@@ -274,9 +277,8 @@
       _updatePriceUI();
     }
 
-    // Connect WebSocket
+    // Connect WebSocket and subscribe (PolyWS.subscribe will automatically unsubscribe from previous token!)
     setLoadingSub('Connecting to live CLOB WebSocket...');
-    PolyWS.clearTokenFilter();
     PolyWS.subscribe(market.upTokenId);
     if (!PolyWS.isConnected()) {
       PolyWS.connect();
@@ -301,7 +303,7 @@
 
     PriceEngine.reset();
 
-    PolyWS.clearTokenFilter();
+    // Subscribe to new market's token (cleanly unsubscribes from old one)
     PolyWS.subscribe(newMarket.upTokenId);
 
     _updateMarketUI(newMarket);
