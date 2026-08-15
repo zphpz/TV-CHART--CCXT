@@ -14,6 +14,7 @@
 window.BackfillEngine = (() => {
   const GAMMA_BASE = 'https://gamma-api.polymarket.com';
   const CLOB_BASE  = 'https://clob.polymarket.com';
+  const DATA_BASE  = 'https://data-api.polymarket.com';
 
   let _isRunning = false;
   let _abortRequested = false;
@@ -38,7 +39,7 @@ window.BackfillEngine = (() => {
   }
 
   /**
-   * Fetch single session metadata and price history
+   * Fetch single session metadata, real intraday trades (Data API), and orderbook price changes (CLOB API).
    */
   async function fetchSessionData(slug, tfMinutes) {
     const event = await _fetchJSON(`${GAMMA_BASE}/events/slug/${slug}`);
@@ -65,11 +66,12 @@ window.BackfillEngine = (() => {
 
     // Determine official winner
     let winner = 'PENDING';
+    let upWon = null;
     if (Array.isArray(outcomePrices) && outcomePrices.length >= 2) {
       const upP = parseFloat(outcomePrices[upIdx !== -1 ? upIdx : 0]);
       if (!isNaN(upP)) {
-        if (upP > 0.5) winner = 'UP';
-        else if (upP < 0.5) winner = 'DOWN';
+        if (upP > 0.5) { winner = 'UP'; upWon = true; }
+        else if (upP < 0.5) { winner = 'DOWN'; upWon = false; }
       }
     }
 
@@ -80,19 +82,49 @@ window.BackfillEngine = (() => {
     const intervalSec = tfMinutes * 60;
     const endTs = startTs ? (startTs + intervalSec) : null;
 
-    // Fetch price history points from CLOB
-    let ticks = [];
-    if (upTokenId) {
-      const ph = await _fetchJSON(`${CLOB_BASE}/prices-history?market=${upTokenId}&interval=all&fidelity=1`);
-      if (ph && Array.isArray(ph.history)) {
-        // [{ t: unixSec, p: price01 }]
-        // Convert to [[t, v_cents]]
-        ticks = ph.history
-          .map(pt => [pt.t, Math.round(pt.p * 1000) / 10])
-          .filter(pt => typeof pt[0] === 'number' && !isNaN(pt[1]))
-          .sort((a, b) => a[0] - b[0]);
+    const tickMap = new Map();
+
+    // 1. Fetch real individual trades from Data API
+    if (market.conditionId) {
+      const trades = await _fetchJSON(`${DATA_BASE}/trades?market=${market.conditionId}&limit=500`);
+      if (Array.isArray(trades)) {
+        for (const tr of trades) {
+          const ts = tr.timestamp;
+          if (startTs && endTs && ts >= startTs && ts <= endTs) {
+            let p = tr.price;
+            if (tr.outcome === 'Down' || tr.outcomeIndex === 1) p = 1 - p;
+            if (typeof p === 'number' && !isNaN(p)) {
+              tickMap.set(ts, Math.round(p * 1000) / 10);
+            }
+          }
+        }
       }
     }
+
+    // 2. Fetch orderbook price changes from CLOB strictly bounded by startTs & endTs
+    if (upTokenId && startTs && endTs) {
+      const ph = await _fetchJSON(`${CLOB_BASE}/prices-history?market=${upTokenId}&startTs=${startTs}&endTs=${endTs}&fidelity=1`);
+      if (ph && Array.isArray(ph.history)) {
+        for (const pt of ph.history) {
+          if (pt.t >= startTs && pt.t <= endTs) {
+            tickMap.set(pt.t, Math.round(pt.p * 1000) / 10);
+          }
+        }
+      }
+    }
+
+    // 3. Anchor start and end of the session
+    if (startTs && !tickMap.has(startTs)) {
+      const firstVal = tickMap.size > 0 ? Array.from(tickMap.values())[0] : 50.0;
+      tickMap.set(startTs, firstVal);
+    }
+    if (endTs && !tickMap.has(endTs) && upWon !== null) {
+      tickMap.set(endTs, upWon ? 100.0 : 0.0);
+    }
+
+    const ticks = Array.from(tickMap.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([t, v]) => [t, v]);
 
     // Volume
     const volume = parseFloat(event.volume || market.volume || 0);

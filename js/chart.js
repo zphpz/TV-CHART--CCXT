@@ -311,7 +311,7 @@ window.ChartManager = (() => {
       time: unixSec,
       position: 'aboveBar',
       color: isUp ? '#ffffff' : '#ff4d6d',
-      shape: 'circle',
+      shape: 'arrowDown',
       text: label || (isUp ? '🏆 UP WON' : '🏆 DOWN WON'),
       size: 2,
     });

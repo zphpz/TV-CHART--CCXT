@@ -350,23 +350,6 @@ window.HistoryPanel = (() => {
           }
         }
       }
-
-      // Add winner marker on chart using exact last tick timestamp of session
-      if (s.winner && s.winner !== 'PENDING') {
-        const isUp = s.winner === 'UP';
-        let markerTime = s.endTs;
-        if (Array.isArray(s.ticks) && s.ticks.length > 0) {
-          const lastPt = s.ticks[s.ticks.length - 1];
-          markerTime = Array.isArray(lastPt) ? lastPt[0] : (lastPt.t || lastPt.time);
-        }
-        if (markerTime) {
-          ChartManager.addWinnerBadgeMarker(
-            markerTime,
-            isUp ? '🏆 UP WON' : '🏆 DOWN WON',
-            isUp ? 'up' : 'down'
-          );
-        }
-      }
     }
 
     TickBuffer.reset(false);
@@ -374,9 +357,40 @@ window.HistoryPanel = (() => {
 
     // Re-render chart series
     const curTf = ChartManager.getCurrentTf();
-    const aggregated = TickBuffer.aggregate(curTf, window.App?.getOutcomeMode() || 'up');
+    const outcomeMode = window.App?.getOutcomeMode() || 'up';
+    const aggregated = TickBuffer.aggregate(curTf, outcomeMode);
     if (aggregated.length > 0) {
       ChartManager.setData(aggregated);
+    }
+
+    // Now place winner badge markers matching valid points in aggregated data
+    ChartManager.clearMarkers();
+    if (aggregated.length > 0) {
+      for (const s of allSessions) {
+        if (s.winner && s.winner !== 'PENDING') {
+          const isUp = s.winner === 'UP';
+          const targetTs = s.endTs || (Array.isArray(s.ticks) && s.ticks.length > 0 ? s.ticks[s.ticks.length - 1][0] : null);
+          if (targetTs) {
+            // Find closest point in aggregated data that is <= targetTs
+            let closestPt = aggregated[0];
+            let minDiff = Infinity;
+            for (const pt of aggregated) {
+              const diff = Math.abs(pt.time - targetTs);
+              if (diff < minDiff) {
+                minDiff = diff;
+                closestPt = pt;
+              }
+            }
+            if (closestPt) {
+              ChartManager.addWinnerBadgeMarker(
+                closestPt.time,
+                isUp ? '🏆 UP WON' : '🏆 DOWN WON',
+                isUp ? 'up' : 'down'
+              );
+            }
+          }
+        }
+      }
     }
 
     if (switchView && window.App) {
