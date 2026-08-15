@@ -370,7 +370,17 @@ window.ChartManager = (() => {
     _overlayCtx.setLineDash([4, 4]);
 
     for (const ts of _sessionBoundaries) {
-      const x = timeScale.timeToCoordinate(ts);
+      let x = timeScale.timeToCoordinate(ts);
+      if (x === null) {
+        // Try nearby offsets in case boundary point was bucketed
+        for (let delta = 1; delta <= 30; delta++) {
+          x = timeScale.timeToCoordinate(ts + delta);
+          if (x !== null) break;
+          x = timeScale.timeToCoordinate(ts - delta);
+          if (x !== null) break;
+        }
+      }
+
       if (x !== null && x >= 0 && x <= w) {
         _overlayCtx.beginPath();
         _overlayCtx.moveTo(Math.round(x) + 0.5, 0);

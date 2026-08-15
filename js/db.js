@@ -163,17 +163,17 @@ window.DBManager = (() => {
         if (parsed && typeof parsed === 'object') {
           // Normalize sessions object
           if (parsed.sessions && typeof parsed.sessions === 'object') {
-            if (Array.isArray(parsed.sessions)) {
-              // Convert array to map
-              _db.sessions = {};
-              for (const s of parsed.sessions) {
-                if (s && s.slug) _db.sessions[s.slug] = s;
+            const rawList = Array.isArray(parsed.sessions) ? parsed.sessions : Object.values(parsed.sessions);
+            _db.sessions = {};
+            for (const s of rawList) {
+              if (s && s.slug) {
+                const tf = s.tf || (s.slug.includes('-15m-') ? 15 : 5);
+                s.ticks = _sanitizeTicks(s.ticks, s.startTs, s.endTs, tf);
+                _db.sessions[s.slug] = s;
               }
-            } else {
-              _db.sessions = parsed.sessions;
             }
           }
-          _db.version = parsed.version || '1.4';
+          _db.version = parsed.version || '1.6';
           _db.updatedAt = parsed.updatedAt || Date.now();
         }
       }
@@ -234,6 +234,30 @@ window.DBManager = (() => {
     return total;
   }
 
+  function _sanitizeTicks(ticks, startTs, endTs, tfMinutes) {
+    if (!Array.isArray(ticks)) return [];
+    const intervalSec = (tfMinutes || 5) * 60;
+    const start = startTs || 0;
+    const end = endTs || (start ? start + intervalSec : 0);
+
+    const valid = [];
+    for (const pt of ticks) {
+      const time = Array.isArray(pt) ? pt[0] : (pt.t || pt.time);
+      const val  = Array.isArray(pt) ? pt[1] : (pt.v || pt.value);
+      if (typeof time === 'number' && typeof val === 'number' && !isNaN(val)) {
+        // Enforce strict time window isolation
+        if (start > 0 && end > 0) {
+          if (time >= start - 5 && time <= end + 5) {
+            valid.push([time, Math.max(0, Math.min(100, Math.round(val * 10) / 10))]);
+          }
+        } else {
+          valid.push([time, Math.max(0, Math.min(100, Math.round(val * 10) / 10))]);
+        }
+      }
+    }
+    return valid.sort((a, b) => a[0] - b[0]);
+  }
+
   /**
    * Add or update a session with ticks and metadata.
    * Smart merge: preserves existing ticks and appends new ones without duplicates.
@@ -243,28 +267,24 @@ window.DBManager = (() => {
     const slug = sessionData.slug;
     const existing = _db.sessions[slug] || null;
 
-    let mergedTicks = [];
-    if (existing && Array.isArray(existing.ticks)) {
-      mergedTicks = [...existing.ticks];
+    const tf = sessionData.tf || (existing ? existing.tf : (slug.includes('-15m-') ? 15 : 5));
+    const startTs = sessionData.startTs || (existing ? existing.startTs : null);
+    const endTs = sessionData.endTs || (existing ? existing.endTs : (startTs ? startTs + tf * 60 : null));
+
+    let existingTicks = existing && Array.isArray(existing.ticks) ? existing.ticks : [];
+    let newTicks = Array.isArray(sessionData.ticks) ? sessionData.ticks : [];
+
+    const tickMap = new Map();
+    for (const [time, val] of _sanitizeTicks(existingTicks, startTs, endTs, tf)) {
+      tickMap.set(time, val);
+    }
+    for (const [time, val] of _sanitizeTicks(newTicks, startTs, endTs, tf)) {
+      tickMap.set(time, val);
     }
 
-    if (Array.isArray(sessionData.ticks)) {
-      // Merge ticks by time key [t, v] or {t, v}
-      const tickMap = new Map();
-      for (const t of mergedTicks) {
-        const time = Array.isArray(t) ? t[0] : t.t || t.time;
-        const val = Array.isArray(t) ? t[1] : t.v || t.value;
-        if (time !== undefined && val !== undefined) tickMap.set(time, val);
-      }
-      for (const t of sessionData.ticks) {
-        const time = Array.isArray(t) ? t[0] : t.t || t.time;
-        const val = Array.isArray(t) ? t[1] : t.v || t.value;
-        if (time !== undefined && val !== undefined) tickMap.set(time, val);
-      }
-      mergedTicks = Array.from(tickMap.entries())
-        .sort(([a], [b]) => a - b)
-        .map(([time, val]) => [time, Math.round(val * 10) / 10]);
-    }
+    const mergedTicks = Array.from(tickMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([time, val]) => [time, Math.round(val * 10) / 10]);
 
     // Calculate OHLC statistics
     let open = null, high = null, low = null, close = null;
