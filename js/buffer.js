@@ -8,22 +8,45 @@
 'use strict';
 
 window.TickBuffer = (() => {
-  const MAX_TICKS = 10800; // ~3 hours of 1-second ticks
+  const MAX_TICKS = 500000; // Large capacity for multi-day history
 
   // Internal storage: always stores UP-token price in cents (0.0–100.0)
   let _ticks = []; // [{ time: unixSec, value: number }]
   let _marketBoundaries = [];
 
   function addTick(unixSec, rawUpCents) {
-    if (typeof rawUpCents !== 'number' || isNaN(rawUpCents)) return;
+    if (typeof unixSec !== 'number' || typeof rawUpCents !== 'number' || isNaN(rawUpCents)) return;
     rawUpCents = Math.max(0, Math.min(100, rawUpCents));
 
     const last = _ticks[_ticks.length - 1];
     if (last && last.time === unixSec) {
       last.value = rawUpCents;
+    } else if (!last || unixSec > last.time) {
+      _ticks.push({ time: unixSec, value: rawUpCents });
     } else {
       _ticks.push({ time: unixSec, value: rawUpCents });
+      _ticks.sort((a, b) => a.time - b.time);
     }
+
+    if (_ticks.length > MAX_TICKS) {
+      _ticks = _ticks.slice(_ticks.length - MAX_TICKS);
+    }
+  }
+
+  function addBulk(items) {
+    if (!Array.isArray(items) || items.length === 0) return;
+    const map = new Map();
+    for (const t of _ticks) map.set(t.time, t.value);
+    for (const pt of items) {
+      const time = Array.isArray(pt) ? pt[0] : (pt.time || pt.t);
+      const val  = Array.isArray(pt) ? pt[1] : (pt.value || pt.v);
+      if (typeof time === 'number' && typeof val === 'number' && !isNaN(val)) {
+        map.set(time, Math.max(0, Math.min(100, val)));
+      }
+    }
+    _ticks = Array.from(map.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([time, value]) => ({ time, value }));
 
     if (_ticks.length > MAX_TICKS) {
       _ticks = _ticks.slice(_ticks.length - MAX_TICKS);
@@ -32,6 +55,7 @@ window.TickBuffer = (() => {
 
   /**
    * Aggregate raw ticks into timeframe buckets with outcome transformation.
+   * Strictly deduplicates and sorts timestamps for Lightweight Charts v5.
    * @param {number} tfSeconds - 1, 5, 15, 30, 60
    * @param {string} outcomeMode - 'up' | 'down'
    */
@@ -39,17 +63,11 @@ window.TickBuffer = (() => {
     if (_ticks.length === 0) return [];
 
     const invert = outcomeMode === 'down';
-
-    if (tfSeconds === 1) {
-      return _ticks.map(t => ({
-        time: t.time,
-        value: invert ? (100 - t.value) : t.value,
-      }));
-    }
+    const tf = Math.max(1, tfSeconds || 1);
 
     const buckets = new Map();
     for (const tick of _ticks) {
-      const bt = Math.floor(tick.time / tfSeconds) * tfSeconds;
+      const bt = tf === 1 ? tick.time : Math.floor(tick.time / tf) * tf;
       const v = invert ? (100 - tick.value) : tick.value;
       buckets.set(bt, v);
     }
@@ -92,6 +110,7 @@ window.TickBuffer = (() => {
 
   return {
     addTick,
+    addBulk,
     aggregate,
     getRawTicks,
     getRecent,

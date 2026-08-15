@@ -1,0 +1,415 @@
+/**
+ * db.js — Local File Database Manager v1.4
+ * 
+ * Features:
+ * - Uses File System Access API for direct local file reading/writing (history.json)
+ * - IndexedDB handle persistence for 1-click reconnect across page reloads
+ * - In-memory structured cache of sessions and ticks
+ * - Smart merge to prevent duplicate sessions
+ * - JSON import/export fallback
+ */
+'use strict';
+
+window.DBManager = (() => {
+  const IDB_NAME = 'PM_Chart_DB';
+  const IDB_VERSION = 1;
+  const IDB_STORE = 'handles';
+  const HANDLE_KEY = 'history_file_handle';
+
+  // In-memory state
+  let _fileHandle = null;
+  let _fileName = 'history.json';
+  let _fileSize = 0;
+  let _lastSavedMs = 0;
+  let _autoSaveEnabled = true;
+
+  // Database structure:
+  // {
+  //   version: '1.4',
+  //   updatedAt: 1786833000,
+  //   sessions: { [slug]: { slug, tf, startTs, endTs, winner, outcomePrices, volume, open, high, low, close, ticks: [[t, v], ...] } }
+  // }
+  let _db = {
+    version: '1.4',
+    updatedAt: 0,
+    sessions: {},
+  };
+
+  // Event listeners for DB updates
+  const _listeners = new Set();
+
+  function subscribe(fn) {
+    _listeners.add(fn);
+    return () => _listeners.delete(fn);
+  }
+
+  function _notify(eventType, data) {
+    _listeners.forEach(fn => {
+      try { fn(eventType, data); } catch (e) { console.error('[DBManager] Listener error:', e); }
+    });
+  }
+
+  // ─── IndexedDB Handle Cache ──────────────────────────────────────────
+  function _openIDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function _saveHandleToIDB(handle) {
+    try {
+      const idb = await _openIDB();
+      const tx = idb.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(handle, HANDLE_KEY);
+      return new Promise(r => { tx.oncomplete = r; });
+    } catch (e) {
+      console.warn('[DBManager] Could not save handle to IDB:', e);
+    }
+  }
+
+  async function _getHandleFromIDB() {
+    try {
+      const idb = await _openIDB();
+      const tx = idb.transaction(IDB_STORE, 'readonly');
+      return new Promise(resolve => {
+        const req = tx.objectStore(IDB_STORE).get(HANDLE_KEY);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  // ─── File Connection via File System Access API ─────────────────────
+  async function connectFile(createIfMissing = true) {
+    if (!('showOpenFilePicker' in window)) {
+      console.warn('[DBManager] File System Access API not supported in this browser');
+      return false;
+    }
+
+    try {
+      let handle;
+      if (createIfMissing && 'showSaveFilePicker' in window) {
+        handle = await window.showSaveFilePicker({
+          suggestedName: 'history.json',
+          types: [{
+            description: 'JSON Database File',
+            accept: { 'application/json': ['.json'] },
+          }],
+        });
+      } else {
+        const handles = await window.showOpenFilePicker({
+          types: [{
+            description: 'JSON Database File',
+            accept: { 'application/json': ['.json'] },
+          }],
+          multiple: false,
+        });
+        handle = handles[0];
+      }
+
+      if (handle) {
+        _fileHandle = handle;
+        _fileName = handle.name || 'history.json';
+        await _saveHandleToIDB(handle);
+        await readFile();
+        _notify('connected', { fileName: _fileName });
+        return true;
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        console.error('[DBManager] File pick error:', e);
+      }
+    }
+    return false;
+  }
+
+  async function tryAutoConnect() {
+    try {
+      const cached = await _getHandleFromIDB();
+      if (cached && 'queryPermission' in cached) {
+        const perm = await cached.queryPermission({ mode: 'readwrite' });
+        if (perm === 'granted') {
+          _fileHandle = cached;
+          _fileName = cached.name || 'history.json';
+          await readFile();
+          _notify('connected', { fileName: _fileName });
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn('[DBManager] Auto-connect failed:', e);
+    }
+    return false;
+  }
+
+  // ─── File Read & Write ──────────────────────────────────────────────
+  async function readFile() {
+    if (!_fileHandle) return false;
+
+    try {
+      const file = await _fileHandle.getFile();
+      _fileSize = file.size;
+      const text = await file.text();
+
+      if (text && text.trim().length > 0) {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === 'object') {
+          // Normalize sessions object
+          if (parsed.sessions && typeof parsed.sessions === 'object') {
+            if (Array.isArray(parsed.sessions)) {
+              // Convert array to map
+              _db.sessions = {};
+              for (const s of parsed.sessions) {
+                if (s && s.slug) _db.sessions[s.slug] = s;
+              }
+            } else {
+              _db.sessions = parsed.sessions;
+            }
+          }
+          _db.version = parsed.version || '1.4';
+          _db.updatedAt = parsed.updatedAt || Date.now();
+        }
+      }
+
+      _notify('read', { sessionCount: Object.keys(_db.sessions).length });
+      return true;
+    } catch (e) {
+      console.error('[DBManager] Read file failed:', e);
+      return false;
+    }
+  }
+
+  async function saveFile() {
+    if (!_fileHandle) {
+      console.warn('[DBManager] No file connected to save');
+      return false;
+    }
+
+    try {
+      _db.updatedAt = Math.floor(Date.now() / 1000);
+      const jsonStr = JSON.stringify(_db, null, 2);
+
+      const writable = await _fileHandle.createWritable();
+      await writable.write(jsonStr);
+      await writable.close();
+
+      _fileSize = new Blob([jsonStr]).size;
+      _lastSavedMs = Date.now();
+      _notify('saved', { size: _fileSize, lastSavedMs: _lastSavedMs });
+      return true;
+    } catch (e) {
+      console.error('[DBManager] Save file failed:', e);
+      return false;
+    }
+  }
+
+  // ─── Data Access & Mutations ────────────────────────────────────────
+  function getSession(slug) {
+    return _db.sessions[slug] || null;
+  }
+
+  function getAllSessions() {
+    return Object.values(_db.sessions).sort((a, b) => (a.startTs || 0) - (b.startTs || 0));
+  }
+
+  function getSessionCount() {
+    return Object.keys(_db.sessions).length;
+  }
+
+  function getTotalTickCount() {
+    let total = 0;
+    for (const slug in _db.sessions) {
+      const s = _db.sessions[slug];
+      if (s && Array.isArray(s.ticks)) {
+        total += s.ticks.length;
+      }
+    }
+    return total;
+  }
+
+  /**
+   * Add or update a session with ticks and metadata.
+   * Smart merge: preserves existing ticks and appends new ones without duplicates.
+   */
+  function upsertSession(sessionData, autoFlush = false) {
+    if (!sessionData || !sessionData.slug) return;
+    const slug = sessionData.slug;
+    const existing = _db.sessions[slug] || null;
+
+    let mergedTicks = [];
+    if (existing && Array.isArray(existing.ticks)) {
+      mergedTicks = [...existing.ticks];
+    }
+
+    if (Array.isArray(sessionData.ticks)) {
+      // Merge ticks by time key [t, v] or {t, v}
+      const tickMap = new Map();
+      for (const t of mergedTicks) {
+        const time = Array.isArray(t) ? t[0] : t.t || t.time;
+        const val = Array.isArray(t) ? t[1] : t.v || t.value;
+        if (time !== undefined && val !== undefined) tickMap.set(time, val);
+      }
+      for (const t of sessionData.ticks) {
+        const time = Array.isArray(t) ? t[0] : t.t || t.time;
+        const val = Array.isArray(t) ? t[1] : t.v || t.value;
+        if (time !== undefined && val !== undefined) tickMap.set(time, val);
+      }
+      mergedTicks = Array.from(tickMap.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([time, val]) => [time, Math.round(val * 10) / 10]);
+    }
+
+    // Calculate OHLC statistics
+    let open = null, high = null, low = null, close = null;
+    if (mergedTicks.length > 0) {
+      open = mergedTicks[0][1];
+      close = mergedTicks[mergedTicks.length - 1][1];
+      high = open;
+      low = open;
+      for (const pt of mergedTicks) {
+        const v = pt[1];
+        if (v > high) high = v;
+        if (v < low) low = v;
+      }
+    }
+
+    _db.sessions[slug] = {
+      slug,
+      tf: sessionData.tf || (slug.includes('-15m-') ? 15 : 5),
+      startTs: sessionData.startTs || (existing ? existing.startTs : null),
+      endTs: sessionData.endTs || (existing ? existing.endTs : null),
+      winner: sessionData.winner || (existing ? existing.winner : 'PENDING'),
+      outcomePrices: sessionData.outcomePrices || (existing ? existing.outcomePrices : null),
+      volume: sessionData.volume !== undefined ? sessionData.volume : (existing ? existing.volume : 0),
+      open: sessionData.open !== undefined ? sessionData.open : open,
+      high: sessionData.high !== undefined ? sessionData.high : high,
+      low: sessionData.low !== undefined ? sessionData.low : low,
+      close: sessionData.close !== undefined ? sessionData.close : close,
+      ticks: mergedTicks,
+    };
+
+    _notify('session_updated', { slug, session: _db.sessions[slug] });
+
+    if (autoFlush && _autoSaveEnabled && _fileHandle) {
+      saveFile();
+    }
+  }
+
+  function deleteSessions(slugs) {
+    if (!Array.isArray(slugs)) slugs = [slugs];
+    let changed = false;
+    for (const slug of slugs) {
+      if (_db.sessions[slug]) {
+        delete _db.sessions[slug];
+        changed = true;
+      }
+    }
+    if (changed) {
+      _notify('sessions_deleted', { slugs });
+      if (_autoSaveEnabled && _fileHandle) saveFile();
+    }
+  }
+
+  function clearAll() {
+    _db.sessions = {};
+    _notify('cleared', {});
+    if (_autoSaveEnabled && _fileHandle) saveFile();
+  }
+
+  // ─── Extract All Ticks for Chart Rendering ──────────────────────────
+  /**
+   * Returns flattened array of all historical ticks sorted by timestamp:
+   * [{ time: unixSec, value: rawUpCents, sessionSlug: string }]
+   */
+  function getAllTicksFlattened() {
+    const sessions = getAllSessions();
+    const result = [];
+    for (const s of sessions) {
+      if (Array.isArray(s.ticks)) {
+        for (const pt of s.ticks) {
+          const time = Array.isArray(pt) ? pt[0] : pt.t || pt.time;
+          const value = Array.isArray(pt) ? pt[1] : pt.v || pt.value;
+          if (typeof time === 'number' && typeof value === 'number') {
+            result.push({ time, value, slug: s.slug });
+          }
+        }
+      }
+    }
+    return result.sort((a, b) => a.time - b.time);
+  }
+
+  // ─── Getters ────────────────────────────────────────────────────────
+  function isConnected() { return _fileHandle !== null; }
+  function getFileName() { return _fileName; }
+  function getFileSize() { return _fileSize; }
+  function getLastSavedMs() { return _lastSavedMs; }
+  function isAutoSave() { return _autoSaveEnabled; }
+  function setAutoSave(enabled) { _autoSaveEnabled = !!enabled; }
+
+  // ─── Fallback JSON Export & Import ──────────────────────────────────
+  function exportJSON() {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(_db, null, 2));
+    const a = document.createElement('a');
+    a.setAttribute('href', dataStr);
+    a.setAttribute('download', `pm_history_${Date.now()}.json`);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function importJSON(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          if (parsed && parsed.sessions) {
+            const list = Array.isArray(parsed.sessions) ? parsed.sessions : Object.values(parsed.sessions);
+            for (const s of list) {
+              if (s && s.slug) upsertSession(s);
+            }
+            if (_autoSaveEnabled && _fileHandle) saveFile();
+            resolve(list.length);
+          } else {
+            reject(new Error('Invalid JSON format'));
+          }
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+  }
+
+  return {
+    connectFile,
+    tryAutoConnect,
+    readFile,
+    saveFile,
+    getSession,
+    getAllSessions,
+    getSessionCount,
+    getTotalTickCount,
+    upsertSession,
+    deleteSessions,
+    clearAll,
+    getAllTicksFlattened,
+    subscribe,
+    isConnected,
+    getFileName,
+    getFileSize,
+    getLastSavedMs,
+    isAutoSave,
+    setAutoSave,
+    exportJSON,
+    importJSON,
+  };
+})();

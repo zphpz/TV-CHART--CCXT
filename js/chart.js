@@ -226,6 +226,9 @@ window.ChartManager = (() => {
 
     _lastTime = sorted[sorted.length - 1].time;
     _series.setData(sorted);
+    if (_markers.length > 0) {
+      try { _series.setMarkers(_markers); } catch {}
+    }
     _updateSeriesColor(sorted[sorted.length - 1].value);
     _chart.timeScale().scrollToRealTime();
   }
@@ -297,6 +300,27 @@ window.ChartManager = (() => {
     } catch {}
   }
 
+  /**
+   * Winner Badge Marker:
+   * - UP WON: White badge (#ffffff)
+   * - DOWN WON: Coral red badge (#ff4d6d)
+   */
+  function addWinnerBadgeMarker(unixSec, label, side = 'up') {
+    const isUp = side === 'up' || (typeof label === 'string' && label.includes('UP'));
+    _markers.push({
+      time: unixSec,
+      position: 'aboveBar',
+      color: isUp ? '#ffffff' : '#ff4d6d',
+      shape: 'circle',
+      text: label || (isUp ? '🏆 UP WON' : '🏆 DOWN WON'),
+      size: 2,
+    });
+    _markers.sort((a, b) => a.time - b.time);
+    try {
+      _series.setMarkers(_markers);
+    } catch {}
+  }
+
   function clearMarkers() {
     _markers = [];
     try { _series.setMarkers([]); } catch {}
@@ -361,6 +385,7 @@ window.ChartManager = (() => {
     pushTick,
     addWhitespace,
     addMarketBoundaryMarker,
+    addWinnerBadgeMarker,
     clearMarkers,
     setTimeframe,
     setOutcomeMode,
