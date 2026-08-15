@@ -65,6 +65,9 @@ window.HistoryPanel = (() => {
         try {
           const count = await window.DBManager.importJSON(file);
           window.App?.showToast(`Imported ${count} sessions successfully`, 'info', 3000);
+          _renderStats();
+          _renderSessionTable();
+          _updateStorageCard();
         } catch {
           window.App?.showToast('Failed to import JSON', 'error', 3000);
         }
@@ -341,8 +344,32 @@ window.HistoryPanel = (() => {
     ChartManager.clearMarkers();
 
     for (const s of allSessions) {
-      if (Array.isArray(s.ticks)) {
-        for (const pt of s.ticks) {
+      if (Array.isArray(s.ticks) && s.ticks.length > 0) {
+        // If session has only 1 or 2 placeholder points, include only settlement to avoid diagonal triangles
+        if (s.ticks.length <= 2) {
+          const lastPt = s.ticks[s.ticks.length - 1];
+          const t = Array.isArray(lastPt) ? lastPt[0] : (lastPt.t || lastPt.time);
+          const v = Array.isArray(lastPt) ? lastPt[1] : (lastPt.v || lastPt.value);
+          if (typeof t === 'number' && typeof v === 'number' && !isNaN(v)) {
+            bulkTicks.push([t, v]);
+          }
+        } else {
+          for (const pt of s.ticks) {
+            const t = Array.isArray(pt) ? pt[0] : (pt.t || pt.time);
+            const v = Array.isArray(pt) ? pt[1] : (pt.v || pt.value);
+            if (typeof t === 'number' && typeof v === 'number' && !isNaN(v)) {
+              bulkTicks.push([t, v]);
+            }
+          }
+        }
+      }
+    }
+
+    // Also append currently active live session ticks
+    if (window.App && typeof window.App.getCurrentSessionTicks === 'function') {
+      const liveTicks = window.App.getCurrentSessionTicks();
+      if (Array.isArray(liveTicks)) {
+        for (const pt of liveTicks) {
           const t = Array.isArray(pt) ? pt[0] : (pt.t || pt.time);
           const v = Array.isArray(pt) ? pt[1] : (pt.v || pt.value);
           if (typeof t === 'number' && typeof v === 'number' && !isNaN(v)) {

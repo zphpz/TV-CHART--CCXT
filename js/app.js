@@ -580,5 +580,6 @@ window.App = (() => {
     switchView,
     showToast,
     getOutcomeMode,
+    getCurrentSessionTicks: () => _currentSessionTicks,
   };
 })();

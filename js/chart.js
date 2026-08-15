@@ -369,7 +369,12 @@ window.ChartManager = (() => {
     _overlayCtx.lineWidth = 1;
     _overlayCtx.setLineDash([4, 4]);
 
-    for (const ts of _sessionBoundaries) {
+    // Sort boundaries chronologically
+    const sorted = Array.from(_sessionBoundaries).sort((a, b) => a - b);
+    let lastDrawnX = -9999;
+    const minPixelGap = 20; // Minimum 20px gap to avoid barcode moiré when zoomed out
+
+    for (const ts of sorted) {
       let x = timeScale.timeToCoordinate(ts);
       if (x === null) {
         // Try nearby offsets in case boundary point was bucketed
@@ -382,6 +387,11 @@ window.ChartManager = (() => {
       }
 
       if (x !== null && x >= 0 && x <= w) {
+        if (Math.abs(x - lastDrawnX) < minPixelGap) {
+          continue; // Skip lines that are too densely packed
+        }
+        lastDrawnX = x;
+
         _overlayCtx.beginPath();
         _overlayCtx.moveTo(Math.round(x) + 0.5, 0);
         _overlayCtx.lineTo(Math.round(x) + 0.5, h);
