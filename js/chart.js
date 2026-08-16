@@ -367,20 +367,32 @@ window.ChartManager = (() => {
     }
 
     const timeScale = _chart.timeScale();
-    // Thicker, brighter electric cyan/blue dashed session dividers
+    const HEADER_H = 72; // Dedicated top header panel height (px)
+
+    // 1. Draw top session header panels for each session
+    _drawSessionHeaderPanels(w, h, timeScale, HEADER_H);
+
+    // 2. Draw continuous horizontal dividing line below the top header panel
+    _overlayCtx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+    _overlayCtx.lineWidth = 1;
+    _overlayCtx.setLineDash([]); // solid line
+    _overlayCtx.beginPath();
+    _overlayCtx.moveTo(0, HEADER_H + 0.5);
+    _overlayCtx.lineTo(w, HEADER_H + 0.5);
+    _overlayCtx.stroke();
+
+    // 3. Draw vertical session dividers (thicker, brighter electric cyan/blue dashed lines)
     _overlayCtx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
     _overlayCtx.lineWidth = 2;
     _overlayCtx.setLineDash([6, 4]);
 
-    // Sort boundaries chronologically
     const sorted = Array.from(_sessionBoundaries).sort((a, b) => a - b);
     let lastDrawnX = -9999;
-    const minPixelGap = 20; // Minimum 20px gap to avoid moiré when zoomed out
+    const minPixelGap = 20;
 
     for (const ts of sorted) {
       let x = timeScale.timeToCoordinate(ts);
       if (x === null) {
-        // Try nearby offsets in case boundary point was bucketed
         for (let delta = 1; delta <= 30; delta++) {
           x = timeScale.timeToCoordinate(ts + delta);
           if (x !== null) break;
@@ -391,7 +403,7 @@ window.ChartManager = (() => {
 
       if (x !== null && x >= 0 && x <= w) {
         if (Math.abs(x - lastDrawnX) < minPixelGap) {
-          continue; // Skip lines that are too densely packed
+          continue;
         }
         lastDrawnX = x;
 
@@ -402,13 +414,10 @@ window.ChartManager = (() => {
       }
     }
 
-    // Draw interactive session header cards
-    _drawSessionCards(w, h, timeScale);
-
     _overlayCtx.restore();
   }
 
-  function _drawSessionCards(w, h, timeScale) {
+  function _drawSessionHeaderPanels(w, h, timeScale, HEADER_H) {
     _clickableRegions = [];
     if (!_sessionCardsData || _sessionCardsData.length === 0) return;
 
@@ -441,6 +450,23 @@ window.ChartManager = (() => {
       const spanW = Math.abs(xEnd - xStart);
       if (spanW < 25) continue; // too compact when zoomed far out
 
+      // Panel spans from xStart to xEnd in the top HEADER_H zone
+      const panelX = Math.round(xStart);
+      const panelW = Math.round(spanW);
+
+      // Background fill for this session's header column
+      _overlayCtx.fillStyle = 'rgba(9, 17, 30, 0.88)';
+      _overlayCtx.fillRect(panelX, 0, panelW, HEADER_H);
+
+      // Subtle right divider border for the header column
+      _overlayCtx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+      _overlayCtx.lineWidth = 1;
+      _overlayCtx.setLineDash([]);
+      _overlayCtx.beginPath();
+      _overlayCtx.moveTo(panelX + panelW + 0.5, 0);
+      _overlayCtx.lineTo(panelX + panelW + 0.5, HEADER_H);
+      _overlayCtx.stroke();
+
       const isUp = s.winner === 'UP';
       const isDown = s.winner === 'DOWN';
       const isLive = s.winner === 'LIVE' || s.isLive || s.winner === 'PENDING';
@@ -452,8 +478,8 @@ window.ChartManager = (() => {
       if (spanW < 85) {
         const miniW = isLive ? 48 : (isUp ? 68 : 82);
         const miniH = 18;
-        const miniX = Math.round(xStart + 8);
-        const miniY = 6;
+        const miniX = Math.round(panelX + (spanW - miniW) / 2);
+        const miniY = 27;
 
         _overlayCtx.fillStyle = badgeBg;
         _roundRect(_overlayCtx, miniX, miniY, miniW, miniH, 4, true, false);
@@ -464,50 +490,56 @@ window.ChartManager = (() => {
         continue;
       }
 
-      // ── Level of Detail 2: Left-aligned with 16px offset from left boundary
-      const leftOffset = 16;
-      const cardX = Math.round(xStart + leftOffset);
-      const maxAvailableW = Math.max(140, spanW - leftOffset - 16);
-      const cardW = Math.min(maxAvailableW, 440);
-      const cardH = spanW < 180 ? 40 : 60;
-      const cardY = 6;
+      // ── Level of Detail 2: Standard & Full-Width Header Panel
+      const padX = 14;
+      const contentX = panelX + padX;
+      const maxContentW = panelW - padX * 2;
 
-      // Semi-transparent glassmorphic fintech card background (matching dark analytics style)
-      _overlayCtx.fillStyle = 'rgba(9, 17, 30, 0.84)';
-      _overlayCtx.strokeStyle = 'rgba(56, 189, 248, 0.32)';
-      _overlayCtx.lineWidth = 1;
-      _roundRect(_overlayCtx, cardX, cardY, cardW, cardH, 8, true, true);
-
-      // 1. Session Slug Header (Pure White modern font, clickable)
+      // Row 1: Session Slug Header & Time Window (y ≈ 24px)
       const slugText = (s.slug || 'Session') + ' ↗';
-      _overlayCtx.font = spanW < 180 ? 'bold 11px "Inter", sans-serif' : 'bold 13px "Inter", system-ui, -apple-system, sans-serif';
+      _overlayCtx.font = 'bold 13px "Inter", system-ui, -apple-system, sans-serif';
       _overlayCtx.fillStyle = '#ffffff';
-      _overlayCtx.fillText(slugText, cardX + 12, cardY + (spanW < 180 ? 16 : 20), cardW - 24);
+      _overlayCtx.fillText(slugText, contentX, 26, maxContentW);
 
+      const slugW = _overlayCtx.measureText(slugText).width;
       _clickableRegions.push({
-        x: cardX,
-        y: cardY,
-        w: cardW,
-        h: spanW < 180 ? 22 : 28,
+        x: contentX,
+        y: 4,
+        w: Math.min(slugW + 10, maxContentW),
+        h: 28,
         slug: s.slug,
         url: `https://polymarket.com/event/${s.slug}`,
       });
 
-      // 2. Winner Pill Badge
-      const badgeW = isLive ? 62 : (isUp ? 80 : 98);
-      const badgeH = spanW < 180 ? 16 : 22;
-      const badgeX = cardX + 12;
-      const badgeY = cardY + (spanW < 180 ? 20 : 30);
+      // Optional time window string on the right of Row 1
+      if (spanW >= 240 && s.startTs && s.endTs) {
+        const fmtTime = ts => {
+          const d = new Date(ts * 1000);
+          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        };
+        const windowStr = `${fmtTime(s.startTs)} – ${fmtTime(s.endTs)}`;
+        _overlayCtx.font = '600 11px "Inter", system-ui, sans-serif';
+        _overlayCtx.fillStyle = '#64748b';
+        const winW = _overlayCtx.measureText(windowStr).width;
+        if (contentX + slugW + 16 < panelX + panelW - winW - padX) {
+          _overlayCtx.fillText(windowStr, panelX + panelW - winW - padX, 26);
+        }
+      }
+
+      // Row 2: Winner Pill Badge + BTC Prices (y ≈ 56px)
+      const badgeW = isLive ? 64 : (isUp ? 82 : 100);
+      const badgeH = 22;
+      const badgeY = 38;
 
       _overlayCtx.fillStyle = badgeBg;
-      _roundRect(_overlayCtx, badgeX, badgeY, badgeW, badgeH, 4, true, false);
+      _roundRect(_overlayCtx, contentX, badgeY, badgeW, badgeH, 4, true, false);
 
       _overlayCtx.fillStyle = badgeFg;
-      _overlayCtx.font = spanW < 180 ? '800 9px "Inter", sans-serif' : '800 11px "Inter", system-ui, -apple-system, sans-serif';
-      _overlayCtx.fillText(badgeText, badgeX + 6, badgeY + (spanW < 180 ? 12 : 15));
+      _overlayCtx.font = '800 11px "Inter", system-ui, -apple-system, sans-serif';
+      _overlayCtx.fillText(badgeText, contentX + 6, badgeY + 15);
 
-      // 3. BTC Reference Prices (Shown when spanW >= 180px)
-      if (spanW >= 180 && s.btcOpen && s.btcClose) {
+      // BTC Reference Prices
+      if (spanW >= 170 && s.btcOpen && s.btcClose) {
         const btcOpenFmt = '$' + (typeof s.btcOpen === 'number' ? s.btcOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : s.btcOpen);
         const btcCloseFmt = '$' + (typeof s.btcClose === 'number' ? s.btcClose.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : s.btcClose);
         const sign = s.btcClose >= s.btcOpen ? '+' : '';
@@ -516,13 +548,13 @@ window.ChartManager = (() => {
         _overlayCtx.fillStyle = '#94a3b8';
         _overlayCtx.font = 'bold 11px "JetBrains Mono", monospace';
         const labelText = 'BTC ';
-        _overlayCtx.fillText(labelText, badgeX + badgeW + 8, badgeY + 15);
+        _overlayCtx.fillText(labelText, contentX + badgeW + 8, badgeY + 15);
         const labelWidth = _overlayCtx.measureText(labelText).width;
 
         const priceText = `${btcOpenFmt} → ${btcCloseFmt}${chgFmt}`;
         _overlayCtx.fillStyle = s.btcClose >= s.btcOpen ? '#34d399' : '#cbd5e1';
         _overlayCtx.font = 'bold 12px "JetBrains Mono", monospace';
-        _overlayCtx.fillText(priceText, badgeX + badgeW + 8 + labelWidth, badgeY + 15, cardW - badgeW - labelWidth - 20);
+        _overlayCtx.fillText(priceText, contentX + badgeW + 8 + labelWidth, badgeY + 15, maxContentW - badgeW - labelWidth - 10);
       }
     }
   }
@@ -625,9 +657,14 @@ window.ChartManager = (() => {
   function _setupResize(container) {
     const ro = new ResizeObserver(() => {
       if (_chart && container) {
+        const h = container.clientHeight || 500;
+        const topMargin = Math.min(0.25, Math.max(0.15, 80 / h));
         _chart.applyOptions({
           width:  container.clientWidth,
-          height: container.clientHeight,
+          height: h,
+          rightPriceScale: {
+            scaleMargins: { top: topMargin, bottom: 0.04 },
+          },
         });
         _drawSessionDividers();
       }
