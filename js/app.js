@@ -44,8 +44,9 @@ window.App = (() => {
     btnMkt5m:          $('btn-mkt-5m'),
     btnMkt15m:         $('btn-mkt-15m'),
     btnOutcomeUp:      $('btn-outcome-up'),
-    btnOutcomeDown:    $('btn-outcome-down'),
     btnResetZoom:      $('btn-reset-zoom'),
+    btnScrollStart:    $('btn-scroll-start'),
+    btnScrollLive:     $('btn-scroll-live'),
     btnQuickLoadDb:    $('btn-quick-load-db'),
     btnRetry:          $('btn-retry'),
   };
@@ -607,6 +608,8 @@ window.App = (() => {
     });
 
     el.btnResetZoom?.addEventListener('click', () => ChartManager.resetZoom());
+    el.btnScrollStart?.addEventListener('click', () => ChartManager.scrollToStart());
+    el.btnScrollLive?.addEventListener('click', () => ChartManager.scrollToEnd());
     el.btnRetry?.addEventListener('click', () => {
       hideError();
       loadMarket(_currentTfMinutes);

@@ -64,7 +64,7 @@ window.ChartManager = (() => {
       },
       rightPriceScale: {
         borderColor: '#1e2a38',
-        scaleMargins: { top: 0.04, bottom: 0.04 },
+        scaleMargins: { top: 0.18, bottom: 0.04 }, // Generous 18% top zone reserved for session info cards
         autoScale: true,          // TRUE: allows autoscaleInfoProvider to calculate full 0-100 scale on load
         entireTextOnly: false,
         visible: true,
@@ -367,14 +367,15 @@ window.ChartManager = (() => {
     }
 
     const timeScale = _chart.timeScale();
-    _overlayCtx.strokeStyle = 'rgba(77, 171, 247, 0.45)'; // Semi-transparent blue dashed line
-    _overlayCtx.lineWidth = 1;
-    _overlayCtx.setLineDash([4, 4]);
+    // Thicker, brighter electric cyan/blue dashed session dividers
+    _overlayCtx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+    _overlayCtx.lineWidth = 2;
+    _overlayCtx.setLineDash([6, 4]);
 
     // Sort boundaries chronologically
     const sorted = Array.from(_sessionBoundaries).sort((a, b) => a - b);
     let lastDrawnX = -9999;
-    const minPixelGap = 20; // Minimum 20px gap to avoid barcode moiré when zoomed out
+    const minPixelGap = 20; // Minimum 20px gap to avoid moiré when zoomed out
 
     for (const ts of sorted) {
       let x = timeScale.timeToCoordinate(ts);
@@ -440,22 +441,19 @@ window.ChartManager = (() => {
       const spanW = Math.abs(xEnd - xStart);
       if (spanW < 25) continue; // too compact when zoomed far out
 
-      // Center horizontally inside the session window
-      const sessionMidX = (xStart + xEnd) / 2;
-
       const isUp = s.winner === 'UP';
       const isDown = s.winner === 'DOWN';
       const isLive = s.winner === 'LIVE' || s.isLive || s.winner === 'PENDING';
       const badgeText = isUp ? '🏆 UP WON' : (isDown ? '🏆 DOWN WON' : '⏳ LIVE');
-      const badgeBg = isUp ? '#ffffff' : (isDown ? '#e11d48' : '#0284c7');
+      const badgeBg = isUp ? '#f8fafc' : (isDown ? '#e11d48' : '#0284c7');
       const badgeFg = isUp ? '#090d16' : '#ffffff';
 
       // ── Level of Detail 1: Ultra-compact when zoomed far out (< 85px)
       if (spanW < 85) {
         const miniW = isLive ? 48 : (isUp ? 68 : 82);
         const miniH = 18;
-        const miniX = Math.round(sessionMidX - miniW / 2);
-        const miniY = 8;
+        const miniX = Math.round(xStart + 8);
+        const miniY = 6;
 
         _overlayCtx.fillStyle = badgeBg;
         _roundRect(_overlayCtx, miniX, miniY, miniW, miniH, 4, true, false);
@@ -466,23 +464,25 @@ window.ChartManager = (() => {
         continue;
       }
 
-      // ── Level of Detail 2: Standard and Large view (>= 85px)
-      const cardW = Math.max(140, Math.min(360, spanW - 12));
-      const cardH = spanW < 180 ? 40 : 66;
-      const cardX = Math.round(sessionMidX - cardW / 2);
-      const cardY = 8;
+      // ── Level of Detail 2: Left-aligned with 16px offset from left boundary
+      const leftOffset = 16;
+      const cardX = Math.round(xStart + leftOffset);
+      const maxAvailableW = Math.max(140, spanW - leftOffset - 16);
+      const cardW = Math.min(maxAvailableW, 440);
+      const cardH = spanW < 180 ? 40 : 60;
+      const cardY = 6;
 
-      // Dark Matte Card Background
-      _overlayCtx.fillStyle = '#131822';
-      _overlayCtx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+      // Semi-transparent glassmorphic fintech card background (matching dark analytics style)
+      _overlayCtx.fillStyle = 'rgba(9, 17, 30, 0.84)';
+      _overlayCtx.strokeStyle = 'rgba(56, 189, 248, 0.32)';
       _overlayCtx.lineWidth = 1;
       _roundRect(_overlayCtx, cardX, cardY, cardW, cardH, 8, true, true);
 
-      // 1. Session Slug Header (Pure White bold font, clickable)
+      // 1. Session Slug Header (Pure White modern font, clickable)
       const slugText = (s.slug || 'Session') + ' ↗';
       _overlayCtx.font = spanW < 180 ? 'bold 11px "Inter", sans-serif' : 'bold 13px "Inter", system-ui, -apple-system, sans-serif';
       _overlayCtx.fillStyle = '#ffffff';
-      _overlayCtx.fillText(slugText, cardX + 10, cardY + (spanW < 180 ? 16 : 22), cardW - 20);
+      _overlayCtx.fillText(slugText, cardX + 12, cardY + (spanW < 180 ? 16 : 20), cardW - 24);
 
       _clickableRegions.push({
         x: cardX,
@@ -494,17 +494,17 @@ window.ChartManager = (() => {
       });
 
       // 2. Winner Pill Badge
-      const badgeW = isLive ? 60 : (isUp ? 78 : 96);
+      const badgeW = isLive ? 62 : (isUp ? 80 : 98);
       const badgeH = spanW < 180 ? 16 : 22;
-      const badgeX = cardX + 10;
-      const badgeY = cardY + (spanW < 180 ? 20 : 34);
+      const badgeX = cardX + 12;
+      const badgeY = cardY + (spanW < 180 ? 20 : 30);
 
       _overlayCtx.fillStyle = badgeBg;
       _roundRect(_overlayCtx, badgeX, badgeY, badgeW, badgeH, 4, true, false);
 
       _overlayCtx.fillStyle = badgeFg;
       _overlayCtx.font = spanW < 180 ? '800 9px "Inter", sans-serif' : '800 11px "Inter", system-ui, -apple-system, sans-serif';
-      _overlayCtx.fillText(badgeText, badgeX + 5, badgeY + (spanW < 180 ? 12 : 15));
+      _overlayCtx.fillText(badgeText, badgeX + 6, badgeY + (spanW < 180 ? 12 : 15));
 
       // 3. BTC Reference Prices (Shown when spanW >= 180px)
       if (spanW >= 180 && s.btcOpen && s.btcClose) {
@@ -595,6 +595,33 @@ window.ChartManager = (() => {
     }
   }
 
+  function scrollToStart() {
+    if (!_chart) return;
+    let minTime = Infinity;
+    if (_sessionCardsData && _sessionCardsData.length > 0) {
+      for (const s of _sessionCardsData) {
+        if (s.startTs && s.startTs < minTime) minTime = s.startTs;
+      }
+    }
+    if (minTime === Infinity) {
+      const raw = window.TickBuffer?.getRawTicks() || [];
+      if (raw.length > 0) minTime = raw[0].time;
+    }
+    if (minTime < Infinity) {
+      _chart.timeScale().setVisibleRange({
+        from: minTime,
+        to: minTime + 1800, // Show first 30 minutes / ~6 sessions
+      });
+      _drawSessionDividers();
+    }
+  }
+
+  function scrollToEnd() {
+    if (!_chart) return;
+    _chart.timeScale().scrollToRealTime();
+    _drawSessionDividers();
+  }
+
   function _setupResize(container) {
     const ro = new ResizeObserver(() => {
       if (_chart && container) {
@@ -682,6 +709,8 @@ window.ChartManager = (() => {
     getCurrentTf,
     getLastTime,
     resetZoom,
+    scrollToStart,
+    scrollToEnd,
     updateTickSize,
     destroy,
   };

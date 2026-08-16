@@ -128,12 +128,21 @@
         </div>
 
         <div id="chart-actions">
+          <button id="btn-scroll-start" class="action-btn" title="Scroll back to the beginning of history (Earliest session)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
+            <span style="margin-left:4px; font-size:11px; font-weight:600;">Start</span>
+          </button>
           <button id="btn-quick-load-db" class="action-btn" title="Load saved history from database">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zM22 10H2"/></svg>
             <span style="margin-left:5px; font-size:11px; font-weight:600;">Load DB History</span>
           </button>
-          <button id="btn-reset-zoom" class="action-btn" title="Reset zoom">
+          <button id="btn-reset-zoom" class="action-btn" title="Fit all sessions (Overview)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+            <span style="margin-left:4px; font-size:11px; font-weight:600;">Fit All</span>
+          </button>
+          <button id="btn-scroll-live" class="action-btn" title="Scroll forward to live real-time market">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+            <span style="margin-left:4px; font-size:11px; font-weight:600;">Live</span>
           </button>
         </div>
       </div>
@@ -351,7 +360,7 @@
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v2.5</span>
+        <span id="app-version">v2.6</span>
       </div>
     </footer>
 
