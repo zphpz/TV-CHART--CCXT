@@ -37,7 +37,7 @@
 
   /* Sizes */
   --header-h:       52px;
-  --pricebar-h:     54px;
+  --pricebar-h:     64px;
   --toolbar-h:      42px;
   --footer-h:       30px;
 
@@ -289,33 +289,35 @@ html, body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  padding: 0 20px;
-  min-width: 110px;
+  gap: 1px;
+  padding: 0 24px;
+  min-width: 140px;
 }
 
 #timer-label-top {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--text-secondary);
   text-transform: uppercase;
 }
 
 #timer-value {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-primary);
+  font-size: 34px;
+  font-weight: 800;
+  color: #ffffff;
   letter-spacing: 0.05em;
   text-align: center;
+  line-height: 1;
+  text-shadow: 0 0 16px rgba(255, 255, 255, 0.25);
   transition: color var(--tr-fast);
 }
 
 #timer-value.urgent {
   color: #ff4d6d;
   animation: urgentPulse 1s ease-in-out infinite;
-  text-shadow: 0 0 10px rgba(255, 77, 109, 0.5);
+  text-shadow: 0 0 16px rgba(255, 77, 109, 0.7);
 }
 
 @keyframes urgentPulse {

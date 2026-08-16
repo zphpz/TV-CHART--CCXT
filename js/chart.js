@@ -416,38 +416,61 @@ window.ChartManager = (() => {
 
     for (const s of _sessionCardsData) {
       let xStart = timeScale.timeToCoordinate(s.startTs);
+      if (xStart === null && s.startTs) {
+        for (let delta = 1; delta <= 30; delta++) {
+          xStart = timeScale.timeToCoordinate(s.startTs + delta);
+          if (xStart !== null) break;
+          xStart = timeScale.timeToCoordinate(s.startTs - delta);
+          if (xStart !== null) break;
+        }
+      }
+
       let xEnd = timeScale.timeToCoordinate(s.endTs);
+      if (xEnd === null && s.endTs) {
+        for (let delta = 1; delta <= 30; delta++) {
+          xEnd = timeScale.timeToCoordinate(s.endTs - delta);
+          if (xEnd !== null) break;
+          xEnd = timeScale.timeToCoordinate(s.endTs + delta);
+          if (xEnd !== null) break;
+        }
+      }
 
       if (xStart === null && xEnd === null) continue;
-      if (xStart === null) xStart = xEnd - 140;
-      if (xEnd === null) xEnd = xStart + 140;
+      if (xStart === null) xStart = xEnd - 200;
+      if (xEnd === null) xEnd = xStart + 200;
 
       if (xEnd < 0 || xStart > w) continue;
-      const spanW = xEnd - xStart;
-      if (spanW < 35) continue; // too compact when zoomed far out
+      const spanW = Math.abs(xEnd - xStart);
+      if (spanW < 30) continue; // too compact when zoomed far out
 
-      const cardX = Math.max(4, xStart + 6);
-      const cardW = Math.max(140, Math.min(270, spanW - 12));
-      const cardH = 44;
+      // Center horizontally inside the session window
+      const sessionMidX = (xStart + xEnd) / 2;
+      const cardW = Math.max(160, Math.min(350, spanW - 16));
+      const cardH = 62;
+      const cardX = Math.round(sessionMidX - cardW / 2);
       const cardY = 10;
 
-      // Card Background
-      _overlayCtx.fillStyle = 'rgba(10, 15, 24, 0.88)';
-      _overlayCtx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
-      _overlayCtx.lineWidth = 1;
-      _roundRect(_overlayCtx, cardX, cardY, cardW, cardH, 5, true, true);
+      // Premium Frosted Glass Gradient Card Background
+      const grad = _overlayCtx.createLinearGradient(cardX, cardY, cardX, cardY + cardH);
+      grad.addColorStop(0, 'rgba(15, 23, 42, 0.94)');
+      grad.addColorStop(1, 'rgba(8, 12, 20, 0.96)');
 
-      // 1. Clickable Session Slug Header
+      _overlayCtx.fillStyle = grad;
+      _overlayCtx.strokeStyle = 'rgba(59, 130, 246, 0.55)';
+      _overlayCtx.lineWidth = 1.5;
+      _roundRect(_overlayCtx, cardX, cardY, cardW, cardH, 8, true, true);
+
+      // 1. Session Slug Header (Clickable Link)
       const slugText = (s.slug || 'Session') + ' ↗';
-      _overlayCtx.font = 'bold 10px "JetBrains Mono", monospace';
+      _overlayCtx.font = 'bold 12px "JetBrains Mono", monospace';
       _overlayCtx.fillStyle = '#60a5fa';
-      _overlayCtx.fillText(slugText, cardX + 8, cardY + 14, cardW - 16);
+      _overlayCtx.fillText(slugText, cardX + 12, cardY + 20, cardW - 24);
 
       _clickableRegions.push({
         x: cardX,
         y: cardY,
         w: cardW,
-        h: 20,
+        h: 26,
         slug: s.slug,
         url: `https://polymarket.com/event/${s.slug}`,
       });
@@ -458,28 +481,30 @@ window.ChartManager = (() => {
       const isLive = s.winner === 'LIVE' || s.isLive || s.winner === 'PENDING';
       const badgeText = isUp ? '🏆 UP WON' : (isDown ? '🏆 DOWN WON' : '⏳ LIVE');
       const badgeBg = isUp ? '#ffffff' : (isDown ? '#ff4d6d' : '#00d4aa');
-      const badgeFg = isUp ? '#000000' : (isDown ? '#ffffff' : '#000000');
+      const badgeFg = isUp ? '#090d16' : (isDown ? '#ffffff' : '#090d16');
 
-      const badgeW = isLive ? 48 : 72;
-      const badgeH = 16;
-      const badgeX = cardX + 8;
-      const badgeY = cardY + 22;
+      const badgeW = isLive ? 64 : (isUp ? 88 : 106);
+      const badgeH = 22;
+      const badgeX = cardX + 12;
+      const badgeY = cardY + 30;
 
       _overlayCtx.fillStyle = badgeBg;
-      _roundRect(_overlayCtx, badgeX, badgeY, badgeW, badgeH, 3, true, false);
+      _roundRect(_overlayCtx, badgeX, badgeY, badgeW, badgeH, 5, true, false);
 
       _overlayCtx.fillStyle = badgeFg;
-      _overlayCtx.font = 'bold 9px sans-serif';
-      _overlayCtx.fillText(badgeText, badgeX + 4, badgeY + 12);
+      _overlayCtx.font = '800 11px system-ui, -apple-system, sans-serif';
+      _overlayCtx.fillText(badgeText, badgeX + 6, badgeY + 15);
 
       // 3. BTC Reference Prices
       if (s.btcOpen && s.btcClose) {
         const btcOpenFmt = '$' + Math.round(s.btcOpen).toLocaleString();
         const btcCloseFmt = '$' + Math.round(s.btcClose).toLocaleString();
-        const btcText = `BTC: ${btcOpenFmt} ➔ ${btcCloseFmt}`;
+        const sign = s.btcClose >= s.btcOpen ? '+' : '';
+        const chgFmt = s.btcChange !== null && s.btcChange !== undefined ? ` (${sign}${s.btcChange.toFixed(2)}%)` : '';
+        const btcText = `₿ ${btcOpenFmt} ➔ ${btcCloseFmt}${chgFmt}`;
         _overlayCtx.fillStyle = s.btcClose >= s.btcOpen ? '#00d4aa' : '#ff4d6d';
-        _overlayCtx.font = '9px "JetBrains Mono", monospace';
-        _overlayCtx.fillText(btcText, badgeX + badgeW + 6, badgeY + 12, cardW - badgeW - 18);
+        _overlayCtx.font = 'bold 11px "JetBrains Mono", monospace';
+        _overlayCtx.fillText(btcText, badgeX + badgeW + 8, badgeY + 15, cardW - badgeW - 24);
       }
     }
   }

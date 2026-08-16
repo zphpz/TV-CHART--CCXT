@@ -358,20 +358,27 @@ window.HistoryPanel = (() => {
 
     for (const s of allSessions) {
       if (Array.isArray(s.ticks) && s.ticks.length > 0) {
-        // If session has only 1 or 2 placeholder points, include only settlement to avoid diagonal triangles
+        const start = s.startTs || 0;
+        const end = s.endTs || (start ? start + (s.tf || 5) * 60 : 0);
+
         if (s.ticks.length <= 2) {
           const lastPt = s.ticks[s.ticks.length - 1];
           const t = Array.isArray(lastPt) ? lastPt[0] : (lastPt.t || lastPt.time);
           const v = Array.isArray(lastPt) ? lastPt[1] : (lastPt.v || lastPt.value);
           if (typeof t === 'number' && typeof v === 'number' && !isNaN(v)) {
-            bulkTicks.push([t, v]);
+            const clampedT = end > 0 ? (end - 1) : t;
+            bulkTicks.push([clampedT, v]);
           }
         } else {
           for (const pt of s.ticks) {
             const t = Array.isArray(pt) ? pt[0] : (pt.t || pt.time);
             const v = Array.isArray(pt) ? pt[1] : (pt.v || pt.value);
             if (typeof t === 'number' && typeof v === 'number' && !isNaN(v)) {
-              bulkTicks.push([t, v]);
+              // Clamp timestamp to strictly within (start, end)
+              let clampedT = t;
+              if (start > 0 && clampedT <= start) clampedT = start + 1;
+              if (end > 0 && clampedT >= end) clampedT = end - 1;
+              bulkTicks.push([clampedT, v]);
             }
           }
         }
@@ -395,12 +402,33 @@ window.HistoryPanel = (() => {
     TickBuffer.reset(false);
     TickBuffer.addBulk(bulkTicks);
 
-    // Re-render chart series
+    // Re-render chart series with explicit whitespace gaps between sessions
     const curTf = ChartManager.getCurrentTf();
     const outcomeMode = window.App?.getOutcomeMode() || 'up';
     const aggregated = TickBuffer.aggregate(curTf, outcomeMode);
-    if (aggregated.length > 0) {
-      ChartManager.setData(aggregated);
+
+    // Inject WhitespaceData items at every session boundary so lines never connect across sessions
+    const seriesWithGaps = [];
+    const seenTimes = new Set();
+    
+    // 1. Add all aggregated price points
+    for (const item of aggregated) {
+      seriesWithGaps.push(item);
+      seenTimes.add(item.time);
+    }
+    
+    // 2. Add whitespace gaps at each session endTs
+    for (const s of allSessions) {
+      if (s.endTs && !seenTimes.has(s.endTs)) {
+        seriesWithGaps.push({ time: s.endTs }); // Whitespace point!
+        seenTimes.add(s.endTs);
+      }
+    }
+
+    seriesWithGaps.sort((a, b) => a.time - b.time);
+
+    if (seriesWithGaps.length > 0) {
+      ChartManager.setData(seriesWithGaps);
     }
 
     // Now place interactive session cards and dashed blue session dividers
