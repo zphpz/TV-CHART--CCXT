@@ -417,7 +417,7 @@ window.ChartManager = (() => {
     for (const s of _sessionCardsData) {
       let xStart = timeScale.timeToCoordinate(s.startTs);
       if (xStart === null && s.startTs) {
-        for (let delta = 1; delta <= 30; delta++) {
+        for (let delta = 1; delta <= 300; delta += 2) {
           xStart = timeScale.timeToCoordinate(s.startTs + delta);
           if (xStart !== null) break;
           xStart = timeScale.timeToCoordinate(s.startTs - delta);
@@ -427,7 +427,7 @@ window.ChartManager = (() => {
 
       let xEnd = timeScale.timeToCoordinate(s.endTs);
       if (xEnd === null && s.endTs) {
-        for (let delta = 1; delta <= 30; delta++) {
+        for (let delta = 1; delta <= 300; delta += 2) {
           xEnd = timeScale.timeToCoordinate(s.endTs - delta);
           if (xEnd !== null) break;
           xEnd = timeScale.timeToCoordinate(s.endTs + delta);
@@ -436,8 +436,8 @@ window.ChartManager = (() => {
       }
 
       if (xStart === null && xEnd === null) continue;
-      if (xStart === null) xStart = xEnd - 200;
-      if (xEnd === null) xEnd = xStart + 200;
+      if (xStart === null) xStart = xEnd - 250;
+      if (xEnd === null) xEnd = xStart + 250;
 
       if (xEnd < 0 || xStart > w) continue;
       const spanW = Math.abs(xEnd - xStart);
@@ -445,66 +445,71 @@ window.ChartManager = (() => {
 
       // Center horizontally inside the session window
       const sessionMidX = (xStart + xEnd) / 2;
-      const cardW = Math.max(160, Math.min(350, spanW - 16));
-      const cardH = 62;
+      const cardW = Math.max(180, Math.min(360, spanW - 16));
+      const cardH = 66;
       const cardX = Math.round(sessionMidX - cardW / 2);
       const cardY = 10;
 
-      // Premium Frosted Glass Gradient Card Background
-      const grad = _overlayCtx.createLinearGradient(cardX, cardY, cardX, cardY + cardH);
-      grad.addColorStop(0, 'rgba(15, 23, 42, 0.94)');
-      grad.addColorStop(1, 'rgba(8, 12, 20, 0.96)');
-
-      _overlayCtx.fillStyle = grad;
-      _overlayCtx.strokeStyle = 'rgba(59, 130, 246, 0.55)';
-      _overlayCtx.lineWidth = 1.5;
+      // Dark Matte Card Background (matching modern fintech app design)
+      _overlayCtx.fillStyle = '#131822';
+      _overlayCtx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+      _overlayCtx.lineWidth = 1;
       _roundRect(_overlayCtx, cardX, cardY, cardW, cardH, 8, true, true);
 
-      // 1. Session Slug Header (Clickable Link)
+      // 1. Session Slug Header (Pure White bold font, clickable)
       const slugText = (s.slug || 'Session') + ' ↗';
-      _overlayCtx.font = 'bold 12px "JetBrains Mono", monospace';
-      _overlayCtx.fillStyle = '#60a5fa';
-      _overlayCtx.fillText(slugText, cardX + 12, cardY + 20, cardW - 24);
+      _overlayCtx.font = 'bold 13px "Inter", system-ui, -apple-system, sans-serif';
+      _overlayCtx.fillStyle = '#ffffff';
+      _overlayCtx.fillText(slugText, cardX + 12, cardY + 22, cardW - 24);
 
       _clickableRegions.push({
         x: cardX,
         y: cardY,
         w: cardW,
-        h: 26,
+        h: 28,
         slug: s.slug,
         url: `https://polymarket.com/event/${s.slug}`,
       });
 
-      // 2. Winner Badge
+      // 2. Winner Pill Badge (Clean solid pill badges, white bold text)
       const isUp = s.winner === 'UP';
       const isDown = s.winner === 'DOWN';
       const isLive = s.winner === 'LIVE' || s.isLive || s.winner === 'PENDING';
       const badgeText = isUp ? '🏆 UP WON' : (isDown ? '🏆 DOWN WON' : '⏳ LIVE');
-      const badgeBg = isUp ? '#ffffff' : (isDown ? '#ff4d6d' : '#00d4aa');
-      const badgeFg = isUp ? '#090d16' : (isDown ? '#ffffff' : '#090d16');
+      const badgeBg = isUp ? '#ffffff' : (isDown ? '#e11d48' : '#0284c7');
+      const badgeFg = isUp ? '#090d16' : '#ffffff';
 
-      const badgeW = isLive ? 64 : (isUp ? 88 : 106);
+      const badgeW = isLive ? 66 : (isUp ? 86 : 106);
       const badgeH = 22;
       const badgeX = cardX + 12;
-      const badgeY = cardY + 30;
+      const badgeY = cardY + 34;
 
       _overlayCtx.fillStyle = badgeBg;
       _roundRect(_overlayCtx, badgeX, badgeY, badgeW, badgeH, 5, true, false);
 
       _overlayCtx.fillStyle = badgeFg;
-      _overlayCtx.font = '800 11px system-ui, -apple-system, sans-serif';
+      _overlayCtx.font = '800 11px "Inter", system-ui, -apple-system, sans-serif';
       _overlayCtx.fillText(badgeText, badgeX + 6, badgeY + 15);
 
-      // 3. BTC Reference Prices
+      // 3. BTC Reference Prices (Pure White / Soft Slate font — NO red text!)
       if (s.btcOpen && s.btcClose) {
         const btcOpenFmt = '$' + Math.round(s.btcOpen).toLocaleString();
         const btcCloseFmt = '$' + Math.round(s.btcClose).toLocaleString();
         const sign = s.btcClose >= s.btcOpen ? '+' : '';
         const chgFmt = s.btcChange !== null && s.btcChange !== undefined ? ` (${sign}${s.btcChange.toFixed(2)}%)` : '';
-        const btcText = `₿ ${btcOpenFmt} ➔ ${btcCloseFmt}${chgFmt}`;
-        _overlayCtx.fillStyle = s.btcClose >= s.btcOpen ? '#00d4aa' : '#ff4d6d';
+        
+        // Render label "BTC"
+        _overlayCtx.fillStyle = '#94a3b8';
         _overlayCtx.font = 'bold 11px "JetBrains Mono", monospace';
-        _overlayCtx.fillText(btcText, badgeX + badgeW + 8, badgeY + 15, cardW - badgeW - 24);
+        const labelText = 'BTC ';
+        _overlayCtx.fillText(labelText, badgeX + badgeW + 8, badgeY + 15);
+        const labelWidth = _overlayCtx.measureText(labelText).width;
+
+        // Render prices in clean off-white / soft green (no red font!)
+        const priceText = `${btcOpenFmt} → ${btcCloseFmt}${chgFmt}`;
+        _overlayCtx.fillStyle = s.btcClose >= s.btcOpen ? '#34d399' : '#cbd5e1';
+        _overlayCtx.font = 'bold 12px "JetBrains Mono", monospace';
+        _overlayCtx.fillText(priceText, badgeX + badgeW + 8 + labelWidth, badgeY + 15, cardW - badgeW - labelWidth - 24);
       }
     }
   }
@@ -572,8 +577,8 @@ window.ChartManager = (() => {
 
   function resetZoom() {
     if (_chart) {
-      _chart.timeScale().scrollToRealTime();
-      _chart.timeScale().resetTimeScale();
+      _chart.timeScale().fitContent();
+      _drawSessionDividers();
     }
   }
 

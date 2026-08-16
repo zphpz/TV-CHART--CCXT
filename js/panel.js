@@ -352,33 +352,53 @@ window.HistoryPanel = (() => {
       return;
     }
 
-    // Collect all ticks from all sessions
-    const bulkTicks = [];
-    ChartManager.clearMarkers();
+    // Helper: Resample / Step-hold ticks to ensure uniform 300s session width
+    function _expandSessionTicks(ticks, startTs, endTs, stepSec = 2) {
+      if (!ticks || ticks.length === 0) return [];
+      const sorted = ticks
+        .map(pt => [
+          Array.isArray(pt) ? pt[0] : (pt.t || pt.time),
+          Array.isArray(pt) ? pt[1] : (pt.v || pt.value)
+        ])
+        .filter(([t, v]) => typeof t === 'number' && typeof v === 'number' && !isNaN(v))
+        .sort((a, b) => a[0] - b[0]);
+
+      if (sorted.length === 0) return [];
+
+      const filled = [];
+      let curVal = sorted[0][1];
+      let tickIdx = 0;
+
+      // Resample from startTs + 1 to endTs - 1 with stepSec intervals
+      for (let t = startTs + 1; t < endTs; t += stepSec) {
+        while (tickIdx < sorted.length && sorted[tickIdx][0] <= t) {
+          curVal = sorted[tickIdx][1];
+          tickIdx++;
+        }
+        filled.push([t, curVal]);
+      }
+
+      // Ensure exact settlement point at endTs - 1
+      const lastVal = sorted[sorted.length - 1][1];
+      filled.push([endTs - 1, lastVal]);
+      return filled;
+    }
 
     for (const s of allSessions) {
       if (Array.isArray(s.ticks) && s.ticks.length > 0) {
         const start = s.startTs || 0;
         const end = s.endTs || (start ? start + (s.tf || 5) * 60 : 0);
-
-        if (s.ticks.length <= 2) {
-          const lastPt = s.ticks[s.ticks.length - 1];
-          const t = Array.isArray(lastPt) ? lastPt[0] : (lastPt.t || lastPt.time);
-          const v = Array.isArray(lastPt) ? lastPt[1] : (lastPt.v || lastPt.value);
-          if (typeof t === 'number' && typeof v === 'number' && !isNaN(v)) {
-            const clampedT = end > 0 ? (end - 1) : t;
-            bulkTicks.push([clampedT, v]);
+        if (start > 0 && end > start) {
+          const expanded = _expandSessionTicks(s.ticks, start, end, 2);
+          for (const pt of expanded) {
+            bulkTicks.push(pt);
           }
         } else {
           for (const pt of s.ticks) {
             const t = Array.isArray(pt) ? pt[0] : (pt.t || pt.time);
             const v = Array.isArray(pt) ? pt[1] : (pt.v || pt.value);
             if (typeof t === 'number' && typeof v === 'number' && !isNaN(v)) {
-              // Clamp timestamp to strictly within (start, end)
-              let clampedT = t;
-              if (start > 0 && clampedT <= start) clampedT = start + 1;
-              if (end > 0 && clampedT >= end) clampedT = end - 1;
-              bulkTicks.push([clampedT, v]);
+              bulkTicks.push([t, v]);
             }
           }
         }
@@ -481,6 +501,7 @@ window.HistoryPanel = (() => {
       }
       ChartManager.setSessionBoundaries(boundaries);
       ChartManager.setSessionCardsData(sessionCards);
+      ChartManager.resetZoom();
     }
 
     if (switchView && window.App) {
