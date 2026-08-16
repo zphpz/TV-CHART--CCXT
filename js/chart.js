@@ -64,7 +64,7 @@ window.ChartManager = (() => {
       },
       rightPriceScale: {
         borderColor: '#1e2a38',
-        scaleMargins: { top: 0.18, bottom: 0.04 }, // Generous 18% top zone reserved for session info cards
+        scaleMargins: { top: 0.06, bottom: 0.04 }, // Slim 6% top zone for single-line session info
         autoScale: true,          // TRUE: allows autoscaleInfoProvider to calculate full 0-100 scale on load
         entireTextOnly: false,
         visible: true,
@@ -367,7 +367,7 @@ window.ChartManager = (() => {
     }
 
     const timeScale = _chart.timeScale();
-    const HEADER_H = 72; // Dedicated top header panel height (px)
+    const HEADER_H = 26; // Ultra-slim single-line top header panel height (px)
 
     // 1. Draw top session header panels for each session
     _drawSessionHeaderPanels(w, h, timeScale, HEADER_H);
@@ -421,6 +421,8 @@ window.ChartManager = (() => {
     _clickableRegions = [];
     if (!_sessionCardsData || _sessionCardsData.length === 0) return;
 
+    _overlayCtx.font = '600 12px "JetBrains Mono", monospace';
+
     for (const s of _sessionCardsData) {
       let xStart = timeScale.timeToCoordinate(s.startTs);
       if (xStart === null && s.startTs) {
@@ -467,94 +469,93 @@ window.ChartManager = (() => {
       _overlayCtx.lineTo(panelX + panelW + 0.5, HEADER_H);
       _overlayCtx.stroke();
 
-      const isUp = s.winner === 'UP';
-      const isDown = s.winner === 'DOWN';
-      const isLive = s.winner === 'LIVE' || s.isLive || s.winner === 'PENDING';
-      const badgeText = isUp ? '🏆 UP WON' : (isDown ? '🏆 DOWN WON' : '⏳ LIVE');
-      const badgeBg = isUp ? '#f8fafc' : (isDown ? '#e11d48' : '#0284c7');
-      const badgeFg = isUp ? '#090d16' : '#ffffff';
-
-      // ── Level of Detail 1: Ultra-compact when zoomed far out (< 85px)
-      if (spanW < 85) {
-        const miniW = isLive ? 48 : (isUp ? 68 : 82);
-        const miniH = 18;
-        const miniX = Math.round(panelX + (spanW - miniW) / 2);
-        const miniY = 27;
-
-        _overlayCtx.fillStyle = badgeBg;
-        _roundRect(_overlayCtx, miniX, miniY, miniW, miniH, 4, true, false);
-
-        _overlayCtx.fillStyle = badgeFg;
-        _overlayCtx.font = '800 9px "Inter", system-ui, sans-serif';
-        _overlayCtx.fillText(badgeText, miniX + 4, miniY + 13);
-        continue;
-      }
-
-      // ── Level of Detail 2: Standard & Full-Width Header Panel
-      const padX = 14;
-      const contentX = panelX + padX;
-      const maxContentW = panelW - padX * 2;
-
-      // Row 1: Session Slug Header & Time Window (y ≈ 24px)
-      const slugText = (s.slug || 'Session') + ' ↗';
-      _overlayCtx.font = 'bold 13px "Inter", system-ui, -apple-system, sans-serif';
-      _overlayCtx.fillStyle = '#ffffff';
-      _overlayCtx.fillText(slugText, contentX, 26, maxContentW);
-
-      const slugW = _overlayCtx.measureText(slugText).width;
+      // Make the entire session header panel clickable to open Polymarket
       _clickableRegions.push({
-        x: contentX,
-        y: 4,
-        w: Math.min(slugW + 10, maxContentW),
-        h: 28,
+        x: panelX,
+        y: 0,
+        w: panelW,
+        h: HEADER_H,
         slug: s.slug,
         url: `https://polymarket.com/event/${s.slug}`,
       });
 
-      // Optional time window string on the right of Row 1
-      if (spanW >= 240 && s.startTs && s.endTs) {
-        const fmtTime = ts => {
-          const d = new Date(ts * 1000);
-          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-        };
-        const windowStr = `${fmtTime(s.startTs)} – ${fmtTime(s.endTs)}`;
-        _overlayCtx.font = '600 11px "Inter", system-ui, sans-serif';
-        _overlayCtx.fillStyle = '#64748b';
-        const winW = _overlayCtx.measureText(windowStr).width;
-        if (contentX + slugW + 16 < panelX + panelW - winW - padX) {
-          _overlayCtx.fillText(windowStr, panelX + panelW - winW - padX, 26);
-        }
+      const isUp = s.winner === 'UP';
+      const isDown = s.winner === 'DOWN';
+      const isLive = s.winner === 'LIVE' || s.isLive || s.winner === 'PENDING';
+      const badgeText = isUp ? '🏆 UP WON' : (isDown ? '🏆 DOWN WON' : '⏳ LIVE');
+      const badgeColor = isUp ? '#34d399' : (isDown ? '#f43f5e' : '#38bdf8');
+
+      // ── Level of Detail 1: Ultra-compact when zoomed far out (< 85px)
+      if (spanW < 85) {
+        _overlayCtx.fillStyle = badgeColor;
+        _overlayCtx.font = '800 10px "JetBrains Mono", monospace';
+        const miniText = isUp ? '🏆 UP' : (isDown ? '🏆 DWN' : '⏳ LIVE');
+        _overlayCtx.fillText(miniText, panelX + 6, 17, panelW - 10);
+        continue;
       }
 
-      // Row 2: Winner Pill Badge + BTC Prices (y ≈ 56px)
-      const badgeW = isLive ? 64 : (isUp ? 82 : 100);
-      const badgeH = 22;
-      const badgeY = 38;
+      // ── Level of Detail 2: Single-Line Modern Monospace Header
+      let curX = panelX + 10;
+      const textY = 17;
+      const rightLimit = panelX + panelW - 10;
 
-      _overlayCtx.fillStyle = badgeBg;
-      _roundRect(_overlayCtx, contentX, badgeY, badgeW, badgeH, 4, true, false);
+      // 1. Slug link text
+      const slugText = (s.slug || 'Session') + ' ↗';
+      _overlayCtx.font = '600 12px "JetBrains Mono", monospace';
+      _overlayCtx.fillStyle = '#e2e8f0';
+      _overlayCtx.fillText(slugText, curX, textY, Math.max(60, rightLimit - curX));
+      curX += _overlayCtx.measureText(slugText).width + 8;
 
-      _overlayCtx.fillStyle = badgeFg;
-      _overlayCtx.font = '800 11px "Inter", system-ui, -apple-system, sans-serif';
-      _overlayCtx.fillText(badgeText, contentX + 6, badgeY + 15);
+      if (curX + 60 < rightLimit) {
+        // Dot separator
+        _overlayCtx.fillStyle = '#64748b';
+        _overlayCtx.fillText('·', curX, textY);
+        curX += 12;
 
-      // BTC Reference Prices
-      if (spanW >= 170 && s.btcOpen && s.btcClose) {
+        // 2. Winner text (plain text, NO pill)
+        _overlayCtx.fillStyle = badgeColor;
+        _overlayCtx.font = '800 12px "JetBrains Mono", monospace';
+        _overlayCtx.fillText(badgeText, curX, textY);
+        curX += _overlayCtx.measureText(badgeText).width + 8;
+      }
+
+      // 3. BTC Reference Prices (if space permits)
+      if (curX + 180 < rightLimit && s.btcOpen && s.btcClose) {
+        _overlayCtx.fillStyle = '#64748b';
+        _overlayCtx.fillText('·', curX, textY);
+        curX += 12;
+
         const btcOpenFmt = '$' + (typeof s.btcOpen === 'number' ? s.btcOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : s.btcOpen);
         const btcCloseFmt = '$' + (typeof s.btcClose === 'number' ? s.btcClose.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : s.btcClose);
         const sign = s.btcClose >= s.btcOpen ? '+' : '';
         const chgFmt = s.btcChange !== null && s.btcChange !== undefined ? ` (${sign}${s.btcChange.toFixed(2)}%)` : '';
-        
+
         _overlayCtx.fillStyle = '#94a3b8';
-        _overlayCtx.font = 'bold 11px "JetBrains Mono", monospace';
+        _overlayCtx.font = '600 12px "JetBrains Mono", monospace';
         const labelText = 'BTC ';
-        _overlayCtx.fillText(labelText, contentX + badgeW + 8, badgeY + 15);
-        const labelWidth = _overlayCtx.measureText(labelText).width;
+        _overlayCtx.fillText(labelText, curX, textY);
+        curX += _overlayCtx.measureText(labelText).width;
 
         const priceText = `${btcOpenFmt} → ${btcCloseFmt}${chgFmt}`;
         _overlayCtx.fillStyle = s.btcClose >= s.btcOpen ? '#34d399' : '#cbd5e1';
-        _overlayCtx.font = 'bold 12px "JetBrains Mono", monospace';
-        _overlayCtx.fillText(priceText, contentX + badgeW + 8 + labelWidth, badgeY + 15, maxContentW - badgeW - labelWidth - 10);
+        _overlayCtx.fillText(priceText, curX, textY, rightLimit - curX);
+        curX += _overlayCtx.measureText(priceText).width + 8;
+      }
+
+      // 4. Time window (if ample space remains)
+      if (curX + 100 < rightLimit && s.startTs && s.endTs) {
+        _overlayCtx.fillStyle = '#64748b';
+        _overlayCtx.fillText('·', curX, textY);
+        curX += 12;
+
+        const fmtTime = ts => {
+          const d = new Date(ts * 1000);
+          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+        };
+        const windowStr = `${fmtTime(s.startTs)} – ${fmtTime(s.endTs)}`;
+        _overlayCtx.fillStyle = '#64748b';
+        _overlayCtx.font = '600 11px "JetBrains Mono", monospace';
+        _overlayCtx.fillText(windowStr, curX, textY, rightLimit - curX);
       }
     }
   }
@@ -659,7 +660,7 @@ window.ChartManager = (() => {
     if (minTime < Infinity) {
       _chart.timeScale().setVisibleRange({
         from: minTime,
-        to: minTime + 1800, // Show first 30 minutes / ~6 sessions
+        to: minTime + 1200, // Show first ~4 sessions with full single-line details
       });
       _drawSessionDividers();
     }
@@ -667,7 +668,11 @@ window.ChartManager = (() => {
 
   function scrollToEnd() {
     if (!_chart) return;
-    _chart.timeScale().scrollToRealTime();
+    const now = _lastTime || Math.floor(Date.now() / 1000);
+    _chart.timeScale().setVisibleRange({
+      from: now - 900,
+      to: now + 300,
+    });
     _drawSessionDividers();
   }
 
@@ -675,7 +680,7 @@ window.ChartManager = (() => {
     const ro = new ResizeObserver(() => {
       if (_chart && container) {
         const h = container.clientHeight || 500;
-        const topMargin = Math.min(0.25, Math.max(0.15, 80 / h));
+        const topMargin = Math.min(0.08, Math.max(0.04, 32 / h));
         _chart.applyOptions({
           width:  container.clientWidth,
           height: h,
@@ -703,10 +708,10 @@ window.ChartManager = (() => {
   }
 
   function _setupCanvasInteractions(container) {
-    if (!_overlayCanvas) return;
+    if (!container) return;
 
-    _overlayCanvas.addEventListener('mousemove', (e) => {
-      const rect = _overlayCanvas.getBoundingClientRect();
+    container.addEventListener('mousemove', (e) => {
+      const rect = container.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
 
@@ -717,12 +722,11 @@ window.ChartManager = (() => {
           break;
         }
       }
-      _overlayCanvas.style.pointerEvents = hovered ? 'auto' : 'none';
-      if (container) container.style.cursor = hovered ? 'pointer' : 'default';
+      container.style.cursor = hovered ? 'pointer' : '';
     });
 
-    _overlayCanvas.addEventListener('click', (e) => {
-      const rect = _overlayCanvas.getBoundingClientRect();
+    container.addEventListener('click', (e) => {
+      const rect = container.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
 

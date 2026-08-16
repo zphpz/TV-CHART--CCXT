@@ -44,6 +44,7 @@ window.App = (() => {
     btnMkt5m:          $('btn-mkt-5m'),
     btnMkt15m:         $('btn-mkt-15m'),
     btnOutcomeUp:      $('btn-outcome-up'),
+    btnOutcomeDown:    $('btn-outcome-down'),
     btnResetZoom:      $('btn-reset-zoom'),
     btnScrollStart:    $('btn-scroll-start'),
     btnScrollLive:     $('btn-scroll-live'),
