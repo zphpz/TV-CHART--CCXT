@@ -603,6 +603,23 @@ window.ChartManager = (() => {
     _drawSessionDividers();
   }
 
+  function updateLiveSessionBtc(slug, btcOpen, btcClose, btcChange) {
+    if (!_sessionCardsData || _sessionCardsData.length === 0) return;
+    let card = _sessionCardsData.find(c => c.slug === slug);
+    if (!card) {
+      const last = _sessionCardsData[_sessionCardsData.length - 1];
+      if (last && (last.isLive || last.winner === 'LIVE' || last.winner === 'PENDING')) {
+        card = last;
+      }
+    }
+    if (card) {
+      if (btcOpen !== undefined && btcOpen !== null) card.btcOpen = btcOpen;
+      if (btcClose !== undefined && btcClose !== null) card.btcClose = btcClose;
+      if (btcChange !== undefined && btcChange !== null) card.btcChange = btcChange;
+      _drawSessionDividers();
+    }
+  }
+
   function clearMarkers() {
     _markers = [];
     try { _series.setMarkers([]); } catch {}
@@ -740,6 +757,7 @@ window.ChartManager = (() => {
     setSessionBoundaries,
     clearSessionBoundaries,
     setSessionCardsData,
+    updateLiveSessionBtc,
     clearMarkers,
     setTimeframe,
     setOutcomeMode,

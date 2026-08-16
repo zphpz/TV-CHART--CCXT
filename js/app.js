@@ -109,8 +109,9 @@ window.App = (() => {
       window.HistoryPanel?.loadHistoryToChart(true);
     });
 
-    // 5. Connect WebSocket Handlers
+    // 5. Connect WebSocket Handlers (CLOB + RTDS Chainlink Stream)
     _setupWSHandlers();
+    _setupRTDSHandlers();
 
     // 6. Bind UI Controls
     _bindUIControls();
@@ -123,6 +124,32 @@ window.App = (() => {
     // 8. Load Current Active Market
     setStatus('connecting', 'CONNECTING');
     await loadMarket(_currentTfMinutes);
+  }
+
+  // ─── RTDS Chainlink BTC Price Feed Handlers ───────────────────────
+  let _liveBtcOpen = null;
+  let _liveBtcCurrent = null;
+  let _liveBtcChange = null;
+
+  function _setupRTDSHandlers() {
+    if (!window.PolyRTDS) return;
+
+    PolyRTDS.handlers.onBtcPrice = (price, ts) => {
+      const cur = MarketManager.getCurrentMarket();
+      if (!cur) return;
+
+      if (_liveBtcOpen === null) {
+        _liveBtcOpen = price;
+      }
+      _liveBtcCurrent = price;
+      if (_liveBtcOpen > 0) {
+        _liveBtcChange = Math.round(((_liveBtcCurrent - _liveBtcOpen) / _liveBtcOpen) * 10000) / 100;
+      }
+
+      ChartManager.updateLiveSessionBtc(cur.slug, _liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+    };
+
+    PolyRTDS.connect();
   }
 
   // ─── WebSocket Handlers ───────────────────────────────────────────
@@ -344,6 +371,14 @@ window.App = (() => {
     // Schedule next rollover
     MarketManager.scheduleRollover(market, _onMarketSwitch);
 
+    // Initialize Chainlink live prices for active session
+    _liveBtcOpen = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice) || PolyRTDS?.getLatestBtcPrice() || null;
+    _liveBtcCurrent = PolyRTDS?.getLatestBtcPrice() || _liveBtcOpen;
+    if (_liveBtcOpen && _liveBtcCurrent) {
+      _liveBtcChange = Math.round(((_liveBtcCurrent - _liveBtcOpen) / _liveBtcOpen) * 10000) / 100;
+      ChartManager.updateLiveSessionBtc(market.slug, _liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+    }
+
     hideLoading();
     _isInitialized = true;
   }
@@ -352,6 +387,10 @@ window.App = (() => {
   async function _onMarketSwitch(newMarket, prevMarket) {
     console.log('[App] Market rollover:', prevMarket?.slug, '→', newMarket.slug);
     _marketSwitchCount++;
+
+    _liveBtcOpen = PolyRTDS?.getLatestBtcPrice() || null;
+    _liveBtcCurrent = _liveBtcOpen;
+    _liveBtcChange = 0;
 
     const boundaryTs = prevMarket ? prevMarket.endTs : Math.floor(Date.now() / 1000);
 
