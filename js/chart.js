@@ -237,17 +237,7 @@ window.ChartManager = (() => {
   function setData(data) {
     if (!_series || !data || data.length === 0) return;
 
-    const map = new Map();
-    for (const pt of data) {
-      if (typeof pt.time === 'number' && typeof pt.value === 'number' && !isNaN(pt.value)) {
-        map.set(pt.time, pt.value);
-      }
-    }
-
-    const sorted = Array.from(map.entries())
-      .sort(([a], [b]) => a - b)
-      .map(([time, value]) => ({ time, value }));
-
+    const sorted = [...data].sort((a, b) => a.time - b.time);
     if (sorted.length === 0) return;
 
     _lastTime = sorted[sorted.length - 1].time;
@@ -255,8 +245,15 @@ window.ChartManager = (() => {
     if (_markers.length > 0) {
       try { _series.setMarkers(_markers); } catch {}
     }
-    _updateSeriesColor(sorted[sorted.length - 1].value);
-    _chart.timeScale().scrollToRealTime();
+
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      if (typeof sorted[i].value === 'number' && !isNaN(sorted[i].value)) {
+        _updateSeriesColor(sorted[i].value);
+        break;
+      }
+    }
+
+    _drawSessionDividers();
   }
 
   function pushTick(unixSec, valueCents) {
@@ -441,37 +438,11 @@ window.ChartManager = (() => {
 
       if (xEnd < 0 || xStart > w) continue;
       const spanW = Math.abs(xEnd - xStart);
-      if (spanW < 30) continue; // too compact when zoomed far out
+      if (spanW < 25) continue; // too compact when zoomed far out
 
       // Center horizontally inside the session window
       const sessionMidX = (xStart + xEnd) / 2;
-      const cardW = Math.max(180, Math.min(360, spanW - 16));
-      const cardH = 66;
-      const cardX = Math.round(sessionMidX - cardW / 2);
-      const cardY = 10;
 
-      // Dark Matte Card Background (matching modern fintech app design)
-      _overlayCtx.fillStyle = '#131822';
-      _overlayCtx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
-      _overlayCtx.lineWidth = 1;
-      _roundRect(_overlayCtx, cardX, cardY, cardW, cardH, 8, true, true);
-
-      // 1. Session Slug Header (Pure White bold font, clickable)
-      const slugText = (s.slug || 'Session') + ' ↗';
-      _overlayCtx.font = 'bold 13px "Inter", system-ui, -apple-system, sans-serif';
-      _overlayCtx.fillStyle = '#ffffff';
-      _overlayCtx.fillText(slugText, cardX + 12, cardY + 22, cardW - 24);
-
-      _clickableRegions.push({
-        x: cardX,
-        y: cardY,
-        w: cardW,
-        h: 28,
-        slug: s.slug,
-        url: `https://polymarket.com/event/${s.slug}`,
-      });
-
-      // 2. Winner Pill Badge (Clean solid pill badges, white bold text)
       const isUp = s.winner === 'UP';
       const isDown = s.winner === 'DOWN';
       const isLive = s.winner === 'LIVE' || s.isLive || s.winner === 'PENDING';
@@ -479,37 +450,79 @@ window.ChartManager = (() => {
       const badgeBg = isUp ? '#ffffff' : (isDown ? '#e11d48' : '#0284c7');
       const badgeFg = isUp ? '#090d16' : '#ffffff';
 
-      const badgeW = isLive ? 66 : (isUp ? 86 : 106);
-      const badgeH = 22;
-      const badgeX = cardX + 12;
-      const badgeY = cardY + 34;
+      // ── Level of Detail 1: Ultra-compact when zoomed far out (< 85px)
+      if (spanW < 85) {
+        const miniW = isLive ? 48 : (isUp ? 68 : 82);
+        const miniH = 18;
+        const miniX = Math.round(sessionMidX - miniW / 2);
+        const miniY = 8;
+
+        _overlayCtx.fillStyle = badgeBg;
+        _roundRect(_overlayCtx, miniX, miniY, miniW, miniH, 4, true, false);
+
+        _overlayCtx.fillStyle = badgeFg;
+        _overlayCtx.font = '800 9px "Inter", system-ui, sans-serif';
+        _overlayCtx.fillText(badgeText, miniX + 4, miniY + 13);
+        continue;
+      }
+
+      // ── Level of Detail 2: Standard and Large view (>= 85px)
+      const cardW = Math.max(140, Math.min(360, spanW - 12));
+      const cardH = spanW < 180 ? 40 : 66;
+      const cardX = Math.round(sessionMidX - cardW / 2);
+      const cardY = 8;
+
+      // Dark Matte Card Background
+      _overlayCtx.fillStyle = '#131822';
+      _overlayCtx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+      _overlayCtx.lineWidth = 1;
+      _roundRect(_overlayCtx, cardX, cardY, cardW, cardH, 8, true, true);
+
+      // 1. Session Slug Header (Pure White bold font, clickable)
+      const slugText = (s.slug || 'Session') + ' ↗';
+      _overlayCtx.font = spanW < 180 ? 'bold 11px "Inter", sans-serif' : 'bold 13px "Inter", system-ui, -apple-system, sans-serif';
+      _overlayCtx.fillStyle = '#ffffff';
+      _overlayCtx.fillText(slugText, cardX + 10, cardY + (spanW < 180 ? 16 : 22), cardW - 20);
+
+      _clickableRegions.push({
+        x: cardX,
+        y: cardY,
+        w: cardW,
+        h: spanW < 180 ? 22 : 28,
+        slug: s.slug,
+        url: `https://polymarket.com/event/${s.slug}`,
+      });
+
+      // 2. Winner Pill Badge
+      const badgeW = isLive ? 60 : (isUp ? 78 : 96);
+      const badgeH = spanW < 180 ? 16 : 22;
+      const badgeX = cardX + 10;
+      const badgeY = cardY + (spanW < 180 ? 20 : 34);
 
       _overlayCtx.fillStyle = badgeBg;
-      _roundRect(_overlayCtx, badgeX, badgeY, badgeW, badgeH, 5, true, false);
+      _roundRect(_overlayCtx, badgeX, badgeY, badgeW, badgeH, 4, true, false);
 
       _overlayCtx.fillStyle = badgeFg;
-      _overlayCtx.font = '800 11px "Inter", system-ui, -apple-system, sans-serif';
-      _overlayCtx.fillText(badgeText, badgeX + 6, badgeY + 15);
+      _overlayCtx.font = spanW < 180 ? '800 9px "Inter", sans-serif' : '800 11px "Inter", system-ui, -apple-system, sans-serif';
+      _overlayCtx.fillText(badgeText, badgeX + 5, badgeY + (spanW < 180 ? 12 : 15));
 
-      // 3. BTC Reference Prices (Pure White / Soft Slate font — NO red text!)
-      if (s.btcOpen && s.btcClose) {
+      // 3. BTC Reference Prices (Shown when spanW >= 180px)
+      if (spanW >= 180 && s.btcOpen && s.btcClose) {
         const btcOpenFmt = '$' + Math.round(s.btcOpen).toLocaleString();
         const btcCloseFmt = '$' + Math.round(s.btcClose).toLocaleString();
         const sign = s.btcClose >= s.btcOpen ? '+' : '';
         const chgFmt = s.btcChange !== null && s.btcChange !== undefined ? ` (${sign}${s.btcChange.toFixed(2)}%)` : '';
         
-        // Render label "BTC"
         _overlayCtx.fillStyle = '#94a3b8';
         _overlayCtx.font = 'bold 11px "JetBrains Mono", monospace';
         const labelText = 'BTC ';
         _overlayCtx.fillText(labelText, badgeX + badgeW + 8, badgeY + 15);
         const labelWidth = _overlayCtx.measureText(labelText).width;
 
-        // Render prices in clean off-white / soft green (no red font!)
         const priceText = `${btcOpenFmt} → ${btcCloseFmt}${chgFmt}`;
         _overlayCtx.fillStyle = s.btcClose >= s.btcOpen ? '#34d399' : '#cbd5e1';
         _overlayCtx.font = 'bold 12px "JetBrains Mono", monospace';
-        _overlayCtx.fillText(priceText, badgeX + badgeW + 8 + labelWidth, badgeY + 15, cardW - badgeW - labelWidth - 24);
+        _overlayCtx.fillText(priceText, badgeX + badgeW + 8 + labelWidth, badgeY + 15, cardW - badgeW - labelWidth - 20);
       }
     }
   }

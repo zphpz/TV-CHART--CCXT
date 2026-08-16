@@ -343,10 +343,21 @@ window.HistoryPanel = (() => {
   }
 
   // ─── Load Merged History into Chart ─────────────────────────────────
-  function _loadHistoryToChart(switchView = true) {
+  async function _loadHistoryToChart(switchView = true) {
     if (!window.DBManager || !window.ChartManager || !window.TickBuffer) return;
 
-    const allSessions = window.DBManager.getAllSessions();
+    let allSessions = window.DBManager.getAllSessions();
+    if (allSessions.length === 0) {
+      try {
+        const res = await fetch('./history.json');
+        if (res.ok) {
+          const text = await res.text();
+          window.DBManager.importJSON(text);
+          allSessions = window.DBManager.getAllSessions();
+        }
+      } catch {}
+    }
+
     if (allSessions.length === 0) {
       window.App?.showToast('No sessions in database to load', 'warn', 2000);
       return;
@@ -383,6 +394,8 @@ window.HistoryPanel = (() => {
       filled.push([endTs - 1, lastVal]);
       return filled;
     }
+
+    const bulkTicks = [];
 
     for (const s of allSessions) {
       if (Array.isArray(s.ticks) && s.ticks.length > 0) {

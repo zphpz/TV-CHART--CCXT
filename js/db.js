@@ -146,6 +146,21 @@ window.DBManager = (() => {
     } catch (e) {
       console.warn('[DBManager] Auto-connect failed:', e);
     }
+
+    // Fallback: automatically load history.json next to HTML file if DB is empty
+    try {
+      const res = await fetch('./history.json');
+      if (res.ok) {
+        const text = await res.text();
+        const count = importJSON(text);
+        if (count > 0) {
+          console.log(`[DBManager] Auto-loaded ${count} sessions from ./history.json`);
+          _notify('loaded', { fileName: 'history.json', count });
+          return true;
+        }
+      }
+    } catch {}
+
     return false;
   }
 
@@ -390,7 +405,23 @@ window.DBManager = (() => {
     a.remove();
   }
 
-  function importJSON(file) {
+  function importJSON(fileOrText) {
+    if (typeof fileOrText === 'string' || (fileOrText && typeof fileOrText === 'object' && !('size' in fileOrText))) {
+      try {
+        const parsed = typeof fileOrText === 'string' ? JSON.parse(fileOrText) : fileOrText;
+        if (parsed && parsed.sessions) {
+          const list = Array.isArray(parsed.sessions) ? parsed.sessions : Object.values(parsed.sessions);
+          for (const s of list) {
+            if (s && s.slug) upsertSession(s);
+          }
+          if (_autoSaveEnabled && _fileHandle) saveFile();
+          return Promise.resolve(list.length);
+        }
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }
+
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = e => {
@@ -411,7 +442,7 @@ window.DBManager = (() => {
         }
       };
       reader.onerror = reject;
-      reader.readAsText(file);
+      reader.readAsText(fileOrText);
     });
   }
 
