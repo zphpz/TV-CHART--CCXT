@@ -508,8 +508,8 @@ window.ChartManager = (() => {
 
       // 3. BTC Reference Prices (Shown when spanW >= 180px)
       if (spanW >= 180 && s.btcOpen && s.btcClose) {
-        const btcOpenFmt = '$' + Math.round(s.btcOpen).toLocaleString();
-        const btcCloseFmt = '$' + Math.round(s.btcClose).toLocaleString();
+        const btcOpenFmt = '$' + (typeof s.btcOpen === 'number' ? s.btcOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : s.btcOpen);
+        const btcCloseFmt = '$' + (typeof s.btcClose === 'number' ? s.btcClose.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : s.btcClose);
         const sign = s.btcClose >= s.btcOpen ? '+' : '';
         const chgFmt = s.btcChange !== null && s.btcChange !== undefined ? ` (${sign}${s.btcChange.toFixed(2)}%)` : '';
         

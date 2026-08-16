@@ -368,7 +368,7 @@ window.App = (() => {
         isUpWon ? 'up' : 'down'
       );
 
-      // Save completed session to local DB
+      // Save initial completed session to local DB
       if (window.DBManager) {
         window.DBManager.upsertSession({
           slug: prevMarket.slug,
@@ -379,6 +379,52 @@ window.App = (() => {
           ticks: _currentSessionTicks,
         }, true);
       }
+
+      // Schedule async query of official Gamma API resolution & Chainlink TWAP prices
+      const completedSlug = prevMarket.slug;
+      setTimeout(async () => {
+        try {
+          const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${completedSlug}`);
+          if (res.ok) {
+            const data = await res.json();
+            const ev = Array.isArray(data) ? data[0] : data;
+            if (ev && Array.isArray(ev.markets) && ev.markets[0]) {
+              const m = ev.markets[0];
+              let outP = m.outcomePrices;
+              if (typeof outP === 'string') outP = JSON.parse(outP);
+              let resolvedWinner = null;
+              if (Array.isArray(outP) && outP.length >= 2) {
+                const upP = parseFloat(outP[0]);
+                if (!isNaN(upP)) {
+                  if (upP > 0.5) resolvedWinner = 'UP';
+                  else if (upP < 0.5) resolvedWinner = 'DOWN';
+                }
+              }
+
+              const meta = ev.eventMetadata || m.eventMetadata;
+              let bOpen = null, bClose = null, bChg = null;
+              if (meta && typeof meta === 'object') {
+                bOpen = parseFloat(meta.priceToBeat || meta.targetPrice);
+                bClose = parseFloat(meta.finalPrice || meta.settlementPrice);
+                if (!isNaN(bOpen) && !isNaN(bClose) && bOpen > 0) {
+                  bChg = Math.round(((bClose - bOpen) / bOpen) * 10000) / 100;
+                }
+              }
+
+              if (window.DBManager) {
+                const updatePayload = { slug: completedSlug };
+                if (resolvedWinner) updatePayload.winner = resolvedWinner;
+                if (bOpen !== null) updatePayload.btcOpen = bOpen;
+                if (bClose !== null) updatePayload.btcClose = bClose;
+                if (bChg !== null) updatePayload.btcChange = bChg;
+                window.DBManager.upsertSession(updatePayload, true);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[App] Could not fetch post-resolution metadata:', err);
+        }
+      }, 15000);
     }
 
     // 2. Add visual boundary separator to chart

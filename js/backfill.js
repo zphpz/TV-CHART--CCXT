@@ -122,21 +122,33 @@ window.BackfillEngine = (() => {
       tickMap.set(endTs, upWon ? 100.0 : 0.0);
     }
 
-    // 4. Fetch BTC reference candle from Binance for the exact window
+    // 4. Extract official Polymarket BTC Target & Final settlement prices (Chainlink TWAP)
     let btcOpen = null, btcClose = null, btcHigh = null, btcLow = null, btcChange = null;
-    if (startTs) {
+
+    // Check official Polymarket eventMetadata first (matches Polymarket 100%!)
+    const meta = event.eventMetadata || market.eventMetadata || event.metadata || market.metadata;
+    if (meta && typeof meta === 'object') {
+      const pToBeat = parseFloat(meta.priceToBeat || meta.targetPrice || meta.openPrice);
+      const fPrice = parseFloat(meta.finalPrice || meta.settlementPrice || meta.closePrice);
+      if (!isNaN(pToBeat) && pToBeat > 0) btcOpen = pToBeat;
+      if (!isNaN(fPrice) && fPrice > 0) btcClose = fPrice;
+    }
+
+    // Fallback to Binance BTCUSDT kline if eventMetadata is not yet available
+    if ((btcOpen === null || btcClose === null) && startTs) {
       try {
         const kline = await _fetchJSON(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${tfMinutes}m&startTime=${startTs * 1000}&limit=1`);
         if (Array.isArray(kline) && kline[0]) {
-          btcOpen = parseFloat(kline[0][1]);
+          if (btcOpen === null) btcOpen = parseFloat(kline[0][1]);
           btcHigh = parseFloat(kline[0][2]);
           btcLow = parseFloat(kline[0][3]);
-          btcClose = parseFloat(kline[0][4]);
-          if (!isNaN(btcOpen) && !isNaN(btcClose) && btcOpen > 0) {
-            btcChange = Math.round(((btcClose - btcOpen) / btcOpen) * 10000) / 100;
-          }
+          if (btcClose === null) btcClose = parseFloat(kline[0][4]);
         }
       } catch {}
+    }
+
+    if (btcOpen !== null && btcClose !== null && btcOpen > 0) {
+      btcChange = Math.round(((btcClose - btcOpen) / btcOpen) * 10000) / 100;
     }
 
     const ticks = Array.from(tickMap.entries())
