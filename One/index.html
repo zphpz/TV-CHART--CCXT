@@ -1779,7 +1779,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v3.3</span>
+        <span id="app-version">v3.4</span>
       </div>
     </footer>
 
@@ -2945,6 +2945,7 @@ window.MarketManager = (() => {
       endTs,
       conditionId: market.conditionId || null,
       question: market.question || data.title || '',
+      eventMetadata: data.eventMetadata || market.eventMetadata || null,
     };
   }
 

@@ -139,6 +139,7 @@ window.MarketManager = (() => {
       endTs,
       conditionId: market.conditionId || null,
       question: market.question || data.title || '',
+      eventMetadata: data.eventMetadata || market.eventMetadata || null,
     };
   }
 
