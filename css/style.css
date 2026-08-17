@@ -1200,6 +1200,174 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 .toast.warn  { border-left: 3px solid var(--yellow); }
 .toast.error { border-left: 3px solid var(--red); }
 
+/* ══════════════════════════════════════════════════════
+   MOBILE RESPONSIVE SYSTEM (Phones & Tablets)
+══════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  :root {
+    --header-h: 46px;
+    --pricebar-h: 56px;
+    --footer-h: 24px;
+  }
+
+  /* 1. Header Compact Ergonomics */
+  #main-header {
+    padding: 0 8px;
+    gap: 6px;
+  }
+
+  #brand {
+    min-width: auto;
+    gap: 6px;
+  }
+  #brand-sub {
+    display: none;
+  }
+  #brand-name {
+    font-size: 11px;
+  }
+  #brand-logo {
+    width: 26px;
+    height: 26px;
+  }
+
+  #view-switcher {
+    margin-left: 2px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .view-tab {
+    padding: 5px 8px;
+    font-size: 11px;
+    gap: 4px;
+  }
+
+  #market-switcher {
+    gap: 2px;
+  }
+  .mkt-btn {
+    padding: 4px 7px;
+    font-size: 10px;
+  }
+
+  #status-panel {
+    display: none;
+  }
+
+  /* 2. Mobile Price Bar (Hiding secondary stats BID, ASK, MID, LAST, SPREAD, UPDATED) */
+  .mobile-hide {
+    display: none !important;
+  }
+
+  #price-bar {
+    padding: 0 12px;
+    justify-content: space-between;
+    overflow-x: hidden;
+  }
+
+  #price-current-wrap {
+    padding: 0 4px;
+    min-width: auto;
+  }
+  #price-current {
+    font-size: 22px;
+  }
+
+  #timer-center {
+    padding: 2px 10px;
+    min-width: auto;
+  }
+  #timer-label-top {
+    font-size: 9px;
+  }
+  #timer-value {
+    font-size: 26px;
+  }
+
+  #outcome-switcher {
+    margin-left: 0;
+    gap: 4px;
+  }
+  #outcome-switcher .price-label {
+    display: none;
+  }
+  #outcome-buttons {
+    gap: 4px;
+  }
+  .outcome-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    min-height: 36px;
+    border-radius: 6px;
+  }
+
+  /* 3. Toolbar & Actions in All Sessions */
+  #chart-toolbar {
+    padding: 0 6px;
+    height: 36px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    gap: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tf-label {
+    display: none;
+  }
+  #tf-switcher {
+    gap: 3px;
+    flex-shrink: 0;
+  }
+  #chart-actions {
+    gap: 3px;
+    flex-shrink: 0;
+  }
+  .tf-btn {
+    padding: 3px 6px;
+    font-size: 10px;
+    min-width: 26px;
+  }
+  .action-btn {
+    padding: 3px 6px;
+    font-size: 10px;
+  }
+
+  /* 4. History Panel Mobile */
+  #panel-content {
+    padding: 10px;
+    gap: 12px;
+  }
+  .panel-grid-top {
+    grid-template-columns: 1fr;
+  }
+  .panel-grid-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .view-tab {
+    padding: 5px 6px;
+    font-size: 10px;
+  }
+  .view-tab .tab-label {
+    display: none; /* Show only icons on very small screens */
+  }
+  .mkt-btn {
+    font-size: 9px;
+    padding: 3px 6px;
+  }
+  #price-current {
+    font-size: 19px;
+  }
+  #timer-value {
+    font-size: 22px;
+  }
+  .outcome-btn {
+    padding: 5px 9px;
+    font-size: 11px;
+  }
+}
+
 /* ── Responsive ───────────────────────────────────────── */
 @media (max-width: 768px) {
   #brand-sub, #market-info, .info-sep, #market-window-display { display: none; }

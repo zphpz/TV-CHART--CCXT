@@ -381,52 +381,59 @@ window.LiveTradingManager = (() => {
     _ctx.lineTo(w, TOP_HUD_H + 0.5);
     _ctx.stroke();
 
-    const slug = _currentMarket?.slug || 'Live Session';
-    const labelDuration = is5m ? '5M FIXED (300s)' : '15M FIXED (900s)';
+    const fullSlug = _currentMarket?.slug || 'Live Session';
+    const isMobile = (w < 600);
+    const slugText = isMobile ? `...${fullSlug.slice(-10)} ↗` : `${fullSlug} ↗`;
+    const labelDuration = isMobile ? (is5m ? '5M' : '15M') : (is5m ? '5M FIXED (300s)' : '15M FIXED (900s)');
 
-    let curX = 14;
+    let curX = isMobile ? 8 : 14;
     const textY = 17;
 
     _ctx.textAlign = 'left';
     _ctx.textBaseline = 'alphabetic';
 
     // Slug Header
-    _ctx.font = '600 12px "JetBrains Mono", monospace';
+    _ctx.font = isMobile ? '600 11px "JetBrains Mono", monospace' : '600 12px "JetBrains Mono", monospace';
     _ctx.fillStyle = '#ffffff';
-    _ctx.fillText(`${slug} ↗`, curX, textY);
-    curX += _ctx.measureText(`${slug} ↗`).width + 10;
+    _ctx.fillText(slugText, curX, textY);
+    curX += _ctx.measureText(slugText).width + (isMobile ? 6 : 10);
 
     // Separator
     _ctx.fillStyle = '#64748b';
     _ctx.fillText('·', curX, textY);
-    curX += 14;
+    curX += isMobile ? 10 : 14;
 
     // Live Badge
     _ctx.fillStyle = '#38bdf8';
-    _ctx.font = '800 12px "JetBrains Mono", monospace';
-    _ctx.fillText(`⏳ LIVE ${labelDuration}`, curX, textY);
-    curX += _ctx.measureText(`⏳ LIVE ${labelDuration}`).width + 10;
+    _ctx.font = isMobile ? '800 11px "JetBrains Mono", monospace' : '800 12px "JetBrains Mono", monospace';
+    _ctx.fillText(`⏳ ${labelDuration}`, curX, textY);
+    curX += _ctx.measureText(`⏳ ${labelDuration}`).width + (isMobile ? 6 : 10);
 
     // Chainlink BTC Price Feed
-    if (_btcCurrent) {
+    if (_btcCurrent && curX + 110 < w - RIGHT_SCALE_W) {
       _ctx.fillStyle = '#64748b';
       _ctx.fillText('·', curX, textY);
-      curX += 14;
+      curX += isMobile ? 10 : 14;
 
-      const openStr = _btcOpen ? '$' + _btcOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--';
-      const curStr  = '$' + _btcCurrent.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const sign = (_btcChange || 0) >= 0 ? '+' : '';
       const chgStr = _btcChange !== null && _btcChange !== undefined ? ` (${sign}${_btcChange.toFixed(2)}%)` : '';
 
       _ctx.fillStyle = '#94a3b8';
-      _ctx.font = '600 12px "JetBrains Mono", monospace';
+      _ctx.font = isMobile ? '600 11px "JetBrains Mono", monospace' : '600 12px "JetBrains Mono", monospace';
       _ctx.fillText('BTC ', curX, textY);
       curX += _ctx.measureText('BTC ').width;
 
-      const priceText = `${openStr} → ${curStr}${chgStr}`;
+      let priceText = '';
+      if (isMobile) {
+        priceText = `$${_btcCurrent.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${chgStr}`;
+      } else {
+        const openStr = _btcOpen ? '$' + _btcOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--';
+        const curStr  = '$' + _btcCurrent.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        priceText = `${openStr} → ${curStr}${chgStr}`;
+      }
+
       _ctx.fillStyle = (_btcChange || 0) >= 0 ? '#34d399' : '#cbd5e1';
-      _ctx.fillText(priceText, curX, textY);
-      curX += _ctx.measureText(priceText).width + 10;
+      _ctx.fillText(priceText, curX, textY, (w - RIGHT_SCALE_W - curX - 6));
     }
 
     _ctx.restore();
@@ -460,6 +467,7 @@ window.LiveTradingManager = (() => {
   function _setupInteractions() {
     if (!_canvas) return;
 
+    // Mouse interactions
     _canvas.addEventListener('mousemove', (e) => {
       const rect = _canvas.getBoundingClientRect();
       _hoverX = e.clientX - rect.left;
@@ -476,6 +484,31 @@ window.LiveTradingManager = (() => {
       _hoverX = null;
       _hoverY = null;
       if (_tooltipEl) _tooltipEl.style.display = 'none';
+    });
+
+    // Mobile touch interactions
+    _canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 0) {
+        const rect = _canvas.getBoundingClientRect();
+        _hoverX = e.touches[0].clientX - rect.left;
+        _hoverY = e.touches[0].clientY - rect.top;
+      }
+    }, { passive: true });
+
+    _canvas.addEventListener('touchmove', (e) => {
+      if (e.touches.length > 0) {
+        const rect = _canvas.getBoundingClientRect();
+        _hoverX = e.touches[0].clientX - rect.left;
+        _hoverY = e.touches[0].clientY - rect.top;
+      }
+    }, { passive: true });
+
+    _canvas.addEventListener('touchend', () => {
+      setTimeout(() => {
+        _hoverX = null;
+        _hoverY = null;
+        if (_tooltipEl) _tooltipEl.style.display = 'none';
+      }, 3000);
     });
 
     _canvas.addEventListener('click', (e) => {
