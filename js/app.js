@@ -483,8 +483,13 @@ window.App = (() => {
     // Schedule next rollover
     MarketManager.scheduleRollover(market, _onMarketSwitch);
 
-    // Initialize Chainlink live prices for active session
-    _liveBtcOpen = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice) || PolyRTDS?.getLatestBtcPrice() || null;
+    // Initialize Chainlink live prices & official Strike for active session
+    let officialStrike = await MarketManager.fetchOfficialBtcStrike(market);
+    if (!officialStrike) {
+      officialStrike = PolyRTDS?.getLatestBtcPrice() || null;
+    }
+
+    _liveBtcOpen = officialStrike;
     _liveBtcCurrent = PolyRTDS?.getLatestBtcPrice() || _liveBtcOpen;
     if (window.PolyRTDS && _liveBtcOpen) {
       PolyRTDS.setTargetPrice(_liveBtcOpen);
@@ -607,7 +612,10 @@ window.App = (() => {
       _currentSessionTicks = [];
 
       // 5. Initialize BTC strike price for new session
-      const newStrike = parseFloat(newMarket.eventMetadata?.priceToBeat || newMarket.eventMetadata?.targetPrice) || PolyRTDS?.getLatestBtcPrice() || null;
+      let newStrike = await MarketManager.fetchOfficialBtcStrike(newMarket);
+      if (!newStrike) {
+        newStrike = PolyRTDS?.getLatestBtcPrice() || null;
+      }
       _liveBtcOpen = newStrike;
       _liveBtcCurrent = PolyRTDS?.getLatestBtcPrice() || _liveBtcOpen;
       _liveBtcChange = 0;

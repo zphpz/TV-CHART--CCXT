@@ -74,15 +74,26 @@ window.PolyRTDS = (() => {
               const winId = Math.floor(tsSec / _durationSecs);
               if (_currentWindowId !== winId) {
                 _currentWindowId = winId;
-                if (!_targetBtcPrice) {
-                  _targetBtcPrice = price;
-                }
+                // Only change target price at the actual window rollover boundary
+                _targetBtcPrice = price;
+                try {
+                  localStorage.setItem(`pm_btc_strike_${winId * _durationSecs}`, price);
+                } catch {}
+              } else if (_targetBtcPrice === null) {
+                // If opening mid-session, check local cache before falling back
+                try {
+                  const cached = localStorage.getItem(`pm_btc_strike_${winId * _durationSecs}`);
+                  if (cached) {
+                    _targetBtcPrice = parseFloat(cached);
+                  }
+                } catch {}
               }
 
+              const effStrike = _targetBtcPrice !== null ? _targetBtcPrice : price;
               const delta = _targetBtcPrice !== null ? (_currentBtcPrice - _targetBtcPrice) : 0;
 
               if (handlers.onBtcPrice) {
-                handlers.onBtcPrice(_currentBtcPrice, tsMs, _targetBtcPrice, delta);
+                handlers.onBtcPrice(_currentBtcPrice, tsMs, effStrike, delta);
               }
             }
           }

@@ -302,6 +302,50 @@ window.MarketManager = (() => {
     }
   }
 
+  // ─── Official BTC Strike Price Retrieval ──────────────────────────
+  async function fetchOfficialBtcStrike(market) {
+    if (!market || !market.startTs) return null;
+
+    // 1. Check localStorage strike cache first
+    try {
+      const cached = localStorage.getItem(`pm_btc_strike_${market.startTs}`);
+      if (cached) {
+        const val = parseFloat(cached);
+        if (!isNaN(val) && val > 0) return val;
+      }
+    } catch {}
+
+    // 2. Fetch from Polymarket Crypto API via local proxy (/api/crypto/crypto-price)
+    try {
+      const startIso = new Date(market.startTs * 1000).toISOString().replace('.000Z', 'Z');
+      const endIso = new Date(market.endTs * 1000).toISOString().replace('.000Z', 'Z');
+      const variant = market.slug && market.slug.includes('-15m-') ? 'fifteenminute' : 'fiveminute';
+      const proxyUrl = `/api/crypto/crypto-price?symbol=BTC&eventStartTime=${encodeURIComponent(startIso)}&variant=${variant}&endDate=${encodeURIComponent(endIso)}&twapEnabled=true&twapLookbackSeconds=60`;
+
+      const res = await fetch(proxyUrl);
+      if (res.ok) {
+        const data = await res.json();
+        const openPrice = parseFloat(data.openPrice);
+        if (!isNaN(openPrice) && openPrice > 0) {
+          try {
+            localStorage.setItem(`pm_btc_strike_${market.startTs}`, openPrice);
+          } catch {}
+          return openPrice;
+        }
+      }
+    } catch (err) {
+      console.warn('[MarketManager] Could not fetch official BTC strike from proxy:', err.message);
+    }
+
+    // 3. Fallback: check eventMetadata on market object
+    const metaPrice = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice);
+    if (!isNaN(metaPrice) && metaPrice > 0) {
+      return metaPrice;
+    }
+
+    return null;
+  }
+
   // ─── Public Getters / Setters ──────────────────────────────────────
   function setCurrentMarket(market) {
     _currentMarket = market;

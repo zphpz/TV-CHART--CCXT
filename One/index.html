@@ -1779,7 +1779,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v3.4</span>
+        <span id="app-version">v3.5</span>
       </div>
     </footer>
 
@@ -3108,6 +3108,50 @@ window.MarketManager = (() => {
     }
   }
 
+  // ─── Official BTC Strike Price Retrieval ──────────────────────────
+  async function fetchOfficialBtcStrike(market) {
+    if (!market || !market.startTs) return null;
+
+    // 1. Check localStorage strike cache first
+    try {
+      const cached = localStorage.getItem(`pm_btc_strike_${market.startTs}`);
+      if (cached) {
+        const val = parseFloat(cached);
+        if (!isNaN(val) && val > 0) return val;
+      }
+    } catch {}
+
+    // 2. Fetch from Polymarket Crypto API via local proxy (/api/crypto/crypto-price)
+    try {
+      const startIso = new Date(market.startTs * 1000).toISOString().replace('.000Z', 'Z');
+      const endIso = new Date(market.endTs * 1000).toISOString().replace('.000Z', 'Z');
+      const variant = market.slug && market.slug.includes('-15m-') ? 'fifteenminute' : 'fiveminute';
+      const proxyUrl = `/api/crypto/crypto-price?symbol=BTC&eventStartTime=${encodeURIComponent(startIso)}&variant=${variant}&endDate=${encodeURIComponent(endIso)}&twapEnabled=true&twapLookbackSeconds=60`;
+
+      const res = await fetch(proxyUrl);
+      if (res.ok) {
+        const data = await res.json();
+        const openPrice = parseFloat(data.openPrice);
+        if (!isNaN(openPrice) && openPrice > 0) {
+          try {
+            localStorage.setItem(`pm_btc_strike_${market.startTs}`, openPrice);
+          } catch {}
+          return openPrice;
+        }
+      }
+    } catch (err) {
+      console.warn('[MarketManager] Could not fetch official BTC strike from proxy:', err.message);
+    }
+
+    // 3. Fallback: check eventMetadata on market object
+    const metaPrice = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice);
+    if (!isNaN(metaPrice) && metaPrice > 0) {
+      return metaPrice;
+    }
+
+    return null;
+  }
+
   // ─── Public Getters / Setters ──────────────────────────────────────
   function setCurrentMarket(market) {
     _currentMarket = market;
@@ -3529,15 +3573,26 @@ window.PolyRTDS = (() => {
               const winId = Math.floor(tsSec / _durationSecs);
               if (_currentWindowId !== winId) {
                 _currentWindowId = winId;
-                if (!_targetBtcPrice) {
-                  _targetBtcPrice = price;
-                }
+                // Only change target price at the actual window rollover boundary
+                _targetBtcPrice = price;
+                try {
+                  localStorage.setItem(`pm_btc_strike_${winId * _durationSecs}`, price);
+                } catch {}
+              } else if (_targetBtcPrice === null) {
+                // If opening mid-session, check local cache before falling back
+                try {
+                  const cached = localStorage.getItem(`pm_btc_strike_${winId * _durationSecs}`);
+                  if (cached) {
+                    _targetBtcPrice = parseFloat(cached);
+                  }
+                } catch {}
               }
 
+              const effStrike = _targetBtcPrice !== null ? _targetBtcPrice : price;
               const delta = _targetBtcPrice !== null ? (_currentBtcPrice - _targetBtcPrice) : 0;
 
               if (handlers.onBtcPrice) {
-                handlers.onBtcPrice(_currentBtcPrice, tsMs, _targetBtcPrice, delta);
+                handlers.onBtcPrice(_currentBtcPrice, tsMs, effStrike, delta);
               }
             }
           }
@@ -5993,8 +6048,13 @@ window.App = (() => {
     // Schedule next rollover
     MarketManager.scheduleRollover(market, _onMarketSwitch);
 
-    // Initialize Chainlink live prices for active session
-    _liveBtcOpen = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice) || PolyRTDS?.getLatestBtcPrice() || null;
+    // Initialize Chainlink live prices & official Strike for active session
+    let officialStrike = await MarketManager.fetchOfficialBtcStrike(market);
+    if (!officialStrike) {
+      officialStrike = PolyRTDS?.getLatestBtcPrice() || null;
+    }
+
+    _liveBtcOpen = officialStrike;
     _liveBtcCurrent = PolyRTDS?.getLatestBtcPrice() || _liveBtcOpen;
     if (window.PolyRTDS && _liveBtcOpen) {
       PolyRTDS.setTargetPrice(_liveBtcOpen);
@@ -6117,7 +6177,10 @@ window.App = (() => {
       _currentSessionTicks = [];
 
       // 5. Initialize BTC strike price for new session
-      const newStrike = parseFloat(newMarket.eventMetadata?.priceToBeat || newMarket.eventMetadata?.targetPrice) || PolyRTDS?.getLatestBtcPrice() || null;
+      let newStrike = await MarketManager.fetchOfficialBtcStrike(newMarket);
+      if (!newStrike) {
+        newStrike = PolyRTDS?.getLatestBtcPrice() || null;
+      }
       _liveBtcOpen = newStrike;
       _liveBtcCurrent = PolyRTDS?.getLatestBtcPrice() || _liveBtcOpen;
       _liveBtcChange = 0;
