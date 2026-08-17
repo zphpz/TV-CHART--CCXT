@@ -60,48 +60,47 @@
 
     <!-- Global Real-Time Price & Outcome Bar -->
     <div id="price-bar">
-      <div class="price-item" id="price-current-wrap">
-        <span class="price-label">PRICE</span>
-        <span class="price-value large" id="price-current">--.-¢</span>
-      </div>
-      <div class="price-divider mobile-hide"></div>
-      <div class="price-item mobile-hide" id="price-bid-wrap">
-        <span class="price-label">BID</span>
-        <span class="price-value green" id="price-bid">--.-¢</span>
-      </div>
-      <div class="price-item mobile-hide" id="price-ask-wrap">
-        <span class="price-label">ASK</span>
-        <span class="price-value red" id="price-ask">--.-¢</span>
-      </div>
-      <div class="price-item mobile-hide" id="price-mid-wrap">
-        <span class="price-label">MID</span>
-        <span class="price-value" id="price-mid">--.-¢</span>
-      </div>
-      <div class="price-item mobile-hide" id="price-last-wrap">
-        <span class="price-label">LAST</span>
-        <span class="price-value" id="price-last">--.-¢</span>
-      </div>
-      <div class="price-divider mobile-hide"></div>
-      <div class="price-item mobile-hide" id="price-spread-wrap">
-        <span class="price-label">SPREAD</span>
-        <span class="price-value muted" id="price-spread">--.-¢</span>
-      </div>
-      <div class="price-item mobile-hide" id="price-age-wrap">
-        <span class="price-label">UPDATED</span>
-        <span class="price-value muted small" id="price-age">---</span>
+      <!-- 1. Left of Timer: Large Outcome Price (Same font size as timer) -->
+      <div class="price-hero-item" id="price-current-wrap">
+        <span class="price-hero-label">PRICE</span>
+        <span class="price-hero-value" id="price-current">--.-¢</span>
       </div>
 
-      <!-- Center: Large countdown timer (Clickable: Remaining <-> Elapsed) -->
-      <div class="price-divider mobile-hide"></div>
+      <div class="price-divider"></div>
+
+      <!-- 2. Center: Large countdown timer (Clickable: Remaining <-> Elapsed) -->
       <div id="timer-center" style="cursor: pointer; user-select: none;" title="Click to switch between Remaining & Elapsed time">
         <span id="timer-label-top">ENDS IN</span>
         <span id="timer-value">--:--</span>
       </div>
-      <div class="price-divider mobile-hide"></div>
 
-      <!-- Right: UP / DOWN outcome buttons -->
+      <div class="price-divider"></div>
+
+      <!-- 3. Right of Timer: Delta, Current BTC Price, Strike BTC Price (Same large font size) -->
+      <div id="live-btc-metrics">
+        <div class="price-hero-item" id="btc-delta-wrap">
+          <span class="price-hero-label">DELTA</span>
+          <span class="price-hero-value green" id="live-btc-delta">+$0.00</span>
+        </div>
+
+        <div class="price-divider-mini"></div>
+
+        <div class="price-hero-item" id="btc-current-wrap">
+          <span class="price-hero-label">BTC LIVE</span>
+          <span class="price-hero-value" id="live-btc-current">---</span>
+        </div>
+
+        <div class="price-divider-mini"></div>
+
+        <div class="price-hero-item" id="btc-strike-wrap">
+          <span class="price-hero-label">STRIKE</span>
+          <span class="price-hero-value muted" id="live-btc-strike">---</span>
+        </div>
+      </div>
+
+      <!-- 4. Far Right: UP / DOWN outcome buttons -->
       <div id="outcome-switcher">
-        <span class="price-label">OUTCOME</span>
+        <span class="price-hero-label">OUTCOME</span>
         <div id="outcome-buttons">
           <button class="outcome-btn active" id="btn-outcome-up">▲ UP</button>
           <button class="outcome-btn" id="btn-outcome-down">▼ DOWN</button>
@@ -371,7 +370,7 @@
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v3.2</span>
+        <span id="app-version">v3.3</span>
       </div>
     </footer>
 

@@ -234,48 +234,75 @@ html, body {
   align-items: center;
   height: var(--pricebar-h);
   padding: 0 16px;
-  gap: 0;
+  gap: 12px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   overflow-x: auto;
+  justify-content: flex-start;
 }
 
-.price-item {
+.price-hero-item {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 0 14px;
-  min-width: 70px;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+.price-hero-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.price-hero-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 26px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-align: center;
+  transition: color var(--tr-fast);
+}
+.price-hero-value.green {
+  color: var(--accent-teal, #00d4aa);
+  text-shadow: 0 0 12px rgba(0, 212, 170, 0.4);
+}
+.price-hero-value.red {
+  color: var(--red, #ff4d6d);
+  text-shadow: 0 0 12px rgba(255, 77, 109, 0.4);
+}
+.price-hero-value.muted {
+  color: #94a3b8;
 }
 
 .price-divider {
   width: 1px;
-  height: 28px;
+  height: 32px;
   background: var(--border);
   flex-shrink: 0;
 }
 
-.price-label {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  text-transform: uppercase;
+.price-divider-mini {
+  width: 1px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
 }
 
-.price-value {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  transition: color var(--tr-fast);
+#live-btc-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
-.price-value.large { font-size: 18px; font-weight: 700; color: var(--accent-teal); }
-.price-value.green { color: var(--green); }
-.price-value.red   { color: var(--red); }
-.price-value.muted { color: var(--text-secondary); font-size: 12px; }
-.price-value.small { font-size: 11px; }
 
 .price-flash-up   { animation: flashUp 0.4s ease; }
 .price-flash-down { animation: flashDown 0.4s ease; }
@@ -290,9 +317,9 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 1px;
-  padding: 2px 20px;
-  min-width: 140px;
+  padding: 2px 14px;
   border-radius: 8px;
+  flex-shrink: 0;
   transition: background var(--tr-fast), transform var(--tr-fast);
 }
 
@@ -306,19 +333,20 @@ html, body {
 }
 
 #timer-label-top {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
   color: var(--text-secondary);
   text-transform: uppercase;
+  line-height: 1;
 }
 
 #timer-value {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 34px;
+  font-size: 26px;
   font-weight: 800;
   color: #ffffff;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.02em;
   text-align: center;
   line-height: 1;
   text-shadow: 0 0 16px rgba(255, 255, 255, 0.25);
@@ -343,7 +371,8 @@ html, body {
   flex-direction: column;
   align-items: flex-end;
   gap: 3px;
-  padding-left: 14px;
+  padding-left: 10px;
+  flex-shrink: 0;
 }
 
 #outcome-buttons {

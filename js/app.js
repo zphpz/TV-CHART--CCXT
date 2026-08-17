@@ -33,7 +33,6 @@ window.App = (() => {
     timerCenter:       $('timer-center'),
     timerLabelTop:     $('timer-label-top'),
     timerValue:        $('timer-value'),
-
     priceCurrent:      $('price-current'),
     priceBid:          $('price-bid'),
     priceAsk:          $('price-ask'),
@@ -41,6 +40,10 @@ window.App = (() => {
     priceLast:         $('price-last'),
     priceSpread:       $('price-spread'),
     priceAge:          $('price-age'),
+
+    liveBtcDelta:      $('live-btc-delta'),
+    liveBtcCurrent:    $('live-btc-current'),
+    liveBtcStrike:     $('live-btc-strike'),
 
     marketSlug:        $('market-slug-display'),
     marketWindow:      $('market-window-display'),
@@ -88,11 +91,42 @@ window.App = (() => {
     el.tabChart?.classList.toggle('active', viewName === 'chart');
     el.tabHistory?.classList.toggle('active', viewName === 'history');
 
-    if (viewName === 'trading') {
-      setTimeout(() => window.LiveTradingManager?.resize(), 50);
-    } else if (viewName === 'chart') {
-      setTimeout(() => ChartManager.resetZoom(), 50);
+    // Trigger responsive render resize
+    if (viewName === 'trading' && window.LiveTradingManager) {
+      LiveTradingManager.resize();
+    } else if (viewName === 'chart' && window.ChartManager) {
+      ChartManager.fitContent();
+    } else if (viewName === 'history' && window.PanelManager) {
+      PanelManager.refreshStats();
     }
+  }
+
+  // ─── Master App Initialization ─────────────────────────────────────
+  async function init() {
+    console.log('[App] Initializing Polymarket BTC Live Chart v3.3...');
+
+    // 1. Initialize core engines
+    ChartManager.init(el.chartContainer);
+    if (window.LiveTradingManager) {
+      LiveTradingManager.init(el.tradingContainer);
+    }
+    if (window.DBManager) {
+      DBManager.init();
+    }
+    if (window.PanelManager) {
+      PanelManager.init();
+    }
+
+    _setupDOMListeners();
+    _setupWSHandlers();
+    _setupRTDSHandlers();
+
+    // Default view: Live Trading
+    switchView('trading');
+
+    // Start market discovery
+    setStatus('connecting', 'CONNECTING');
+    await loadMarket(_currentTfMinutes);
   }
 
   // ─── Boot Sequence ────────────────────────────────────────────────
@@ -159,25 +193,53 @@ window.App = (() => {
   function _setupRTDSHandlers() {
     if (!window.PolyRTDS) return;
 
-    PolyRTDS.handlers.onBtcPrice = (price, ts) => {
+    PolyRTDS.handlers.onBtcPrice = (price, ts, targetPrice, delta) => {
       const cur = MarketManager.getCurrentMarket();
       if (!cur) return;
 
-      if (_liveBtcOpen === null) {
+      if (_liveBtcOpen === null && targetPrice) {
+        _liveBtcOpen = targetPrice;
+      } else if (_liveBtcOpen === null) {
         _liveBtcOpen = price;
       }
       _liveBtcCurrent = price;
-      if (_liveBtcOpen > 0) {
-        _liveBtcChange = Math.round(((_liveBtcCurrent - _liveBtcOpen) / _liveBtcOpen) * 10000) / 100;
+
+      const effStrike = _liveBtcOpen || targetPrice || price;
+      const effDelta = delta !== undefined ? delta : (_liveBtcCurrent - effStrike);
+
+      if (effStrike > 0) {
+        _liveBtcChange = Math.round((effDelta / effStrike) * 10000) / 100;
       }
 
-      ChartManager.updateLiveSessionBtc(cur.slug, _liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+      // Update Live Panel Header Hero Metrics (Delta, BTC Live, Strike)
+      _updateBtcHeroMetrics(effDelta, _liveBtcCurrent, effStrike);
+
+      ChartManager.updateLiveSessionBtc(cur.slug, effStrike, _liveBtcCurrent, _liveBtcChange);
       if (window.LiveTradingManager) {
-        LiveTradingManager.updateBtcPrice(_liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+        LiveTradingManager.updateBtcPrice(effStrike, _liveBtcCurrent, _liveBtcChange);
       }
     };
 
     PolyRTDS.connect();
+  }
+
+  function _updateBtcHeroMetrics(delta, currentPrice, strikePrice) {
+    if (el.liveBtcDelta) {
+      const isPos = (delta || 0) >= 0;
+      const sign = isPos ? '+$' : '-$';
+      const absVal = Math.abs(delta || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      el.liveBtcDelta.textContent = `${sign}${absVal}`;
+      el.liveBtcDelta.classList.toggle('green', isPos);
+      el.liveBtcDelta.classList.toggle('red', !isPos);
+    }
+
+    if (el.liveBtcCurrent && currentPrice !== null && !isNaN(currentPrice)) {
+      el.liveBtcCurrent.textContent = '$' + currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    if (el.liveBtcStrike && strikePrice !== null && !isNaN(strikePrice)) {
+      el.liveBtcStrike.textContent = '$' + strikePrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
   }
 
   // ─── WebSocket Handlers ───────────────────────────────────────────
@@ -228,14 +290,21 @@ window.App = (() => {
       }
     };
 
-    PolyWS.handlers.onLastTrade = (msg) => {
+    PolyWS.handlers.onLastTradePrice = (msg) => {
       if (msg.price !== undefined) {
         PriceEngine.updateLastTrade(msg.price);
         _emitPrice();
       }
     };
 
-    PolyWS.handlers.onTickSizeChange = (msg) => {
+    PolyWS.handlers.onMarketResolved = (msg) => {
+      console.log('[App] Market resolved event:', msg);
+      if (msg.winning_outcome) {
+        showToast(`Market resolved: ${msg.winning_outcome.toUpperCase()} WON`, 'warn', 5000);
+      }
+    };
+
+    PolyWS.handlers.onMarketStructure = (msg) => {
       if (msg.tick_size) {
         ChartManager.updateTickSize(msg.tick_size);
       }
@@ -295,7 +364,7 @@ window.App = (() => {
     }
 
     const fmt = v => v !== null ? v.toFixed(1) + '¢' : '--.-¢';
-    const prevCurrent = el.priceCurrent.textContent;
+    const prevCurrent = el.priceCurrent ? el.priceCurrent.textContent : '';
     const newCurrent  = fmt(effCents);
 
     let displaySpread = null;
@@ -305,15 +374,15 @@ window.App = (() => {
       displaySpread = Math.abs(spread * 100);
     }
 
-    el.priceCurrent.textContent = newCurrent;
-    el.priceBid.textContent     = fmt(bidCents);
-    el.priceAsk.textContent     = fmt(askCents);
-    el.priceMid.textContent     = fmt(midCents);
-    el.priceLast.textContent    = fmt(lastCents);
-    el.priceSpread.textContent  = displaySpread !== null ? displaySpread.toFixed(1) + '¢' : '--.-¢';
+    if (el.priceCurrent) el.priceCurrent.textContent = newCurrent;
+    if (el.priceBid)     el.priceBid.textContent     = fmt(bidCents);
+    if (el.priceAsk)     el.priceAsk.textContent     = fmt(askCents);
+    if (el.priceMid)     el.priceMid.textContent     = fmt(midCents);
+    if (el.priceLast)    el.priceLast.textContent    = fmt(lastCents);
+    if (el.priceSpread)  el.priceSpread.textContent  = displaySpread !== null ? displaySpread.toFixed(1) + '¢' : '--.-¢';
 
     // Flash animation on price change
-    if (newCurrent !== prevCurrent && prevCurrent !== '--.-¢') {
+    if (el.priceCurrent && newCurrent !== prevCurrent && prevCurrent !== '--.-¢') {
       const prev = parseFloat(prevCurrent);
       const cur  = parseFloat(newCurrent);
       if (!isNaN(prev) && !isNaN(cur)) {
@@ -325,7 +394,7 @@ window.App = (() => {
     }
 
     // Data latency age
-    if (ageMs) {
+    if (el.priceAge && ageMs) {
       const ageSec = Math.round((Date.now() - ageMs) / 1000);
       el.priceAge.textContent = ageSec < 2 ? 'LIVE' : `${ageSec}s ago`;
       el.priceAge.style.color = ageSec > 10 ? 'var(--red)' : '';
@@ -345,7 +414,7 @@ window.App = (() => {
       LiveTradingManager.setOutcomeMode(mode);
     }
 
-    const aggregated = TickBuffer.aggregate(_currentTfSeconds, mode);
+    const aggregated = TickBuffer.aggregate(_currentTfSeconds, _outcomeMode);
     if (aggregated.length > 0) {
       ChartManager.setData(aggregated);
     }
@@ -398,6 +467,9 @@ window.App = (() => {
 
       const displayCents = _outcomeMode === 'down' ? (100 - rawUpCents) : rawUpCents;
       ChartManager.setData([{ time: nowSec, value: displayCents }]);
+      if (window.LiveTradingManager) {
+        LiveTradingManager.pushTick(nowSec, rawUpCents);
+      }
       _updatePriceUI();
     }
 
@@ -414,10 +486,18 @@ window.App = (() => {
     // Initialize Chainlink live prices for active session
     _liveBtcOpen = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice) || PolyRTDS?.getLatestBtcPrice() || null;
     _liveBtcCurrent = PolyRTDS?.getLatestBtcPrice() || _liveBtcOpen;
+    if (window.PolyRTDS && _liveBtcOpen) {
+      PolyRTDS.setTargetPrice(_liveBtcOpen);
+      PolyRTDS.setDuration(_currentTfMinutes * 60);
+    }
     if (_liveBtcOpen && _liveBtcCurrent) {
       _liveBtcChange = Math.round(((_liveBtcCurrent - _liveBtcOpen) / _liveBtcOpen) * 10000) / 100;
       ChartManager.updateLiveSessionBtc(market.slug, _liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+      if (window.LiveTradingManager) {
+        LiveTradingManager.updateBtcPrice(_liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+      }
     }
+    _updateBtcHeroMetrics((_liveBtcCurrent && _liveBtcOpen) ? (_liveBtcCurrent - _liveBtcOpen) : 0, _liveBtcCurrent, _liveBtcOpen);
 
     hideLoading();
     _isInitialized = true;
@@ -428,118 +508,150 @@ window.App = (() => {
     console.log('[App] Market rollover:', prevMarket?.slug, '→', newMarket.slug);
     _marketSwitchCount++;
 
-    _liveBtcOpen = PolyRTDS?.getLatestBtcPrice() || null;
-    _liveBtcCurrent = _liveBtcOpen;
-    _liveBtcChange = 0;
+    try {
+      const boundaryTs = prevMarket ? prevMarket.endTs : Math.floor(Date.now() / 1000);
 
-    const boundaryTs = prevMarket ? prevMarket.endTs : Math.floor(Date.now() / 1000);
-
-    // 4. Update stationary Live Trading chart for new session
-    if (window.LiveTradingManager) {
-      LiveTradingManager.setMarket(newMarket);
-    }
-
-    // 5. Query resolution for previous market after small delay to DB
-    if (prevMarket && prevMarket.slug) {
-      const finalPrice = PriceEngine.effectivePrice(); // 0.0–1.0
-      const isUpWon = finalPrice >= 0.5;
-      const winnerStr = isUpWon ? 'UP' : 'DOWN';
-
-      // Add winner badge marker on chart:
-      // UP WON = White badge, DOWN WON = Coral Red badge
-      ChartManager.addWinnerBadgeMarker(
-        boundaryTs,
-        isUpWon ? '🏆 UP WON' : '🏆 DOWN WON',
-        isUpWon ? 'up' : 'down'
-      );
-
-      // Save initial completed session to local DB
-      if (window.DBManager) {
-        window.DBManager.upsertSession({
-          slug: prevMarket.slug,
-          tf: prevMarket.slug.includes('-15m-') ? 15 : 5,
-          startTs: prevMarket.startTs,
-          endTs: prevMarket.endTs,
-          winner: winnerStr,
-          ticks: _currentSessionTicks,
-        }, true);
+      // 1. Unsubscribe old token ID
+      if (prevMarket && prevMarket.upTokenId) {
+        try { PolyWS.unsubscribe(prevMarket.upTokenId); } catch {}
       }
 
-      // Schedule async query of official Gamma API resolution & Chainlink TWAP prices
-      const completedSlug = prevMarket.slug;
-      setTimeout(async () => {
+      // 2. Query resolution for previous market after small delay to DB
+      if (prevMarket && prevMarket.slug) {
         try {
-          const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${completedSlug}`);
-          if (res.ok) {
-            const data = await res.json();
-            const ev = Array.isArray(data) ? data[0] : data;
-            if (ev && Array.isArray(ev.markets) && ev.markets[0]) {
-              const m = ev.markets[0];
-              let outP = m.outcomePrices;
-              if (typeof outP === 'string') outP = JSON.parse(outP);
-              let resolvedWinner = null;
-              if (Array.isArray(outP) && outP.length >= 2) {
-                const upP = parseFloat(outP[0]);
-                if (!isNaN(upP)) {
-                  if (upP > 0.5) resolvedWinner = 'UP';
-                  else if (upP < 0.5) resolvedWinner = 'DOWN';
-                }
-              }
+          const finalPrice = PriceEngine.effectivePrice(); // 0.0–1.0
+          const isUpWon = finalPrice >= 0.5;
+          const winnerStr = isUpWon ? 'UP' : 'DOWN';
 
-              const meta = ev.eventMetadata || m.eventMetadata;
-              let bOpen = null, bClose = null, bChg = null;
-              if (meta && typeof meta === 'object') {
-                bOpen = parseFloat(meta.priceToBeat || meta.targetPrice);
-                bClose = parseFloat(meta.finalPrice || meta.settlementPrice);
-                if (!isNaN(bOpen) && !isNaN(bClose) && bOpen > 0) {
-                  bChg = Math.round(((bClose - bOpen) / bOpen) * 10000) / 100;
-                }
-              }
+          // Add winner badge marker on chart
+          ChartManager.addWinnerBadgeMarker(
+            boundaryTs,
+            isUpWon ? '🏆 UP WON' : '🏆 DOWN WON',
+            isUpWon ? 'up' : 'down'
+          );
 
-              if (window.DBManager) {
-                const updatePayload = { slug: completedSlug };
-                if (resolvedWinner) updatePayload.winner = resolvedWinner;
-                if (bOpen !== null) updatePayload.btcOpen = bOpen;
-                if (bClose !== null) updatePayload.btcClose = bClose;
-                if (bChg !== null) updatePayload.btcChange = bChg;
-                window.DBManager.upsertSession(updatePayload, true);
-              }
-            }
+          // Save initial completed session to local DB
+          if (window.DBManager) {
+            window.DBManager.upsertSession({
+              slug: prevMarket.slug,
+              tf: prevMarket.slug.includes('-15m-') ? 15 : 5,
+              startTs: prevMarket.startTs,
+              endTs: prevMarket.endTs,
+              winner: winnerStr,
+              ticks: _currentSessionTicks,
+            }, true);
           }
-        } catch (err) {
-          console.warn('[App] Could not fetch post-resolution metadata:', err);
+
+          // Schedule async query of official Gamma API resolution & Chainlink TWAP prices
+          const completedSlug = prevMarket.slug;
+          setTimeout(async () => {
+            try {
+              const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${completedSlug}`);
+              if (res.ok) {
+                const data = await res.json();
+                const ev = Array.isArray(data) ? data[0] : data;
+                if (ev && Array.isArray(ev.markets) && ev.markets[0]) {
+                  const m = ev.markets[0];
+                  let outP = m.outcomePrices;
+                  if (typeof outP === 'string') outP = JSON.parse(outP);
+                  let resolvedWinner = null;
+                  if (Array.isArray(outP) && outP.length >= 2) {
+                    const upP = parseFloat(outP[0]);
+                    if (!isNaN(upP)) {
+                      if (upP > 0.5) resolvedWinner = 'UP';
+                      else if (upP < 0.5) resolvedWinner = 'DOWN';
+                    }
+                  }
+
+                  const meta = ev.eventMetadata || m.eventMetadata;
+                  let bOpen = null, bClose = null, bChg = null;
+                  if (meta && typeof meta === 'object') {
+                    bOpen = parseFloat(meta.priceToBeat || meta.targetPrice);
+                    bClose = parseFloat(meta.finalPrice || meta.settlementPrice);
+                    if (!isNaN(bOpen) && !isNaN(bClose) && bOpen > 0) {
+                      bChg = Math.round(((bClose - bOpen) / bOpen) * 10000) / 100;
+                    }
+                  }
+
+                  if (window.DBManager) {
+                    const updatePayload = { slug: completedSlug };
+                    if (resolvedWinner) updatePayload.winner = resolvedWinner;
+                    if (bOpen !== null) updatePayload.btcOpen = bOpen;
+                    if (bClose !== null) updatePayload.btcClose = bClose;
+                    if (bChg !== null) updatePayload.btcChange = bChg;
+                    window.DBManager.upsertSession(updatePayload, true);
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn('[App] Could not fetch post-resolution metadata:', err);
+            }
+          }, 15000);
+        } catch (e) {
+          console.warn('[App] Error saving previous session:', e);
         }
-      }, 15000);
+      }
+
+      // 3. Add visual boundary separator to chart
+      try {
+        ChartManager.addWhitespace(boundaryTs);
+        ChartManager.addSessionBoundary(boundaryTs);
+        ChartManager.addMarketBoundaryMarker(boundaryTs + 1, '│ New Market');
+        TickBuffer.addMarketBoundary(boundaryTs);
+      } catch (e) {
+        console.warn('[App] Error adding chart boundary:', e);
+      }
+
+      // 4. Reset price state for new market
+      PriceEngine.reset();
+      _currentSessionTicks = [];
+
+      // 5. Initialize BTC strike price for new session
+      const newStrike = parseFloat(newMarket.eventMetadata?.priceToBeat || newMarket.eventMetadata?.targetPrice) || PolyRTDS?.getLatestBtcPrice() || null;
+      _liveBtcOpen = newStrike;
+      _liveBtcCurrent = PolyRTDS?.getLatestBtcPrice() || _liveBtcOpen;
+      _liveBtcChange = 0;
+      if (window.PolyRTDS) {
+        if (newStrike) PolyRTDS.setTargetPrice(newStrike);
+        PolyRTDS.setDuration(_currentTfMinutes * 60);
+      }
+      _updateBtcHeroMetrics(0, _liveBtcCurrent, _liveBtcOpen);
+
+      // 6. Update stationary Live Trading chart for new session
+      if (window.LiveTradingManager) {
+        LiveTradingManager.setMarket(newMarket);
+      }
+
+      // 7. Subscribe new token ID & update UI
+      PolyWS.subscribe(newMarket.upTokenId);
+      _updateMarketUI(newMarket);
+      if (el.marketCount) el.marketCount.textContent = `Markets: ${_marketSwitchCount + 1}`;
+
+      // 8. Fetch initial price via REST so new session line starts drawing immediately
+      try {
+        const mid = await MarketManager.fetchMidpoint(newMarket.upTokenId);
+        if (mid !== null) {
+          PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+          const rawUpCents = mid * 100;
+          const nowSec = Math.floor(Date.now() / 1000);
+          TickBuffer.addTick(nowSec, rawUpCents);
+          _currentSessionTicks.push([nowSec, Math.round(rawUpCents * 10) / 10]);
+
+          const displayCents = _outcomeMode === 'down' ? (100 - rawUpCents) : rawUpCents;
+          ChartManager.pushTick(nowSec, displayCents);
+          if (window.LiveTradingManager) {
+            LiveTradingManager.pushTick(nowSec, rawUpCents);
+          }
+          _updatePriceUI();
+        }
+      } catch (e) {
+        console.warn('[App] Error fetching initial midpoint for new market:', e);
+      }
+
+      showToast(`Rollover: ${newMarket.slug}`, 'info', 3500);
+    } catch (err) {
+      console.error('[App] Rollover error:', err);
     }
-
-    // 2. Add visual boundary separator to chart
-    ChartManager.addWhitespace(boundaryTs);
-    ChartManager.addSessionBoundary(boundaryTs);
-    ChartManager.addMarketBoundaryMarker(boundaryTs + 1, '│ New Market');
-    TickBuffer.addMarketBoundary(boundaryTs);
-
-    // 3. Reset state for new market
-    PriceEngine.reset();
-    _currentSessionTicks = [];
-
-    PolyWS.subscribe(newMarket.upTokenId);
-    _updateMarketUI(newMarket);
-    el.marketCount.textContent = `Markets: ${_marketSwitchCount + 1}`;
-
-    const mid = await MarketManager.fetchMidpoint(newMarket.upTokenId);
-    if (mid !== null) {
-      PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
-      const rawUpCents = mid * 100;
-      const nowSec = Math.floor(Date.now() / 1000);
-      TickBuffer.addTick(nowSec, rawUpCents);
-      _currentSessionTicks.push([nowSec, Math.round(rawUpCents * 10) / 10]);
-
-      const displayCents = _outcomeMode === 'down' ? (100 - rawUpCents) : rawUpCents;
-      ChartManager.pushTick(nowSec, displayCents);
-      _updatePriceUI();
-    }
-
-    showToast(`Rollover: ${newMarket.slug}`, 'info', 3500);
   }
 
   function _flushLiveTicksToDB() {

@@ -19,11 +19,15 @@ window.PolyRTDS = (() => {
   let _pingTimer = null;
   let _reconnectTimer = null;
   let _destroyed = false;
+
   let _currentBtcPrice = null;
-  let _lastTimestamp = 0;
+  let _targetBtcPrice  = null;
+  let _currentWindowId = null;
+  let _durationSecs    = 300;
+  let _lastTimestamp   = 0;
 
   const handlers = {
-    onBtcPrice: null,
+    onBtcPrice: null,        // (currentPrice, ts, targetPrice, delta)
     onConnected: null,
     onDisconnected: null,
   };
@@ -50,24 +54,41 @@ window.PolyRTDS = (() => {
     };
 
     _ws.onmessage = (event) => {
+      if (!event.data || !event.data.trim()) return;
       try {
         const msg = JSON.parse(event.data);
         if (msg.topic === 'crypto_prices_chainlink') {
-          const payload = msg.payload;
-          if (payload && payload.symbol === 'btc/usd') {
-            const price = typeof payload.value === 'number' ? payload.value : parseFloat(payload.value);
-            const ts = payload.timestamp || msg.timestamp || Date.now();
+          const payload = msg.payload || {};
+          const points = Array.isArray(payload.data) ? payload.data : (payload.value !== undefined ? [payload] : []);
+
+          for (const pt of points) {
+            const rawVal = pt.value !== undefined ? pt.value : pt.price;
+            const price = typeof rawVal === 'number' ? rawVal : parseFloat(rawVal);
+            const tsMs = pt.timestamp || msg.timestamp || Date.now();
+            const tsSec = Math.floor(tsMs / 1000);
+
             if (!isNaN(price) && price > 0) {
               _currentBtcPrice = price;
-              _lastTimestamp = ts;
+              _lastTimestamp = tsMs;
+
+              const winId = Math.floor(tsSec / _durationSecs);
+              if (_currentWindowId !== winId) {
+                _currentWindowId = winId;
+                if (!_targetBtcPrice) {
+                  _targetBtcPrice = price;
+                }
+              }
+
+              const delta = _targetBtcPrice !== null ? (_currentBtcPrice - _targetBtcPrice) : 0;
+
               if (handlers.onBtcPrice) {
-                handlers.onBtcPrice(price, ts);
+                handlers.onBtcPrice(_currentBtcPrice, tsMs, _targetBtcPrice, delta);
               }
             }
           }
         }
       } catch (err) {
-        // ignore non-JSON or heartbeat acks
+        // ignore non-JSON heartbeats
       }
     };
 
@@ -90,11 +111,13 @@ window.PolyRTDS = (() => {
         {
           topic: 'crypto_prices_chainlink',
           type: '*',
-          filters: '',
+          filters: JSON.stringify({ symbol: 'btc/usd' }),
         }
       ]
     };
-    _ws.send(JSON.stringify(subMsg));
+    try {
+      _ws.send(JSON.stringify(subMsg));
+    } catch {}
   }
 
   function _startPing() {
@@ -123,8 +146,22 @@ window.PolyRTDS = (() => {
     }, RECONNECT_DELAY_MS);
   }
 
+  function setDuration(durationSecs) {
+    _durationSecs = durationSecs || 300;
+  }
+
+  function setTargetPrice(targetPrice) {
+    if (typeof targetPrice === 'number' && !isNaN(targetPrice) && targetPrice > 0) {
+      _targetBtcPrice = targetPrice;
+    }
+  }
+
   function getLatestBtcPrice() {
     return _currentBtcPrice;
+  }
+
+  function getTargetBtcPrice() {
+    return _targetBtcPrice;
   }
 
   function destroy() {
@@ -139,6 +176,9 @@ window.PolyRTDS = (() => {
   return {
     connect,
     getLatestBtcPrice,
+    getTargetBtcPrice,
+    setTargetPrice,
+    setDuration,
     handlers,
     destroy,
   };
