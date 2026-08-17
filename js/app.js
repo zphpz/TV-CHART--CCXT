@@ -199,13 +199,11 @@ window.App = (() => {
 
       if (_liveBtcOpen === null && targetPrice) {
         _liveBtcOpen = targetPrice;
-      } else if (_liveBtcOpen === null) {
-        _liveBtcOpen = price;
       }
       _liveBtcCurrent = price;
 
       const effStrike = _liveBtcOpen || targetPrice || price;
-      const effDelta = delta !== undefined ? delta : (_liveBtcCurrent - effStrike);
+      const effDelta = _liveBtcOpen !== null ? (_liveBtcCurrent - _liveBtcOpen) : (delta !== undefined ? delta : 0);
 
       if (effStrike > 0) {
         _liveBtcChange = Math.round((effDelta / effStrike) * 10000) / 100;

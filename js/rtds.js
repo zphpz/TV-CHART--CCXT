@@ -72,15 +72,23 @@ window.PolyRTDS = (() => {
               _lastTimestamp = tsMs;
 
               const winId = Math.floor(tsSec / _durationSecs);
+              const secInWin = tsSec % _durationSecs;
+
               if (_currentWindowId !== winId) {
                 _currentWindowId = winId;
-                // Only change target price at the actual window rollover boundary
-                _targetBtcPrice = price;
-                try {
-                  localStorage.setItem(`pm_btc_strike_${winId * _durationSecs}`, price);
-                } catch {}
-              } else if (_targetBtcPrice === null) {
-                // If opening mid-session, check local cache before falling back
+                // Only at the true beginning of the round (first 5 seconds) can a tick become the natural strike
+                if (secInWin <= 5) {
+                  _targetBtcPrice = price;
+                  try {
+                    localStorage.setItem(`pm_btc_strike_${winId * _durationSecs}`, price);
+                  } catch {}
+                } else {
+                  _targetBtcPrice = null;
+                }
+              }
+
+              // If opening mid-session and targetPrice not set yet, check local cache
+              if (_targetBtcPrice === null) {
                 try {
                   const cached = localStorage.getItem(`pm_btc_strike_${winId * _durationSecs}`);
                   if (cached) {
