@@ -1,0 +1,6184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Polymarket BTC Up/Down — Live Chart & History Database</title>
+  <meta name="description" content="Real-time Polymarket BTC Up/Down rolling market chart with local file database and historical backfill engine." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+/* ═══════════════════════════════════════════════════════
+   Polymarket BTC Up/Down Chart & History Database — v1.4
+   ═══════════════════════════════════════════════════════ */
+
+/* ── Reset & Base ─────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Colors */
+  --bg-primary:     #080b0f;
+  --bg-secondary:   #0d1117;
+  --bg-panel:       #111720;
+  --bg-card:        #161d27;
+  --bg-hover:       #1a2230;
+  --border:         #1e2a38;
+  --border-bright:  #2a3a50;
+
+  --text-primary:   #e2e8f0;
+  --text-secondary: #8899aa;
+  --text-muted:     #4a5568;
+
+  --accent-teal:    #00d4aa;
+  --accent-teal-d:  #00a882;
+  --accent-blue:    #3b82f6;
+  --accent-purple:  #8b5cf6;
+
+  --green:          #22c55e;
+  --green-d:        #16a34a;
+  --red:            #ef4444;
+  --red-d:          #dc2626;
+  --coral:          #ff4d6d;
+  --yellow:         #eab308;
+
+  --line-green:     #00d4aa;
+  --line-red:       #ff4d6d;
+  --line-neutral:   #4dabf7;
+
+  /* Sizes */
+  --header-h:       52px;
+  --pricebar-h:     64px;
+  --toolbar-h:      42px;
+  --footer-h:       30px;
+
+  /* Transitions */
+  --tr-fast: 120ms ease;
+  --tr-med:  200ms ease;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── App Layout ───────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Header ───────────────────────────────────────────── */
+#main-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--header-h);
+  padding: 0 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+
+#brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 130px;
+}
+
+#brand-logo {
+  width: 32px; height: 32px;
+  background: linear-gradient(135deg, rgba(0,212,170,0.15), rgba(59,130,246,0.15));
+  border: 1px solid rgba(0,212,170,0.3);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+#brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+#brand-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+}
+#brand-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+/* Main Navigation View Switcher (Live Chart vs Database & History) */
+#view-switcher {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+  margin-left: 8px;
+}
+
+.view-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.view-tab:hover { color: var(--text-primary); background: var(--bg-hover); }
+.view-tab.active {
+  background: var(--bg-card);
+  color: var(--accent-teal);
+  border: 1px solid rgba(0, 212, 170, 0.3);
+  box-shadow: 0 0 10px rgba(0, 212, 170, 0.2);
+}
+
+/* Market switcher */
+#market-switcher {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.mkt-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.mkt-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.mkt-btn.active {
+  background: linear-gradient(135deg, var(--accent-teal), var(--accent-blue));
+  color: #fff;
+  box-shadow: 0 0 12px rgba(0,212,170,0.3);
+}
+
+/* Status panel */
+#status-panel {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 4px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+#status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  animation: pulse 2s ease infinite;
+}
+
+.status-live #status-dot     { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-connecting #status-dot { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+.status-error #status-dot    { background: var(--red); box-shadow: 0 0 6px var(--red); animation: none; }
+
+.status-live #status-text     { color: var(--green); }
+.status-connecting #status-text { color: var(--yellow); }
+.status-error #status-text    { color: var(--red); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* ── View Visibility ──────────────────────────────────── */
+.active-view {
+  display: flex !important;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.hidden-view {
+  display: none !important;
+}
+
+/* ── VIEW 1: Price Bar ────────────────────────────────── */
+#price-bar {
+  display: flex;
+  align-items: center;
+  height: var(--pricebar-h);
+  padding: 0 16px;
+  gap: 0;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.price-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 14px;
+  min-width: 70px;
+}
+
+.price-divider {
+  width: 1px;
+  height: 28px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.price-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.price-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: color var(--tr-fast);
+}
+.price-value.large { font-size: 18px; font-weight: 700; color: var(--accent-teal); }
+.price-value.green { color: var(--green); }
+.price-value.red   { color: var(--red); }
+.price-value.muted { color: var(--text-secondary); font-size: 12px; }
+.price-value.small { font-size: 11px; }
+
+.price-flash-up   { animation: flashUp 0.4s ease; }
+.price-flash-down { animation: flashDown 0.4s ease; }
+
+@keyframes flashUp   { 0% { color: var(--green); text-shadow: 0 0 8px rgba(34,197,94,0.6); } 100% { } }
+@keyframes flashDown { 0% { color: var(--red);   text-shadow: 0 0 8px rgba(239,68,68,0.6); } 100% { } }
+
+/* Timer in Price Bar (Center) */
+#timer-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 2px 20px;
+  min-width: 140px;
+  border-radius: 8px;
+  transition: background var(--tr-fast), transform var(--tr-fast);
+}
+
+#timer-center:hover {
+  background: rgba(56, 189, 248, 0.09);
+  transform: scale(1.02);
+}
+
+#timer-center:active {
+  transform: scale(0.98);
+}
+
+#timer-label-top {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+#timer-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 34px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.05em;
+  text-align: center;
+  line-height: 1;
+  text-shadow: 0 0 16px rgba(255, 255, 255, 0.25);
+  transition: color var(--tr-fast);
+}
+
+#timer-value.urgent {
+  color: #ff4d6d;
+  animation: urgentPulse 1s ease-in-out infinite;
+  text-shadow: 0 0 16px rgba(255, 77, 109, 0.7);
+}
+
+@keyframes urgentPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+/* Outcome Switcher (UP / DOWN) */
+#outcome-switcher {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  padding-left: 14px;
+}
+
+#outcome-buttons {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.outcome-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+  letter-spacing: 0.04em;
+}
+.outcome-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+#btn-outcome-up.active {
+  background: #00d4aa;
+  color: #080b0f;
+  box-shadow: 0 0 10px rgba(0, 212, 170, 0.4);
+}
+
+#btn-outcome-down.active {
+  background: #ff4d6d;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 77, 109, 0.4);
+}
+
+/* ── Chart Toolbar ────────────────────────────────────── */
+#chart-toolbar {
+  display: flex;
+  align-items: center;
+  height: var(--toolbar-h);
+  padding: 0 12px;
+  gap: 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#tf-switcher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tf-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+#tf-buttons {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.tf-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+  letter-spacing: 0.04em;
+}
+.tf-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.tf-btn.active {
+  background: var(--accent-teal);
+  color: var(--bg-primary);
+  box-shadow: 0 0 8px rgba(0,212,170,0.4);
+}
+
+#market-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+
+.info-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.info-sep { color: var(--border-bright); }
+
+#market-slug-display {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#market-window-display {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+#chart-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.action-btn {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 5px;
+  padding: 5px 8px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+  display: flex;
+  align-items: center;
+}
+.action-btn:hover { color: var(--text-primary); border-color: var(--border-bright); }
+
+#btn-quick-load-db {
+  color: var(--accent-teal);
+  border-color: rgba(0, 212, 170, 0.3);
+}
+#btn-quick-load-db:hover {
+  background: rgba(0, 212, 170, 0.1);
+}
+
+/* ── Chart Wrapper ────────────────────────────────────── */
+#chart-wrapper {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+#chart-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Floating Crosshair Point Tooltip ─────────────────── */
+#chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 25;
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  background: rgba(13, 17, 23, 0.94);
+  border: 1px solid rgba(0, 212, 170, 0.5);
+  color: #00d4aa;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(6px);
+  transform: translate(-50%, -100%);
+  margin-top: -12px;
+  white-space: nowrap;
+  transition: opacity 80ms ease, transform 60ms ease;
+}
+
+#chart-tooltip.tt-green {
+  border-color: rgba(0, 212, 170, 0.6);
+  color: #00d4aa;
+  box-shadow: 0 0 14px rgba(0, 212, 170, 0.25);
+}
+
+#chart-tooltip.tt-red {
+  border-color: rgba(255, 77, 109, 0.6);
+  color: #ff4d6d;
+  box-shadow: 0 0 14px rgba(255, 77, 109, 0.25);
+}
+
+#chart-tooltip.tt-blue {
+  border-color: rgba(77, 171, 247, 0.6);
+  color: #4dabf7;
+  box-shadow: 0 0 14px rgba(77, 171, 247, 0.25);
+}
+
+#chart-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border-width: 5px;
+  border-style: solid;
+  border-color: rgba(13, 17, 23, 0.94) transparent transparent transparent;
+}
+
+/* ── VIEW 2: Database & History Management Panel ──────── */
+#history-panel-view {
+  background: var(--bg-primary);
+  overflow-y: auto;
+  height: calc(100vh - var(--header-h) - var(--footer-h));
+}
+
+#panel-content {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 20px 24px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.panel-grid-top {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 20px;
+}
+
+@media (max-width: 1024px) {
+  .panel-grid-top { grid-template-columns: 1fr; }
+}
+
+.panel-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Storage meta row */
+.storage-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 16px;
+}
+
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.meta-lbl { font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; }
+.meta-val { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+
+.card-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Downloader Controls */
+.downloader-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.ctrl-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ctrl-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+
+.bf-tf-group, .preset-group {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.bf-tf-btn, .preset-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.bf-tf-btn:hover, .preset-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.bf-tf-btn.active, .preset-btn.active {
+  background: var(--accent-teal);
+  color: var(--bg-primary);
+  box-shadow: 0 0 8px rgba(0, 212, 170, 0.4);
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.checkbox-label input { cursor: pointer; }
+
+/* Progress bar */
+#bf-progress-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.progress-bar-bg {
+  height: 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+#bf-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent-teal), var(--accent-blue));
+  transition: width 150ms ease;
+}
+#bf-progress-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: space-between;
+}
+.bf-slug { color: var(--text-muted); font-size: 10px; }
+
+/* Buttons */
+.btn-primary {
+  background: var(--accent-teal);
+  border: none;
+  color: var(--bg-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.btn-primary:hover { background: var(--accent-teal-d); transform: translateY(-1px); }
+
+.btn-secondary {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-bright);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.btn-secondary:hover { background: var(--border-bright); }
+
+.btn-success {
+  background: linear-gradient(135deg, var(--accent-teal), var(--green));
+  border: none;
+  color: #080b0f;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 9px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+  box-shadow: 0 0 12px rgba(0, 212, 170, 0.3);
+}
+.btn-success:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 0 16px rgba(0, 212, 170, 0.5); }
+.btn-success:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-danger {
+  background: var(--red);
+  border: none;
+  color: #fff;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 9px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.btn-danger:hover:not(:disabled) { background: var(--red-d); }
+.btn-danger:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.btn-outline:hover { color: var(--text-primary); border-color: var(--border-bright); }
+
+.btn-danger-outline {
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--red);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.btn-danger-outline:hover { background: rgba(239, 68, 68, 0.1); border-color: var(--red); }
+
+.btn-sm { padding: 5px 10px; font-size: 11px; }
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute; cursor: pointer; inset: 0; background-color: var(--border);
+  transition: .2s; border-radius: 20px;
+}
+.toggle-slider:before {
+  position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px;
+  background-color: white; transition: .2s; border-radius: 50%;
+}
+input:checked + .toggle-slider { background-color: var(--accent-teal); }
+input:checked + .toggle-slider:before { transform: translateX(16px); }
+
+/* Analytics Row */
+.panel-analytics-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.analytic-badge {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.an-lbl { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.an-val { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; color: var(--text-primary); }
+.an-val.green { color: var(--green); }
+.an-val.coral { color: var(--coral); }
+
+/* Table Toolbar */
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+.table-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+}
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Session Explorer Table */
+.table-scroll-container {
+  overflow-x: auto;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.pm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.pm-table th {
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.pm-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(30, 42, 56, 0.5);
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+
+.pm-table tr:hover { background: var(--bg-hover); }
+.pm-table tr.row-selected { background: rgba(0, 212, 170, 0.06); }
+
+.th-chk, .col-chk { width: 32px; text-align: center; }
+.col-chk input { cursor: pointer; }
+.time-sep { color: var(--border-bright); margin: 0 4px; }
+.col-ohlc { font-size: 11px; }
+.col-ohlc .o { color: var(--text-secondary); }
+.col-ohlc .h { color: var(--green); font-weight: 600; }
+.col-ohlc .l { color: var(--red); font-weight: 600; }
+.col-ohlc .c { color: var(--accent-teal); font-weight: 600; }
+
+.tbl-btn-del {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.tbl-btn-del:hover { color: var(--red); border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.1); }
+
+.empty-table-msg {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 30px !important;
+  font-family: 'Inter', sans-serif !important;
+  font-style: italic;
+}
+
+/* Badges */
+.badge-connected {
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+}
+
+.badge-disconnected {
+  background: rgba(234, 179, 8, 0.15);
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  color: var(--yellow);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.badge-info {
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  color: var(--accent-blue);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.badge-subtle {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* Winner Badges: White for UP, Coral-Red for DOWN */
+.badge-winner-up {
+  background: #ffffff;
+  color: #080b0f;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 3px 7px;
+  border-radius: 4px;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+  letter-spacing: 0.04em;
+  display: inline-block;
+}
+
+.badge-winner-down {
+  background: #ff4d6d;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 3px 7px;
+  border-radius: 4px;
+  box-shadow: 0 0 8px rgba(255, 77, 109, 0.4);
+  letter-spacing: 0.04em;
+  display: inline-block;
+}
+
+.badge-pending {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.badge-tf {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-bright);
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+
+.badge-ticks {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+/* ── Loading Overlay ──────────────────────────────────── */
+#loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 11, 15, 0.92);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  z-index: 30;
+  backdrop-filter: blur(4px);
+}
+
+#loading-spinner {
+  width: 40px; height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent-teal);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#loading-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+#loading-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── Error Overlay ────────────────────────────────────── */
+#error-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 11, 15, 0.95);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 30;
+}
+
+#error-icon { font-size: 40px; }
+#error-text { font-size: 16px; font-weight: 600; color: var(--red); }
+#error-sub  { font-size: 12px; color: var(--text-muted); }
+
+#btn-retry {
+  margin-top: 8px;
+  background: var(--accent-teal);
+  border: none;
+  color: var(--bg-primary);
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 8px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+#btn-retry:hover { background: var(--accent-teal-d); transform: translateY(-1px); }
+
+/* ── Footer ───────────────────────────────────────────── */
+#main-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--footer-h);
+  padding: 0 14px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#footer-left, #footer-right {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+#footer-center {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.attr-text { color: var(--text-muted); }
+.attr-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color var(--tr-fast);
+}
+.attr-link:hover { color: var(--accent-teal); }
+
+/* ── Session Table Title & BTC Indicators ─────────────── */
+.session-link-title {
+  color: var(--blue, #60a5fa);
+  text-decoration: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  display: inline-block;
+  margin-bottom: 2px;
+  transition: color var(--tr-fast);
+}
+.session-link-title:hover {
+  color: #93c5fd;
+  text-decoration: underline;
+}
+.session-time-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+.btc-up {
+  color: var(--accent-teal, #00d4aa);
+  font-weight: 600;
+}
+.btc-down {
+  color: var(--red, #ff4d6d);
+  font-weight: 600;
+}
+
+/* ── Scrollbar ────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Toast notification ───────────────────────────────── */
+.toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--text-primary);
+  z-index: 100;
+  transform: translateX(120%);
+  transition: transform 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 320px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+.toast.show { transform: translateX(0); }
+.toast.info  { border-left: 3px solid var(--accent-teal); }
+.toast.warn  { border-left: 3px solid var(--yellow); }
+.toast.error { border-left: 3px solid var(--red); }
+
+/* ══════════════════════════════════════════════════════
+   MOBILE RESPONSIVE SYSTEM (Phones & Tablets)
+══════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  :root {
+    --header-h: 46px;
+    --pricebar-h: 56px;
+    --footer-h: 24px;
+  }
+
+  /* 1. Header Compact Ergonomics */
+  #main-header {
+    padding: 0 8px;
+    gap: 6px;
+  }
+
+  #brand {
+    min-width: auto;
+    gap: 6px;
+  }
+  #brand-sub {
+    display: none;
+  }
+  #brand-name {
+    font-size: 11px;
+  }
+  #brand-logo {
+    width: 26px;
+    height: 26px;
+  }
+
+  #view-switcher {
+    margin-left: 2px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .view-tab {
+    padding: 5px 8px;
+    font-size: 11px;
+    gap: 4px;
+  }
+
+  #market-switcher {
+    gap: 2px;
+  }
+  .mkt-btn {
+    padding: 4px 7px;
+    font-size: 10px;
+  }
+
+  #status-panel {
+    display: none;
+  }
+
+  /* 2. Mobile Price Bar (Hiding secondary stats BID, ASK, MID, LAST, SPREAD, UPDATED) */
+  .mobile-hide {
+    display: none !important;
+  }
+
+  #price-bar {
+    padding: 0 12px;
+    justify-content: space-between;
+    overflow-x: hidden;
+  }
+
+  #price-current-wrap {
+    padding: 0 4px;
+    min-width: auto;
+  }
+  #price-current {
+    font-size: 22px;
+  }
+
+  #timer-center {
+    padding: 2px 10px;
+    min-width: auto;
+  }
+  #timer-label-top {
+    font-size: 9px;
+  }
+  #timer-value {
+    font-size: 26px;
+  }
+
+  #outcome-switcher {
+    margin-left: 0;
+    gap: 4px;
+  }
+  #outcome-switcher .price-label {
+    display: none;
+  }
+  #outcome-buttons {
+    gap: 4px;
+  }
+  .outcome-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    min-height: 36px;
+    border-radius: 6px;
+  }
+
+  /* 3. Toolbar & Actions in All Sessions */
+  #chart-toolbar {
+    padding: 0 6px;
+    height: 36px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    gap: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tf-label {
+    display: none;
+  }
+  #tf-switcher {
+    gap: 3px;
+    flex-shrink: 0;
+  }
+  #chart-actions {
+    gap: 3px;
+    flex-shrink: 0;
+  }
+  .tf-btn {
+    padding: 3px 6px;
+    font-size: 10px;
+    min-width: 26px;
+  }
+  .action-btn {
+    padding: 3px 6px;
+    font-size: 10px;
+  }
+
+  /* 4. History Panel Mobile */
+  #panel-content {
+    padding: 10px;
+    gap: 12px;
+  }
+  .panel-grid-top {
+    grid-template-columns: 1fr;
+  }
+  .panel-grid-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .view-tab {
+    padding: 5px 6px;
+    font-size: 10px;
+  }
+  .view-tab .tab-label {
+    display: none; /* Show only icons on very small screens */
+  }
+  .mkt-btn {
+    font-size: 9px;
+    padding: 3px 6px;
+  }
+  #price-current {
+    font-size: 19px;
+  }
+  #timer-value {
+    font-size: 22px;
+  }
+  .outcome-btn {
+    padding: 5px 9px;
+    font-size: 11px;
+  }
+}
+
+/* ── Responsive ───────────────────────────────────────── */
+@media (max-width: 768px) {
+  #brand-sub, #market-info, .info-sep, #market-window-display { display: none; }
+  .price-item { padding: 0 8px; min-width: 55px; }
+  .price-value.large { font-size: 15px; }
+  #timer-value { font-size: 16px; }
+  .view-tab { padding: 5px 8px; font-size: 11px; }
+}
+
+</style>
+</head>
+<body>
+  <div id="app">
+
+    <!-- ═══════════════ HEADER ═══════════════ -->
+    <header id="main-header">
+      <div id="brand">
+        <div id="brand-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#00d4aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div id="brand-text">
+          <span id="brand-name">PM CHART</span>
+          <span id="brand-sub">Polymarket Live</span>
+        </div>
+      </div>
+
+      <!-- Main Navigation Tabs: Live Trading vs All Sessions vs Database -->
+      <div id="view-switcher">
+        <button class="view-tab active" id="tab-view-trading" data-view="trading">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <span class="tab-label">LIVE TRADING</span>
+        </button>
+        <button class="view-tab" id="tab-view-chart" data-view="chart">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M18 9l-5 5-4-4-6 6"/></svg>
+          <span class="tab-label">ALL SESSIONS</span>
+        </button>
+        <button class="view-tab" id="tab-view-history" data-view="history">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zM22 10H2M7 15h.01M12 15h.01M17 15h.01"/></svg>
+          <span class="tab-label">DATABASE & HISTORY</span>
+        </button>
+      </div>
+
+      <!-- Market switcher: 5m / 15m -->
+      <div id="market-switcher">
+        <button class="mkt-btn active" id="btn-mkt-5m" data-tf="5">BTC 5M</button>
+        <button class="mkt-btn" id="btn-mkt-15m" data-tf="15">BTC 15M</button>
+      </div>
+
+      <!-- Status indicator -->
+      <div id="status-panel">
+        <div id="status-indicator" class="status-connecting">
+          <span id="status-dot"></span>
+          <span id="status-text">CONNECTING</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Global Real-Time Price & Outcome Bar -->
+    <div id="price-bar">
+      <div class="price-item" id="price-current-wrap">
+        <span class="price-label">PRICE</span>
+        <span class="price-value large" id="price-current">--.-¢</span>
+      </div>
+      <div class="price-divider mobile-hide"></div>
+      <div class="price-item mobile-hide" id="price-bid-wrap">
+        <span class="price-label">BID</span>
+        <span class="price-value green" id="price-bid">--.-¢</span>
+      </div>
+      <div class="price-item mobile-hide" id="price-ask-wrap">
+        <span class="price-label">ASK</span>
+        <span class="price-value red" id="price-ask">--.-¢</span>
+      </div>
+      <div class="price-item mobile-hide" id="price-mid-wrap">
+        <span class="price-label">MID</span>
+        <span class="price-value" id="price-mid">--.-¢</span>
+      </div>
+      <div class="price-item mobile-hide" id="price-last-wrap">
+        <span class="price-label">LAST</span>
+        <span class="price-value" id="price-last">--.-¢</span>
+      </div>
+      <div class="price-divider mobile-hide"></div>
+      <div class="price-item mobile-hide" id="price-spread-wrap">
+        <span class="price-label">SPREAD</span>
+        <span class="price-value muted" id="price-spread">--.-¢</span>
+      </div>
+      <div class="price-item mobile-hide" id="price-age-wrap">
+        <span class="price-label">UPDATED</span>
+        <span class="price-value muted small" id="price-age">---</span>
+      </div>
+
+      <!-- Center: Large countdown timer (Clickable: Remaining <-> Elapsed) -->
+      <div class="price-divider mobile-hide"></div>
+      <div id="timer-center" style="cursor: pointer; user-select: none;" title="Click to switch between Remaining & Elapsed time">
+        <span id="timer-label-top">ENDS IN</span>
+        <span id="timer-value">--:--</span>
+      </div>
+      <div class="price-divider mobile-hide"></div>
+
+      <!-- Right: UP / DOWN outcome buttons -->
+      <div id="outcome-switcher">
+        <span class="price-label">OUTCOME</span>
+        <div id="outcome-buttons">
+          <button class="outcome-btn active" id="btn-outcome-up">▲ UP</button>
+          <button class="outcome-btn" id="btn-outcome-down">▼ DOWN</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════ VIEW 1: LIVE TRADING (Dedicated Fixed 300s/900s) ═══════════════ -->
+    <main id="trading-view" class="active-view">
+      <div id="trading-chart-wrapper" style="position:relative; width:100%; height:100%; flex:1; display:flex; flex-direction:column; overflow:hidden;">
+        <div id="trading-chart-container" style="width:100%; height:100%; flex:1; position:relative;"></div>
+      </div>
+    </main>
+
+    <!-- ═══════════════ VIEW 2: MULTI-SESSION TIMELINE CHART ═══════════════ -->
+    <main id="chart-view" class="hidden-view">
+      <!-- Chart toolbar -->
+      <div id="chart-toolbar">
+        <div id="tf-switcher">
+          <span class="tf-label">TIMEFRAME</span>
+          <div id="tf-buttons">
+            <button class="tf-btn active" id="btn-tf-1s" data-tf="1">1s</button>
+            <button class="tf-btn" id="btn-tf-5s" data-tf="5">5s</button>
+            <button class="tf-btn" id="btn-tf-15s" data-tf="15">15s</button>
+            <button class="tf-btn" id="btn-tf-30s" data-tf="30">30s</button>
+            <button class="tf-btn" id="btn-tf-1m" data-tf="60">1m</button>
+          </div>
+        </div>
+
+        <div id="market-info">
+          <span class="info-label">MARKET</span>
+          <span id="market-slug-display">---</span>
+          <span class="info-sep">→</span>
+          <span id="market-window-display">--:-- – --:--</span>
+        </div>
+
+        <div id="chart-actions">
+          <button id="btn-scroll-start" class="action-btn" title="Scroll back to the beginning of history (Earliest session)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
+            <span style="margin-left:4px; font-size:11px; font-weight:600;">Start</span>
+          </button>
+          <button id="btn-quick-load-db" class="action-btn" title="Load saved history from database">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zM22 10H2"/></svg>
+            <span style="margin-left:5px; font-size:11px; font-weight:600;">Load DB History</span>
+          </button>
+          <button id="btn-reset-zoom" class="action-btn" title="Fit all sessions (Overview)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+            <span style="margin-left:4px; font-size:11px; font-weight:600;">Fit All</span>
+          </button>
+          <button id="btn-scroll-live" class="action-btn" title="Scroll forward to live real-time market">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+            <span style="margin-left:4px; font-size:11px; font-weight:600;">Live</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Chart wrapper -->
+      <div id="chart-wrapper">
+        <div id="chart-container"></div>
+        <div id="chart-tooltip" style="display: none;"></div>
+
+        <!-- Loading overlay -->
+        <div id="loading-overlay">
+          <div id="loading-spinner"></div>
+          <div id="loading-text">Fetching market data…</div>
+          <div id="loading-sub" style="display:none"></div>
+        </div>
+
+        <!-- Error overlay -->
+        <div id="error-overlay" style="display:none">
+          <div id="error-icon">⚠</div>
+          <div id="error-text">Connection lost</div>
+          <div id="error-sub">Reconnecting…</div>
+          <button id="btn-retry">Retry Now</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- ═══════════════ VIEW 2: DATABASE & HISTORY PANEL ═══════════════ -->
+    <section id="history-panel-view" class="hidden-view">
+      <div id="panel-content">
+
+        <!-- Header Row / Summary Cards -->
+        <div class="panel-grid-top">
+          <!-- Card 1: Storage File Management -->
+          <div class="panel-card" id="card-storage">
+            <div class="card-header">
+              <div class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                DATABASE FILE STORAGE
+              </div>
+              <span id="db-status-badge" class="badge-disconnected">NOT CONNECTED</span>
+            </div>
+            <div class="card-body">
+              <div class="storage-meta-row">
+                <div class="meta-item">
+                  <span class="meta-lbl">File Size</span>
+                  <span class="meta-val" id="db-file-size">-- KB</span>
+                </div>
+                <div class="meta-item">
+                  <span class="meta-lbl">Last Saved</span>
+                  <span class="meta-val" id="db-last-saved">Never</span>
+                </div>
+                <div class="meta-item">
+                  <span class="meta-lbl">Auto-Save</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="chk-autosave" checked />
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+              </div>
+              <div class="card-actions-row">
+                <button id="btn-connect-file" class="btn-primary">
+                  📁 Choose / Create Database File
+                </button>
+                <button id="btn-save-file" class="btn-secondary">
+                  💾 Save to Disk Now
+                </button>
+                <button id="btn-import-json" class="btn-outline">
+                  📥 Import JSON
+                </button>
+                <button id="btn-export-json" class="btn-outline">
+                  📤 Export JSON
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 2: Polymarket History Downloader (Backfill) -->
+          <div class="panel-card" id="card-downloader">
+            <div class="card-header">
+              <div class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                POLYMARKET HISTORY DOWNLOADER
+              </div>
+              <span id="bf-count-display" class="badge-info">72 sessions (6h)</span>
+            </div>
+            <div class="card-body">
+              <!-- Controls row -->
+              <div class="downloader-controls-row">
+                <div class="ctrl-group">
+                  <span class="ctrl-label">Market:</span>
+                  <div class="bf-tf-group">
+                    <button class="bf-tf-btn active" data-tf="5">BTC 5M</button>
+                    <button class="bf-tf-btn" data-tf="15">BTC 15M</button>
+                  </div>
+                </div>
+
+                <div class="ctrl-group">
+                  <span class="ctrl-label">Time Range:</span>
+                  <div class="preset-group">
+                    <button class="preset-btn active" data-hours="6">6h</button>
+                    <button class="preset-btn" data-hours="12">12h</button>
+                    <button class="preset-btn" data-hours="24">24h</button>
+                    <button class="preset-btn" data-hours="72">3 Days</button>
+                    <button class="preset-btn" data-hours="168">7 Days</button>
+                  </div>
+                </div>
+
+                <div class="ctrl-group">
+                  <label class="checkbox-label" title="Skip downloading sessions that are already saved in your database">
+                    <input type="checkbox" id="chk-smart-merge" checked />
+                    <span>Smart Merge (Skip existing)</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Progress bar wrap -->
+              <div id="bf-progress-wrap" style="display:none;">
+                <div class="progress-bar-bg">
+                  <div id="bf-progress-bar"></div>
+                </div>
+                <div id="bf-progress-text">Ready</div>
+              </div>
+
+              <!-- Action buttons -->
+              <div class="card-actions-row">
+                <button id="btn-start-backfill" class="btn-success">
+                  ▶ Start Download from Polymarket
+                </button>
+                <button id="btn-stop-backfill" class="btn-danger" disabled>
+                  ⏹ Stop
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Analytics Row -->
+        <div class="panel-analytics-row">
+          <div class="analytic-badge">
+            <span class="an-lbl">Total Sessions</span>
+            <span class="an-val" id="stat-total-sessions">0</span>
+          </div>
+          <div class="analytic-badge">
+            <span class="an-lbl">Total Price Ticks</span>
+            <span class="an-val" id="stat-total-ticks">0</span>
+          </div>
+          <div class="analytic-badge">
+            <span class="an-lbl">UP Wins</span>
+            <span class="an-val green" id="stat-up-pct">0.0%</span>
+          </div>
+          <div class="analytic-badge">
+            <span class="an-lbl">DOWN Wins</span>
+            <span class="an-val coral" id="stat-down-pct">0.0%</span>
+          </div>
+          <div class="analytic-badge">
+            <span class="an-lbl">Total Traded Volume</span>
+            <span class="an-val" id="stat-total-volume">$0</span>
+          </div>
+        </div>
+
+        <!-- Session Explorer Table Card -->
+        <div class="panel-card" id="card-table">
+          <div class="table-toolbar">
+            <div class="table-title">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+              SAVED SESSIONS EXPLORER
+              <span id="selected-sessions-count" class="badge-subtle">0 selected</span>
+            </div>
+            <div class="table-actions">
+              <button id="btn-load-to-chart" class="btn-secondary btn-sm">
+                📈 Display All on Chart
+              </button>
+              <button id="btn-delete-selected" class="btn-danger-outline btn-sm">
+                🗑 Delete Selected
+              </button>
+              <button id="btn-clear-db" class="btn-danger-outline btn-sm">
+                ✕ Clear All DB
+              </button>
+            </div>
+          </div>
+
+          <div class="table-scroll-container">
+            <table class="pm-table">
+              <thead>
+                <tr>
+                  <th class="th-chk"><input type="checkbox" id="chk-select-all" /></th>
+                  <th>Session Window (UTC)</th>
+                  <th>TF</th>
+                  <th>Official Winner</th>
+                  <th>OHLC (Open / High / Low / Close)</th>
+                  <th>Ticks</th>
+                  <th>Volume</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="session-table-body">
+                <tr><td colspan="8" class="empty-table-msg">Loading database sessions…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /#panel-content -->
+    </section>
+
+    <!-- ═══════════════ FOOTER ═══════════════ -->
+    <footer id="main-footer">
+      <div id="footer-left">
+        <span id="market-count-display"></span>
+      </div>
+      <div id="footer-center">
+        <span class="attr-text">Charts powered by </span>
+        <a href="https://www.tradingview.com/" target="_blank" class="attr-link">TradingView</a>
+        <span class="attr-text"> · Data from </span>
+        <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket</a>
+      </div>
+      <div id="footer-right">
+        <span id="app-version">v3.2</span>
+      </div>
+    </footer>
+
+  </div><!-- /#app -->
+
+  <input type="file" id="file-import-input" accept=".json" style="display:none;" />
+
+  <!-- Lightweight Charts v5 CDN -->
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+
+  <!-- App modules -->
+  <script>
+
+/* ═══ MODULE: js/price.js ═══ */
+/**
+ * price.js — Polymarket price normalization
+ * Handles: bid/ask/mid/last_trade → effectivePrice (0-100¢)
+ */
+'use strict';
+
+window.PriceEngine = (() => {
+  // Internal state
+  let _bid = null;
+  let _ask = null;
+  let _last = null;
+  let _lastUpdateMs = 0;
+
+  /**
+   * Polymarket UI logic:
+   * If spread > $0.10 AND last trade exists → show last trade
+   * Otherwise → show midpoint
+   */
+  function effectivePrice() {
+    if (_bid !== null && _ask !== null) {
+      const spread = _ask - _bid;
+      const mid = (_bid + _ask) / 2;
+      if (spread > 0.10 && _last !== null) {
+        return _last;
+      }
+      return mid;
+    }
+    if (_last !== null) return _last;
+    return 0.50; // fallback: 50¢
+  }
+
+  function getMid() {
+    if (_bid !== null && _ask !== null) return (_bid + _ask) / 2;
+    if (_last !== null) return _last;
+    return 0.50;
+  }
+
+  function getSpread() {
+    if (_bid !== null && _ask !== null) return _ask - _bid;
+    return null;
+  }
+
+  function toBid()  { return _bid; }
+  function toAsk()  { return _ask; }
+  function toLast() { return _last; }
+  function getLastUpdateMs() { return _lastUpdateMs; }
+
+  // Convert raw 0-1 value to display cents 0-100
+  function toCents(raw) {
+    const n = parseFloat(raw);
+    if (isNaN(n)) return null;
+    return Math.max(0, Math.min(100, n * 100));
+  }
+
+  function updateBidAsk(bid, ask) {
+    const b = parseFloat(bid);
+    const a = parseFloat(ask);
+    if (!isNaN(b) && b > 0) _bid = b;
+    if (!isNaN(a) && a > 0) _ask = a;
+    _lastUpdateMs = Date.now();
+  }
+
+  function updateLastTrade(price) {
+    const p = parseFloat(price);
+    if (!isNaN(p) && p > 0) {
+      _last = p;
+      _lastUpdateMs = Date.now();
+    }
+  }
+
+  function reset() {
+    _bid = null;
+    _ask = null;
+    _last = null;
+    _lastUpdateMs = 0;
+  }
+
+  return {
+    effectivePrice,
+    getMid,
+    getSpread,
+    toBid,
+    toAsk,
+    toLast,
+    toCents,
+    updateBidAsk,
+    updateLastTrade,
+    getLastUpdateMs,
+    reset,
+  };
+})();
+
+;
+
+/* ═══ MODULE: js/buffer.js ═══ */
+/**
+ * buffer.js — High-performance tick buffer & aggregation engine v1.2
+ * 
+ * - Stores raw UP-token probability ticks (0–100¢)
+ * - Dynamic aggregation for timeframes (1s / 5s / 15s / 30s / 60s)
+ * - Real-time outcome inversion (DOWN = 100 - UP) on demand
+ */
+'use strict';
+
+window.TickBuffer = (() => {
+  const MAX_TICKS = 500000; // Large capacity for multi-day history
+
+  // Internal storage: always stores UP-token price in cents (0.0–100.0)
+  let _ticks = []; // [{ time: unixSec, value: number }]
+  let _marketBoundaries = [];
+
+  function addTick(unixSec, rawUpCents) {
+    if (typeof unixSec !== 'number' || typeof rawUpCents !== 'number' || isNaN(rawUpCents)) return;
+    rawUpCents = Math.max(0, Math.min(100, rawUpCents));
+
+    const last = _ticks[_ticks.length - 1];
+    if (last && last.time === unixSec) {
+      last.value = rawUpCents;
+    } else if (!last || unixSec > last.time) {
+      _ticks.push({ time: unixSec, value: rawUpCents });
+    } else {
+      _ticks.push({ time: unixSec, value: rawUpCents });
+      _ticks.sort((a, b) => a.time - b.time);
+    }
+
+    if (_ticks.length > MAX_TICKS) {
+      _ticks = _ticks.slice(_ticks.length - MAX_TICKS);
+    }
+  }
+
+  function addBulk(items) {
+    if (!Array.isArray(items) || items.length === 0) return;
+    const map = new Map();
+    for (const t of _ticks) map.set(t.time, t.value);
+    for (const pt of items) {
+      const time = Array.isArray(pt) ? pt[0] : (pt.time || pt.t);
+      const val  = Array.isArray(pt) ? pt[1] : (pt.value || pt.v);
+      if (typeof time === 'number' && typeof val === 'number' && !isNaN(val)) {
+        map.set(time, Math.max(0, Math.min(100, val)));
+      }
+    }
+    _ticks = Array.from(map.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([time, value]) => ({ time, value }));
+
+    if (_ticks.length > MAX_TICKS) {
+      _ticks = _ticks.slice(_ticks.length - MAX_TICKS);
+    }
+  }
+
+  /**
+   * Aggregate raw ticks into timeframe buckets with outcome transformation.
+   * Strictly deduplicates and sorts timestamps for Lightweight Charts v5.
+   * @param {number} tfSeconds - 1, 5, 15, 30, 60
+   * @param {string} outcomeMode - 'up' | 'down'
+   */
+  function aggregate(tfSeconds, outcomeMode = 'up') {
+    if (_ticks.length === 0) return [];
+
+    const invert = outcomeMode === 'down';
+    const tf = Math.max(1, tfSeconds || 1);
+
+    const buckets = new Map();
+    for (const tick of _ticks) {
+      const bt = tf === 1 ? tick.time : Math.floor(tick.time / tf) * tf;
+      const v = invert ? (100 - tick.value) : tick.value;
+      buckets.set(bt, v);
+    }
+
+    return Array.from(buckets.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([time, value]) => ({ time, value }));
+  }
+
+  function getRawTicks() {
+    return [..._ticks];
+  }
+
+  function getRecent(count) {
+    return _ticks.slice(-count);
+  }
+
+  function getLastTick() {
+    return _ticks[_ticks.length - 1] || null;
+  }
+
+  function getCount() {
+    return _ticks.length;
+  }
+
+  function addMarketBoundary(unixSec) {
+    _marketBoundaries.push(unixSec);
+  }
+
+  function getMarketBoundaries() {
+    return [..._marketBoundaries];
+  }
+
+  function reset(keepHistory = false) {
+    if (!keepHistory) {
+      _ticks = [];
+      _marketBoundaries = [];
+    }
+  }
+
+  return {
+    addTick,
+    addBulk,
+    aggregate,
+    getRawTicks,
+    getRecent,
+    getLastTick,
+    getCount,
+    addMarketBoundary,
+    getMarketBoundaries,
+    reset,
+  };
+})();
+
+;
+
+/* ═══ MODULE: js/db.js ═══ */
+/**
+ * db.js — Local File Database Manager v1.4
+ * 
+ * Features:
+ * - Uses File System Access API for direct local file reading/writing (history.json)
+ * - IndexedDB handle persistence for 1-click reconnect across page reloads
+ * - In-memory structured cache of sessions and ticks
+ * - Smart merge to prevent duplicate sessions
+ * - JSON import/export fallback
+ */
+'use strict';
+
+window.DBManager = (() => {
+  const IDB_NAME = 'PM_Chart_DB';
+  const IDB_VERSION = 1;
+  const IDB_STORE = 'handles';
+  const HANDLE_KEY = 'history_file_handle';
+
+  // In-memory state
+  let _fileHandle = null;
+  let _fileName = 'history.json';
+  let _fileSize = 0;
+  let _lastSavedMs = 0;
+  let _autoSaveEnabled = true;
+
+  // Database structure:
+  // {
+  //   version: '1.4',
+  //   updatedAt: 1786833000,
+  //   sessions: { [slug]: { slug, tf, startTs, endTs, winner, outcomePrices, volume, open, high, low, close, ticks: [[t, v], ...] } }
+  // }
+  let _db = {
+    version: '1.4',
+    updatedAt: 0,
+    sessions: {},
+  };
+
+  // Event listeners for DB updates
+  const _listeners = new Set();
+
+  function subscribe(fn) {
+    _listeners.add(fn);
+    return () => _listeners.delete(fn);
+  }
+
+  function _notify(eventType, data) {
+    _listeners.forEach(fn => {
+      try { fn(eventType, data); } catch (e) { console.error('[DBManager] Listener error:', e); }
+    });
+  }
+
+  // ─── IndexedDB Handle Cache ──────────────────────────────────────────
+  function _openIDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function _saveHandleToIDB(handle) {
+    try {
+      const idb = await _openIDB();
+      const tx = idb.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(handle, HANDLE_KEY);
+      return new Promise(r => { tx.oncomplete = r; });
+    } catch (e) {
+      console.warn('[DBManager] Could not save handle to IDB:', e);
+    }
+  }
+
+  async function _getHandleFromIDB() {
+    try {
+      const idb = await _openIDB();
+      const tx = idb.transaction(IDB_STORE, 'readonly');
+      return new Promise(resolve => {
+        const req = tx.objectStore(IDB_STORE).get(HANDLE_KEY);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  // ─── File Connection via File System Access API ─────────────────────
+  async function connectFile(createIfMissing = true) {
+    if (!('showOpenFilePicker' in window)) {
+      console.warn('[DBManager] File System Access API not supported in this browser');
+      return false;
+    }
+
+    try {
+      let handle;
+      if (createIfMissing && 'showSaveFilePicker' in window) {
+        handle = await window.showSaveFilePicker({
+          suggestedName: 'history.json',
+          types: [{
+            description: 'JSON Database File',
+            accept: { 'application/json': ['.json'] },
+          }],
+        });
+      } else {
+        const handles = await window.showOpenFilePicker({
+          types: [{
+            description: 'JSON Database File',
+            accept: { 'application/json': ['.json'] },
+          }],
+          multiple: false,
+        });
+        handle = handles[0];
+      }
+
+      if (handle) {
+        _fileHandle = handle;
+        _fileName = handle.name || 'history.json';
+        await _saveHandleToIDB(handle);
+        await readFile();
+        _notify('connected', { fileName: _fileName });
+        return true;
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        console.error('[DBManager] File pick error:', e);
+      }
+    }
+    return false;
+  }
+
+  async function tryAutoConnect() {
+    try {
+      const cached = await _getHandleFromIDB();
+      if (cached && 'queryPermission' in cached) {
+        const perm = await cached.queryPermission({ mode: 'readwrite' });
+        if (perm === 'granted') {
+          _fileHandle = cached;
+          _fileName = cached.name || 'history.json';
+          await readFile();
+          _notify('connected', { fileName: _fileName });
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn('[DBManager] Auto-connect failed:', e);
+    }
+
+    // Fallback: automatically load history.json next to HTML file if DB is empty
+    try {
+      const res = await fetch('./history.json');
+      if (res.ok) {
+        const text = await res.text();
+        const count = importJSON(text);
+        if (count > 0) {
+          console.log(`[DBManager] Auto-loaded ${count} sessions from ./history.json`);
+          _notify('loaded', { fileName: 'history.json', count });
+          return true;
+        }
+      }
+    } catch {}
+
+    return false;
+  }
+
+  // ─── File Read & Write ──────────────────────────────────────────────
+  async function readFile() {
+    if (!_fileHandle) return false;
+
+    try {
+      const file = await _fileHandle.getFile();
+      _fileSize = file.size;
+      const text = await file.text();
+
+      if (text && text.trim().length > 0) {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === 'object') {
+          // Normalize sessions object
+          if (parsed.sessions && typeof parsed.sessions === 'object') {
+            const rawList = Array.isArray(parsed.sessions) ? parsed.sessions : Object.values(parsed.sessions);
+            _db.sessions = {};
+            for (const s of rawList) {
+              if (s && s.slug) {
+                const tf = s.tf || (s.slug.includes('-15m-') ? 15 : 5);
+                s.ticks = _sanitizeTicks(s.ticks, s.startTs, s.endTs, tf);
+                _db.sessions[s.slug] = s;
+              }
+            }
+          }
+          _db.version = parsed.version || '1.6';
+          _db.updatedAt = parsed.updatedAt || Date.now();
+        }
+      }
+
+      _notify('read', { sessionCount: Object.keys(_db.sessions).length });
+      return true;
+    } catch (e) {
+      console.error('[DBManager] Read file failed:', e);
+      return false;
+    }
+  }
+
+  async function saveFile() {
+    if (!_fileHandle) {
+      console.warn('[DBManager] No file connected to save');
+      return false;
+    }
+
+    try {
+      _db.updatedAt = Math.floor(Date.now() / 1000);
+      const jsonStr = JSON.stringify(_db, null, 2);
+
+      const writable = await _fileHandle.createWritable();
+      await writable.write(jsonStr);
+      await writable.close();
+
+      _fileSize = new Blob([jsonStr]).size;
+      _lastSavedMs = Date.now();
+      _notify('saved', { size: _fileSize, lastSavedMs: _lastSavedMs });
+      return true;
+    } catch (e) {
+      console.error('[DBManager] Save file failed:', e);
+      return false;
+    }
+  }
+
+  // ─── Data Access & Mutations ────────────────────────────────────────
+  function getSession(slug) {
+    return _db.sessions[slug] || null;
+  }
+
+  function getAllSessions() {
+    return Object.values(_db.sessions).sort((a, b) => (a.startTs || 0) - (b.startTs || 0));
+  }
+
+  function getSessionCount() {
+    return Object.keys(_db.sessions).length;
+  }
+
+  function getTotalTickCount() {
+    let total = 0;
+    for (const slug in _db.sessions) {
+      const s = _db.sessions[slug];
+      if (s && Array.isArray(s.ticks)) {
+        total += s.ticks.length;
+      }
+    }
+    return total;
+  }
+
+  function _sanitizeTicks(ticks, startTs, endTs, tfMinutes) {
+    if (!Array.isArray(ticks)) return [];
+    const intervalSec = (tfMinutes || 5) * 60;
+    const start = startTs || 0;
+    const end = endTs || (start ? start + intervalSec : 0);
+
+    const valid = [];
+    for (const pt of ticks) {
+      const time = Array.isArray(pt) ? pt[0] : (pt.t || pt.time);
+      const val  = Array.isArray(pt) ? pt[1] : (pt.v || pt.value);
+      if (typeof time === 'number' && typeof val === 'number' && !isNaN(val)) {
+        // Enforce strict time window isolation
+        if (start > 0 && end > 0) {
+          if (time >= start - 5 && time <= end + 5) {
+            valid.push([time, Math.max(0, Math.min(100, Math.round(val * 10) / 10))]);
+          }
+        } else {
+          valid.push([time, Math.max(0, Math.min(100, Math.round(val * 10) / 10))]);
+        }
+      }
+    }
+    return valid.sort((a, b) => a[0] - b[0]);
+  }
+
+  /**
+   * Add or update a session with ticks and metadata.
+   * Smart merge: preserves existing ticks and appends new ones without duplicates.
+   */
+  function upsertSession(sessionData, autoFlush = false) {
+    if (!sessionData || !sessionData.slug) return;
+    const slug = sessionData.slug;
+    const existing = _db.sessions[slug] || null;
+
+    const tf = sessionData.tf || (existing ? existing.tf : (slug.includes('-15m-') ? 15 : 5));
+    const startTs = sessionData.startTs || (existing ? existing.startTs : null);
+    const endTs = sessionData.endTs || (existing ? existing.endTs : (startTs ? startTs + tf * 60 : null));
+
+    let existingTicks = existing && Array.isArray(existing.ticks) ? existing.ticks : [];
+    let newTicks = Array.isArray(sessionData.ticks) ? sessionData.ticks : [];
+
+    const tickMap = new Map();
+    for (const [time, val] of _sanitizeTicks(existingTicks, startTs, endTs, tf)) {
+      tickMap.set(time, val);
+    }
+    for (const [time, val] of _sanitizeTicks(newTicks, startTs, endTs, tf)) {
+      tickMap.set(time, val);
+    }
+
+    const mergedTicks = Array.from(tickMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([time, val]) => [time, Math.round(val * 10) / 10]);
+
+    // Calculate OHLC statistics
+    let open = null, high = null, low = null, close = null;
+    if (mergedTicks.length > 0) {
+      open = mergedTicks[0][1];
+      close = mergedTicks[mergedTicks.length - 1][1];
+      high = open;
+      low = open;
+      for (const pt of mergedTicks) {
+        const v = pt[1];
+        if (v > high) high = v;
+        if (v < low) low = v;
+      }
+    }
+
+    _db.sessions[slug] = {
+      slug,
+      tf: sessionData.tf || (slug.includes('-15m-') ? 15 : 5),
+      startTs: sessionData.startTs || (existing ? existing.startTs : null),
+      endTs: sessionData.endTs || (existing ? existing.endTs : null),
+      winner: sessionData.winner || (existing ? existing.winner : 'PENDING'),
+      outcomePrices: sessionData.outcomePrices || (existing ? existing.outcomePrices : null),
+      volume: sessionData.volume !== undefined ? sessionData.volume : (existing ? existing.volume : 0),
+      open: sessionData.open !== undefined ? sessionData.open : open,
+      high: sessionData.high !== undefined ? sessionData.high : high,
+      low: sessionData.low !== undefined ? sessionData.low : low,
+      close: sessionData.close !== undefined ? sessionData.close : close,
+      btcOpen: sessionData.btcOpen !== undefined ? sessionData.btcOpen : (existing ? existing.btcOpen : null),
+      btcClose: sessionData.btcClose !== undefined ? sessionData.btcClose : (existing ? existing.btcClose : null),
+      btcHigh: sessionData.btcHigh !== undefined ? sessionData.btcHigh : (existing ? existing.btcHigh : null),
+      btcLow: sessionData.btcLow !== undefined ? sessionData.btcLow : (existing ? existing.btcLow : null),
+      btcChange: sessionData.btcChange !== undefined ? sessionData.btcChange : (existing ? existing.btcChange : null),
+      quality: sessionData.quality || (existing ? existing.quality : (mergedTicks.length >= 30 ? 'EXCELLENT' : (mergedTicks.length >= 10 ? 'GOOD' : 'SPARSE'))),
+      ticks: mergedTicks,
+    };
+
+    _notify('session_updated', { slug, session: _db.sessions[slug] });
+
+    if (autoFlush && _autoSaveEnabled && _fileHandle) {
+      saveFile();
+    }
+  }
+
+  function deleteSessions(slugs) {
+    if (!Array.isArray(slugs)) slugs = [slugs];
+    let changed = false;
+    for (const slug of slugs) {
+      if (_db.sessions[slug]) {
+        delete _db.sessions[slug];
+        changed = true;
+      }
+    }
+    if (changed) {
+      _notify('sessions_deleted', { slugs });
+      if (_autoSaveEnabled && _fileHandle) saveFile();
+    }
+  }
+
+  function clearAll() {
+    _db.sessions = {};
+    _notify('cleared', {});
+    if (_autoSaveEnabled && _fileHandle) saveFile();
+  }
+
+  // ─── Extract All Ticks for Chart Rendering ──────────────────────────
+  /**
+   * Returns flattened array of all historical ticks sorted by timestamp:
+   * [{ time: unixSec, value: rawUpCents, sessionSlug: string }]
+   */
+  function getAllTicksFlattened() {
+    const sessions = getAllSessions();
+    const result = [];
+    for (const s of sessions) {
+      if (Array.isArray(s.ticks)) {
+        for (const pt of s.ticks) {
+          const time = Array.isArray(pt) ? pt[0] : pt.t || pt.time;
+          const value = Array.isArray(pt) ? pt[1] : pt.v || pt.value;
+          if (typeof time === 'number' && typeof value === 'number') {
+            result.push({ time, value, slug: s.slug });
+          }
+        }
+      }
+    }
+    return result.sort((a, b) => a.time - b.time);
+  }
+
+  // ─── Getters ────────────────────────────────────────────────────────
+  function isConnected() { return _fileHandle !== null; }
+  function getFileName() { return _fileName; }
+  function getFileSize() { return _fileSize; }
+  function getLastSavedMs() { return _lastSavedMs; }
+  function isAutoSave() { return _autoSaveEnabled; }
+  function setAutoSave(enabled) { _autoSaveEnabled = !!enabled; }
+
+  // ─── Fallback JSON Export & Import ──────────────────────────────────
+  function exportJSON() {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(_db, null, 2));
+    const a = document.createElement('a');
+    a.setAttribute('href', dataStr);
+    a.setAttribute('download', `pm_history_${Date.now()}.json`);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function importJSON(fileOrText) {
+    if (typeof fileOrText === 'string' || (fileOrText && typeof fileOrText === 'object' && !('size' in fileOrText))) {
+      try {
+        const parsed = typeof fileOrText === 'string' ? JSON.parse(fileOrText) : fileOrText;
+        if (parsed && parsed.sessions) {
+          const list = Array.isArray(parsed.sessions) ? parsed.sessions : Object.values(parsed.sessions);
+          for (const s of list) {
+            if (s && s.slug) upsertSession(s);
+          }
+          if (_autoSaveEnabled && _fileHandle) saveFile();
+          return Promise.resolve(list.length);
+        }
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }
+
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          if (parsed && parsed.sessions) {
+            const list = Array.isArray(parsed.sessions) ? parsed.sessions : Object.values(parsed.sessions);
+            for (const s of list) {
+              if (s && s.slug) upsertSession(s);
+            }
+            if (_autoSaveEnabled && _fileHandle) saveFile();
+            resolve(list.length);
+          } else {
+            reject(new Error('Invalid JSON format'));
+          }
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsText(fileOrText);
+    });
+  }
+
+  return {
+    connectFile,
+    tryAutoConnect,
+    readFile,
+    saveFile,
+    getSession,
+    getAllSessions,
+    getSessionCount,
+    getTotalTickCount,
+    upsertSession,
+    deleteSessions,
+    clearAll,
+    getAllTicksFlattened,
+    subscribe,
+    isConnected,
+    getFileName,
+    getFileSize,
+    getLastSavedMs,
+    isAutoSave,
+    setAutoSave,
+    exportJSON,
+    importJSON,
+  };
+})();
+
+;
+
+/* ═══ MODULE: js/backfill.js ═══ */
+/**
+ * backfill.js — Polymarket Historical Data Backfill Engine v1.4
+ * 
+ * Responsibilities:
+ * - Download past 5M / 15M sessions from Polymarket Gamma API
+ * - Fetch historical price curve from CLOB /prices-history
+ * - Parse official settlement winner (outcomePrices)
+ * - Rate-limited batching with live progress updates
+ * - Smart Merge with local database (skips already downloaded sessions)
+ * - Cancellation support
+ */
+'use strict';
+
+window.BackfillEngine = (() => {
+  const GAMMA_BASE = 'https://gamma-api.polymarket.com';
+  const CLOB_BASE  = 'https://clob.polymarket.com';
+  const DATA_BASE  = 'https://data-api.polymarket.com';
+
+  let _isRunning = false;
+  let _abortRequested = false;
+
+  function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  async function _fetchJSON(url, retries = 2) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        if (resp.ok) return await resp.json();
+        if (resp.status === 404) return null;
+        if (resp.status === 429) {
+          await _sleep(800 * (i + 1));
+          continue;
+        }
+      } catch (e) {
+        if (i < retries - 1) await _sleep(600);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Fetch single session metadata, real intraday trades (Data API), and orderbook price changes (CLOB API).
+   */
+  async function fetchSessionData(slug, tfMinutes) {
+    const event = await _fetchJSON(`${GAMMA_BASE}/events/slug/${slug}`);
+    if (!event || !event.markets || event.markets.length === 0) return null;
+
+    const market = event.markets[0];
+    let tokenIds, outcomes, outcomePrices;
+
+    try {
+      tokenIds = typeof market.clobTokenIds === 'string' ? JSON.parse(market.clobTokenIds) : market.clobTokenIds;
+      outcomes = typeof market.outcomes === 'string' ? JSON.parse(market.outcomes) : market.outcomes;
+      outcomePrices = typeof market.outcomePrices === 'string' ? JSON.parse(market.outcomePrices) : market.outcomePrices;
+    } catch {
+      return null;
+    }
+
+    if (!Array.isArray(tokenIds) || tokenIds.length < 2) return null;
+
+    // Determine Up token ID
+    const upIdx = Array.isArray(outcomes)
+      ? outcomes.findIndex(o => /^up$/i.test(String(o).trim()) || /^yes$/i.test(String(o).trim()))
+      : 0;
+    const upTokenId = tokenIds[upIdx !== -1 ? upIdx : 0];
+
+    // Determine official winner
+    let winner = 'PENDING';
+    let upWon = null;
+    if (Array.isArray(outcomePrices) && outcomePrices.length >= 2) {
+      const upP = parseFloat(outcomePrices[upIdx !== -1 ? upIdx : 0]);
+      if (!isNaN(upP)) {
+        if (upP > 0.5) { winner = 'UP'; upWon = true; }
+        else if (upP < 0.5) { winner = 'DOWN'; upWon = false; }
+      }
+    }
+
+    // Extract start and end ts
+    let startTs = null;
+    const slugMatch = slug.match(/(\d+)$/);
+    if (slugMatch) startTs = parseInt(slugMatch[1], 10);
+    const intervalSec = tfMinutes * 60;
+    const endTs = startTs ? (startTs + intervalSec) : null;
+
+    const tickMap = new Map();
+
+    // 1. Fetch real individual trades from Data API
+    if (market.conditionId) {
+      const trades = await _fetchJSON(`${DATA_BASE}/trades?market=${market.conditionId}&limit=500`);
+      if (Array.isArray(trades)) {
+        for (const tr of trades) {
+          const ts = tr.timestamp;
+          if (startTs && endTs && ts >= startTs && ts <= endTs) {
+            let p = tr.price;
+            if (tr.outcome === 'Down' || tr.outcomeIndex === 1) p = 1 - p;
+            if (typeof p === 'number' && !isNaN(p)) {
+              tickMap.set(ts, Math.round(p * 1000) / 10);
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Fetch orderbook price changes from CLOB strictly bounded by startTs & endTs
+    if (upTokenId && startTs && endTs) {
+      const ph = await _fetchJSON(`${CLOB_BASE}/prices-history?market=${upTokenId}&startTs=${startTs}&endTs=${endTs}&fidelity=1`);
+      if (ph && Array.isArray(ph.history)) {
+        for (const pt of ph.history) {
+          if (pt.t >= startTs && pt.t <= endTs) {
+            tickMap.set(pt.t, Math.round(pt.p * 1000) / 10);
+          }
+        }
+      }
+    }
+
+    // 3. Anchor start and end of the session
+    if (startTs && !tickMap.has(startTs)) {
+      const firstVal = tickMap.size > 0 ? Array.from(tickMap.values())[0] : 50.0;
+      tickMap.set(startTs, firstVal);
+    }
+    if (endTs && !tickMap.has(endTs) && upWon !== null) {
+      tickMap.set(endTs, upWon ? 100.0 : 0.0);
+    }
+
+    // 4. Extract official Polymarket BTC Target & Final settlement prices (Chainlink TWAP)
+    let btcOpen = null, btcClose = null, btcHigh = null, btcLow = null, btcChange = null;
+
+    // Check official Polymarket eventMetadata first (matches Polymarket 100%!)
+    const meta = event.eventMetadata || market.eventMetadata || event.metadata || market.metadata;
+    if (meta && typeof meta === 'object') {
+      const pToBeat = parseFloat(meta.priceToBeat || meta.targetPrice || meta.openPrice);
+      const fPrice = parseFloat(meta.finalPrice || meta.settlementPrice || meta.closePrice);
+      if (!isNaN(pToBeat) && pToBeat > 0) btcOpen = pToBeat;
+      if (!isNaN(fPrice) && fPrice > 0) btcClose = fPrice;
+    }
+
+    // Fallback to Binance BTCUSDT kline if eventMetadata is not yet available
+    if ((btcOpen === null || btcClose === null) && startTs) {
+      try {
+        const kline = await _fetchJSON(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${tfMinutes}m&startTime=${startTs * 1000}&limit=1`);
+        if (Array.isArray(kline) && kline[0]) {
+          if (btcOpen === null) btcOpen = parseFloat(kline[0][1]);
+          btcHigh = parseFloat(kline[0][2]);
+          btcLow = parseFloat(kline[0][3]);
+          if (btcClose === null) btcClose = parseFloat(kline[0][4]);
+        }
+      } catch {}
+    }
+
+    if (btcOpen !== null && btcClose !== null && btcOpen > 0) {
+      btcChange = Math.round(((btcClose - btcOpen) / btcOpen) * 10000) / 100;
+    }
+
+    const ticks = Array.from(tickMap.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([t, v]) => [t, v]);
+
+    // 5. Compute download quality metric
+    const tickCount = ticks.length;
+    const spanSec = tickCount > 0 ? (ticks[ticks.length - 1][0] - ticks[0][0]) : 0;
+    const quality = tickCount >= 30 ? 'EXCELLENT' : (tickCount >= 10 ? 'GOOD' : 'SPARSE');
+
+    // Volume
+    const volume = parseFloat(event.volume || market.volume || 0);
+
+    return {
+      slug,
+      tf: tfMinutes,
+      startTs,
+      endTs,
+      winner,
+      outcomePrices,
+      volume,
+      btcOpen,
+      btcClose,
+      btcHigh,
+      btcLow,
+      btcChange,
+      quality,
+      tickCount,
+      spanSec,
+      ticks,
+    };
+  }
+
+  /**
+   * Start batch download of historical sessions.
+   * @param {Object} options
+   * @param {number} options.tfMinutes - 5 or 15
+   * @param {number} options.sessionCount - e.g. 72 (6h), 144 (12h), 288 (24h)
+   * @param {boolean} options.smartMerge - skip sessions already in DBManager with ticks
+   * @param {Function} onProgress - ({ current, total, slug, savedCount, status })
+   */
+  async function startBackfill({ tfMinutes = 5, sessionCount = 72, smartMerge = true }, onProgress) {
+    if (_isRunning) return false;
+    _isRunning = true;
+    _abortRequested = false;
+
+    const intervalSec = tfMinutes * 60;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const currentWindowTs = Math.floor(nowSec / intervalSec) * intervalSec;
+
+    // Generate past slugs in descending order (most recent first)
+    const targetSlugs = [];
+    for (let i = 1; i <= sessionCount; i++) {
+      const ts = currentWindowTs - (i * intervalSec);
+      const slug = `btc-updown-${tfMinutes}m-${ts}`;
+      targetSlugs.push({ slug, ts });
+    }
+
+    let processed = 0;
+    let saved = 0;
+    let skipped = 0;
+
+    for (const item of targetSlugs) {
+      if (_abortRequested) {
+        console.log('[BackfillEngine] Abort requested by user');
+        break;
+      }
+
+      const { slug } = item;
+
+      // Smart Merge check
+      if (smartMerge && window.DBManager) {
+        const existing = window.DBManager.getSession(slug);
+        if (existing && Array.isArray(existing.ticks) && existing.ticks.length > 10 && existing.winner !== 'PENDING') {
+          skipped++;
+          processed++;
+          if (onProgress) {
+            onProgress({
+              current: processed,
+              total: targetSlugs.length,
+              slug,
+              savedCount: saved,
+              skippedCount: skipped,
+              status: 'SKIPPED (Already in DB)',
+            });
+          }
+          continue;
+        }
+      }
+
+      if (onProgress) {
+        onProgress({
+          current: processed + 1,
+          total: targetSlugs.length,
+          slug,
+          savedCount: saved,
+          skippedCount: skipped,
+          status: 'DOWNLOADING...',
+        });
+      }
+
+      try {
+        const data = await fetchSessionData(slug, tfMinutes);
+        if (data && data.ticks.length > 0) {
+          if (window.DBManager) {
+            window.DBManager.upsertSession(data, false); // batch in memory
+          }
+          saved++;
+        }
+      } catch (e) {
+        console.warn('[BackfillEngine] Failed for slug:', slug, e);
+      }
+
+      processed++;
+
+      if (onProgress) {
+        onProgress({
+          current: processed,
+          total: targetSlugs.length,
+          slug,
+          savedCount: saved,
+          skippedCount: skipped,
+          status: 'SAVED',
+        });
+      }
+
+      // Polite rate-limit delay (80ms)
+      await _sleep(80);
+    }
+
+    // Flush all to disk
+    if (window.DBManager && window.DBManager.isAutoSave()) {
+      await window.DBManager.saveFile();
+    }
+
+    _isRunning = false;
+    _abortRequested = false;
+
+    return { processed, saved, skipped };
+  }
+
+  function stop() {
+    if (_isRunning) {
+      _abortRequested = true;
+    }
+  }
+
+  function isRunning() { return _isRunning; }
+
+  return {
+    fetchSessionData,
+    startBackfill,
+    stop,
+    isRunning,
+  };
+})();
+
+;
+
+/* ═══ MODULE: js/market.js ═══ */
+/**
+ * market.js — Polymarket market discovery & rollover scheduler v1.2
+ * 
+ * Responsibilities:
+ * - Compute current rolling market slug from timestamp
+ * - Fetch market metadata from Gamma API
+ * - Accurately parse clobTokenIds / outcomes (Up vs Down)
+ * - Schedule seamless rollover at market boundary (pre-fetch + switch)
+ * - Guard against stale or expired markets
+ */
+'use strict';
+
+window.MarketManager = (() => {
+  const GAMMA_BASE = 'https://gamma-api.polymarket.com';
+  const CLOB_BASE  = 'https://clob.polymarket.com';
+
+  let _currentMarket = null; // { slug, upTokenId, downTokenId, startTs, endTs, conditionId }
+  let _nextMarket    = null; // prefetched next market
+  let _rolloverTimer = null;
+  let _prefetchTimer = null;
+  let _onSwitchCb    = null;
+  let _marketTf      = 5;    // 5 or 15 minutes
+  let _isRollingOver = false;
+
+  // ─── Slug Calculations ──────────────────────────────────────────────
+  function _intervalSec(tfMinutes) {
+    return tfMinutes * 60; // 300 or 900
+  }
+
+  function _getWindowTs(tfMinutes, now) {
+    const interval = _intervalSec(tfMinutes);
+    const nowSec = Math.floor((now || Date.now()) / 1000);
+    return Math.floor(nowSec / interval) * interval;
+  }
+
+  function makeSlug(tfMinutes, windowTs) {
+    return `btc-updown-${tfMinutes}m-${windowTs}`;
+  }
+
+  function getCurrentSlug(tfMinutes) {
+    return makeSlug(tfMinutes, _getWindowTs(tfMinutes));
+  }
+
+  function getNextSlug(tfMinutes) {
+    const cur = _getWindowTs(tfMinutes);
+    return makeSlug(tfMinutes, cur + _intervalSec(tfMinutes));
+  }
+
+  // ─── Gamma API Fetch ────────────────────────────────────────────────
+  async function _fetchWithRetry(url, retries = 3, delayMs = 600) {
+    let lastErr;
+    for (let i = 0; i < retries; i++) {
+      try {
+        const resp = await fetch(url, {
+          headers: {
+            'Accept': 'application/json',
+          },
+        });
+        if (resp.ok) {
+          return await resp.json();
+        }
+        if (resp.status === 404) return null;
+        if (resp.status === 429) {
+          await _sleep(delayMs * Math.pow(1.5, i));
+          continue;
+        }
+        throw new Error(`HTTP ${resp.status}`);
+      } catch (e) {
+        lastErr = e;
+        if (i < retries - 1) await _sleep(delayMs * Math.pow(1.5, i));
+      }
+    }
+    console.warn('[MarketManager] fetchWithRetry failed:', url, lastErr);
+    return null;
+  }
+
+  function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  /**
+   * Fetch market metadata from Gamma API.
+   * Returns { slug, upTokenId, downTokenId, startTs, endTs, conditionId } or null
+   */
+  async function fetchMarketData(slug) {
+    // 1. Try /events/slug/{slug}
+    let data = await _fetchWithRetry(`${GAMMA_BASE}/events/slug/${slug}`);
+
+    // 2. Fallback: try /events?slug={slug}
+    if (!data) {
+      const arr = await _fetchWithRetry(`${GAMMA_BASE}/events?slug=${encodeURIComponent(slug)}&limit=1`);
+      if (Array.isArray(arr) && arr.length > 0) data = arr[0];
+      else if (arr && arr.id) data = arr;
+    }
+
+    if (!data) return null;
+
+    const markets = data.markets || [];
+    if (markets.length === 0) return null;
+    const market = markets[0];
+
+    // Parse JSON string token IDs and outcomes
+    let tokenIds, outcomes;
+    try {
+      tokenIds = typeof market.clobTokenIds === 'string'
+        ? JSON.parse(market.clobTokenIds)
+        : market.clobTokenIds;
+      outcomes = typeof market.outcomes === 'string'
+        ? JSON.parse(market.outcomes)
+        : market.outcomes;
+    } catch (e) {
+      console.error('[MarketManager] Failed to parse tokenIds/outcomes:', e);
+      return null;
+    }
+
+    if (!Array.isArray(tokenIds) || tokenIds.length < 2) return null;
+
+    // Map "Up" outcome to correct token index
+    const upIdx = Array.isArray(outcomes)
+      ? outcomes.findIndex(o => /^up$/i.test(String(o).trim()) || /^yes$/i.test(String(o).trim()))
+      : 0;
+
+    const upTokenId   = tokenIds[upIdx !== -1 ? upIdx : 0];
+    const downTokenId = tokenIds[upIdx !== -1 ? (upIdx === 0 ? 1 : 0) : 1];
+
+    if (!upTokenId) return null;
+
+    // Derive startTs from slug timestamp
+    let startTs = null;
+    const slugMatch = slug.match(/(\d+)$/);
+    if (slugMatch) startTs = parseInt(slugMatch[1], 10);
+
+    const tfSec = slug.includes('-15m-') ? 900 : 300;
+    const endTs = startTs ? (startTs + tfSec) : _parseTs(data.endDate || market.endDate || null);
+
+    return {
+      slug,
+      upTokenId,
+      downTokenId,
+      startTs,
+      endTs,
+      conditionId: market.conditionId || null,
+      question: market.question || data.title || '',
+    };
+  }
+
+  function _parseTs(val) {
+    if (!val) return null;
+    if (typeof val === 'number') return val > 10_000_000_000 ? Math.floor(val / 1000) : val;
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : Math.floor(d.getTime() / 1000);
+  }
+
+  // ─── Fetch initial midpoint from CLOB REST ──────────────────────────
+  async function fetchMidpoint(tokenId) {
+    const data = await _fetchWithRetry(`${CLOB_BASE}/midpoint?token_id=${tokenId}`, 2);
+    if (!data) return null;
+    const mid = parseFloat(data.mid);
+    return isNaN(mid) ? null : mid;
+  }
+
+  // ─── Market Initialization & Active Search ─────────────────────────
+  async function loadCurrentMarket(tfMinutes) {
+    _marketTf = tfMinutes;
+    const interval = _intervalSec(tfMinutes);
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    // Candidates: current window, next window
+    const candidates = [
+      _getWindowTs(tfMinutes),
+      _getWindowTs(tfMinutes) + interval,
+      _getWindowTs(tfMinutes) - interval,
+    ];
+
+    for (const ts of candidates) {
+      const slug = makeSlug(tfMinutes, ts);
+      const md = await fetchMarketData(slug);
+      if (!md) continue;
+
+      // CRITICAL: Ensure market is active (endTs MUST be in the future!)
+      if (md.endTs && md.endTs <= nowSec) continue;
+
+      console.log('[MarketManager] Active market selected:', md.slug, 'ends in:', md.endTs - nowSec, 's');
+      return md;
+    }
+
+    // Fallback: search Gamma API for active markets
+    console.warn('[MarketManager] Searching active markets via Gamma search');
+    const arr = await _fetchWithRetry(
+      `${GAMMA_BASE}/events?slug_contains=btc-updown-${tfMinutes}m&active=true&closed=false&limit=10`
+    );
+
+    if (Array.isArray(arr) && arr.length > 0) {
+      const activeEvents = arr
+        .map(e => {
+          const match = (e.slug || '').match(/(\d+)$/);
+          const startTs = match ? parseInt(match[1], 10) : _parseTs(e.startDate);
+          const endTs = startTs ? startTs + interval : _parseTs(e.endDate);
+          return { slug: e.slug, startTs, endTs };
+        })
+        .filter(e => e.endTs && e.endTs > nowSec)
+        .sort((a, b) => a.endTs - b.endTs);
+
+      if (activeEvents.length > 0) {
+        return await fetchMarketData(activeEvents[0].slug);
+      }
+    }
+
+    return null;
+  }
+
+  // ─── Rollover Scheduler ────────────────────────────────────────────
+  function scheduleRollover(market, onSwitch) {
+    if (!market || !market.endTs) return;
+    _onSwitchCb = onSwitch;
+
+    clearTimeout(_rolloverTimer);
+    clearTimeout(_prefetchTimer);
+    _nextMarket = null;
+
+    const nowMs = Date.now();
+    const endMs = market.endTs * 1000;
+    const msUntilEnd = endMs - nowMs;
+
+    // Pre-fetch 25 seconds before market ends
+    const prefetchDelay = Math.max(0, msUntilEnd - 25000);
+
+    console.log(`[MarketManager] Scheduled rollover in ${Math.round(msUntilEnd / 1000)}s (pre-fetch in ${Math.round(prefetchDelay / 1000)}s)`);
+
+    _prefetchTimer = setTimeout(() => {
+      _prefetchNextMarket(market);
+    }, prefetchDelay);
+
+    // Switch at endTs
+    _rolloverTimer = setTimeout(() => {
+      _doRollover();
+    }, Math.max(200, msUntilEnd));
+  }
+
+  async function _prefetchNextMarket(currentMarket) {
+    const interval = _intervalSec(_marketTf);
+    const nextSlug = makeSlug(_marketTf, currentMarket.endTs);
+
+    console.log('[MarketManager] Pre-fetching next market:', nextSlug);
+
+    for (let i = 0; i < 25; i++) {
+      const md = await fetchMarketData(nextSlug);
+      if (md) {
+        _nextMarket = md;
+        console.log('[MarketManager] Next market pre-fetched successfully:', md.slug);
+        return;
+      }
+      await _sleep(1000);
+    }
+    console.warn('[MarketManager] Could not pre-fetch next market in advance');
+  }
+
+  async function _doRollover() {
+    if (_isRollingOver) return;
+    _isRollingOver = true;
+
+    try {
+      console.log('[MarketManager] Rolling over to new market slot...');
+
+      let next = _nextMarket;
+
+      if (!next) {
+        const interval = _intervalSec(_marketTf);
+        const nextTs = _currentMarket ? _currentMarket.endTs : _getWindowTs(_marketTf);
+        const nextSlug = makeSlug(_marketTf, nextTs);
+
+        for (let i = 0; i < 15; i++) {
+          next = await fetchMarketData(nextSlug);
+          if (next) break;
+          await _sleep(600);
+        }
+      }
+
+      if (!next) {
+        next = await loadCurrentMarket(_marketTf);
+      }
+
+      if (next) {
+        const prev = _currentMarket;
+        _currentMarket = next;
+        _nextMarket = null;
+
+        if (_onSwitchCb) {
+          _onSwitchCb(next, prev);
+        }
+
+        scheduleRollover(next, _onSwitchCb);
+      } else {
+        console.error('[MarketManager] Rollover retry: no active market found, retrying in 3s...');
+        setTimeout(() => {
+          _isRollingOver = false;
+          _doRollover();
+        }, 3000);
+        return;
+      }
+    } finally {
+      _isRollingOver = false;
+    }
+  }
+
+  // ─── Public Getters / Setters ──────────────────────────────────────
+  function setCurrentMarket(market) {
+    _currentMarket = market;
+  }
+
+  function getCurrentMarket() { return _currentMarket; }
+  function getNextMarket()    { return _nextMarket; }
+  function getMarketTf()      { return _marketTf; }
+
+  function getSecondsRemaining() {
+    if (!_currentMarket || !_currentMarket.endTs) return null;
+    return Math.max(0, _currentMarket.endTs - Math.floor(Date.now() / 1000));
+  }
+
+  function triggerRollover() {
+    _doRollover();
+  }
+
+  return {
+    makeSlug,
+    getCurrentSlug,
+    getNextSlug,
+    fetchMarketData,
+    fetchMidpoint,
+    loadCurrentMarket,
+    scheduleRollover,
+    setCurrentMarket,
+    getCurrentMarket,
+    getNextMarket,
+    getMarketTf,
+    getSecondsRemaining,
+    triggerRollover,
+  };
+})();
+
+;
+
+/* ═══ MODULE: js/ws.js ═══ */
+/**
+ * ws.js — Polymarket CLOB WebSocket Client v1.3
+ * 
+ * Fixes in v1.3:
+ * - Proper unsubscription tracking on market/timeframe switch
+ * - Strict token matching for price_changes array (eliminates sawtooth noise from other markets)
+ * - Safe subscribe / unsubscribe state machine
+ * - Heartbeat PING (10s) and Watchdog (15s)
+ */
+'use strict';
+
+window.PolyWS = (() => {
+  const WS_URL = 'wss://ws-subscriptions-clob.polymarket.com/ws/market';
+  const PING_INTERVAL_MS  = 10_000;
+  const WATCHDOG_MS       = 15_000;
+  const MAX_RECONNECT_MS  = 30_000;
+  const BASE_RECONNECT_MS = 1_000;
+
+  let _ws               = null;
+  let _currentTokenId   = null;
+  let _pingTimer        = null;
+  let _watchdogTimer    = null;
+  let _reconnectTimer   = null;
+  let _reconnectAttempt = 0;
+  let _destroyed        = false;
+  let _lastDataMs       = 0;
+
+  // Event handlers (assigned by app.js)
+  const handlers = {
+    onBook:           null,
+    onPriceChange:    null,
+    onLastTrade:      null,
+    onBestBidAsk:     null,
+    onNewMarket:      null,
+    onMarketResolved: null,
+    onTickSizeChange: null,
+    onConnected:      null,
+    onDisconnected:   null,
+    onError:          null,
+  };
+
+  // ─── Connect ────────────────────────────────────────────────────────
+  function connect() {
+    if (_destroyed) return;
+
+    try {
+      _ws = new WebSocket(WS_URL);
+    } catch (e) {
+      console.error('[PolyWS] WebSocket creation failed:', e);
+      _scheduleReconnect();
+      return;
+    }
+
+    _ws.onopen = () => {
+      console.log('[PolyWS] Connected to Polymarket CLOB WS');
+      _reconnectAttempt = 0;
+      _lastDataMs = Date.now();
+
+      if (_currentTokenId) {
+        _sendSubscribe(_currentTokenId);
+      }
+
+      _startPing();
+      _startWatchdog();
+
+      if (handlers.onConnected) handlers.onConnected();
+    };
+
+    _ws.onmessage = (evt) => {
+      if (evt.data === 'PONG') {
+        _lastDataMs = Date.now();
+        return;
+      }
+
+      let data;
+      try {
+        data = JSON.parse(evt.data);
+      } catch {
+        return;
+      }
+
+      _lastDataMs = Date.now();
+
+      if (Array.isArray(data)) {
+        data.forEach(_handleMessage);
+      } else if (data) {
+        _handleMessage(data);
+      }
+    };
+
+    _ws.onerror = (e) => {
+      console.warn('[PolyWS] WebSocket error:', e);
+      if (handlers.onError) handlers.onError(e);
+    };
+
+    _ws.onclose = (evt) => {
+      console.warn(`[PolyWS] Connection closed (code=${evt.code})`);
+      _clearTimers();
+      if (handlers.onDisconnected) handlers.onDisconnected();
+      if (!_destroyed) _scheduleReconnect();
+    };
+  }
+
+  // ─── Message Dispatcher ─────────────────────────────────────────────
+  function _handleMessage(msg) {
+    if (!msg || !msg.event_type) return;
+
+    switch (msg.event_type) {
+      case 'book': {
+        // Only accept orderbook for our currently subscribed token
+        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+        if (handlers.onBook) handlers.onBook(msg);
+        break;
+      }
+
+      case 'price_change': {
+        // Polymarket CLOB sends price_changes array: [ { asset_id, price, best_bid, best_ask, ... } ]
+        if (Array.isArray(msg.price_changes)) {
+          if (_currentTokenId) {
+            // STRICT MATCH: Only accept entry that matches our subscribed token!
+            const matched = msg.price_changes.find(p => p.asset_id === _currentTokenId);
+            if (matched && handlers.onPriceChange) {
+              handlers.onPriceChange(matched);
+            }
+          } else if (handlers.onPriceChange && msg.price_changes.length > 0) {
+            handlers.onPriceChange(msg.price_changes[0]);
+          }
+        } else {
+          if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+          if (handlers.onPriceChange) handlers.onPriceChange(msg);
+        }
+        break;
+      }
+
+      case 'best_bid_ask': {
+        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+        if (handlers.onBestBidAsk) handlers.onBestBidAsk(msg);
+        break;
+      }
+
+      case 'last_trade_price': {
+        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+        if (handlers.onLastTrade) handlers.onLastTrade(msg);
+        break;
+      }
+
+      case 'new_market': {
+        if (handlers.onNewMarket) handlers.onNewMarket(msg);
+        break;
+      }
+
+      case 'market_resolved': {
+        if (handlers.onMarketResolved) handlers.onMarketResolved(msg);
+        break;
+      }
+
+      case 'tick_size_change': {
+        if (handlers.onTickSizeChange) handlers.onTickSizeChange(msg);
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+
+  // ─── Subscribe / Unsubscribe ────────────────────────────────────────
+  function _sendSubscribe(tokenId) {
+    const msg = {
+      assets_ids: [tokenId],
+      type: 'market',
+      custom_feature_enabled: true,
+    };
+    _send(JSON.stringify(msg));
+  }
+
+  function _sendUnsubscribe(tokenId) {
+    _send(JSON.stringify({
+      assets_ids: [tokenId],
+      type: 'market',
+      operation: 'unsubscribe',
+    }));
+  }
+
+  /**
+   * Subscribe to a new token ID.
+   * Unsubscribes from the previous token cleanly to prevent cross-market data bleed.
+   */
+  function subscribe(newTokenId) {
+    if (!newTokenId) return;
+    const prev = _currentTokenId;
+    _currentTokenId = newTokenId;
+
+    if (_ws && _ws.readyState === WebSocket.OPEN) {
+      if (prev && prev !== newTokenId) {
+        console.log('[PolyWS] Unsubscribing from previous token:', prev);
+        _sendUnsubscribe(prev);
+      }
+      console.log('[PolyWS] Subscribing to new token:', newTokenId);
+      _sendSubscribe(newTokenId);
+      _send('PING');
+    } else {
+      if (!_ws || _ws.readyState === WebSocket.CLOSED) {
+        connect();
+      }
+    }
+  }
+
+  // ─── Send helper ────────────────────────────────────────────────────
+  function _send(data) {
+    if (_ws && _ws.readyState === WebSocket.OPEN) {
+      try {
+        _ws.send(data);
+      } catch (e) {
+        console.warn('[PolyWS] Send failed:', e);
+      }
+    }
+  }
+
+  // ─── Heartbeat PING ─────────────────────────────────────────────────
+  function _startPing() {
+    clearInterval(_pingTimer);
+    _pingTimer = setInterval(() => {
+      if (_ws && _ws.readyState === WebSocket.OPEN) {
+        _ws.send('PING');
+      }
+    }, PING_INTERVAL_MS);
+  }
+
+  // ─── Watchdog ───────────────────────────────────────────────────────
+  function _startWatchdog() {
+    clearInterval(_watchdogTimer);
+    _lastDataMs = Date.now();
+    _watchdogTimer = setInterval(() => {
+      const silence = Date.now() - _lastDataMs;
+      if (silence > WATCHDOG_MS) {
+        console.warn(`[PolyWS] Watchdog: ${Math.round(silence / 1000)}s silence detected. Reconnecting...`);
+        if (_ws) _ws.close();
+      }
+    }, 5000);
+  }
+
+  // ─── Reconnect ──────────────────────────────────────────────────────
+  function _scheduleReconnect() {
+    clearTimeout(_reconnectTimer);
+    const delay = Math.min(BASE_RECONNECT_MS * Math.pow(2, _reconnectAttempt), MAX_RECONNECT_MS);
+    _reconnectAttempt++;
+    console.log(`[PolyWS] Reconnecting in ${delay}ms (attempt ${_reconnectAttempt})`);
+    _reconnectTimer = setTimeout(connect, delay);
+  }
+
+  function _clearTimers() {
+    clearInterval(_pingTimer);
+    clearInterval(_watchdogTimer);
+    clearTimeout(_reconnectTimer);
+    _pingTimer = null;
+    _watchdogTimer = null;
+    _reconnectTimer = null;
+  }
+
+  // ─── Cleanup ─────────────────────────────────────────────────────────
+  function destroy() {
+    _destroyed = true;
+    _clearTimers();
+    if (_ws) {
+      _ws.onclose = null;
+      _ws.close();
+      _ws = null;
+    }
+  }
+
+  function isConnected() {
+    return _ws && _ws.readyState === WebSocket.OPEN;
+  }
+
+  function getStatus() {
+    if (!_ws) return 'disconnected';
+    switch (_ws.readyState) {
+      case WebSocket.CONNECTING: return 'connecting';
+      case WebSocket.OPEN:       return 'connected';
+      case WebSocket.CLOSING:    return 'closing';
+      case WebSocket.CLOSED:     return 'disconnected';
+      default: return 'unknown';
+    }
+  }
+
+  function getLastDataAge() {
+    return _lastDataMs ? Date.now() - _lastDataMs : null;
+  }
+
+  function getCurrentTokenId() { return _currentTokenId; }
+
+  return {
+    connect,
+    subscribe,
+    destroy,
+    isConnected,
+    getStatus,
+    getLastDataAge,
+    getCurrentTokenId,
+    handlers,
+  };
+})();
+
+;
+
+/* ═══ MODULE: js/rtds.js ═══ */
+/**
+ * rtds.js — Polymarket Real-Time Data Stream (RTDS) WebSocket Client
+ * 
+ * Connects directly to Polymarket's official RTDS stream:
+ * wss://ws-live-data.polymarket.com
+ * 
+ * Topic: crypto_prices_chainlink (symbol: btc/usd)
+ * Provides official, zero-delay Chainlink BTC/USD price feeds
+ * used by Polymarket for market resolution. Zero reliance on Binance!
+ */
+'use strict';
+
+window.PolyRTDS = (() => {
+  const WS_URL = 'wss://ws-live-data.polymarket.com';
+  const PING_INTERVAL_MS = 5_000;
+  const RECONNECT_DELAY_MS = 2_000;
+
+  let _ws = null;
+  let _pingTimer = null;
+  let _reconnectTimer = null;
+  let _destroyed = false;
+  let _currentBtcPrice = null;
+  let _lastTimestamp = 0;
+
+  const handlers = {
+    onBtcPrice: null,
+    onConnected: null,
+    onDisconnected: null,
+  };
+
+  function connect() {
+    if (_destroyed) return;
+    if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
+    try {
+      _ws = new WebSocket(WS_URL);
+    } catch (e) {
+      console.error('[PolyRTDS] Connection error:', e);
+      _scheduleReconnect();
+      return;
+    }
+
+    _ws.onopen = () => {
+      console.log('[PolyRTDS] Connected to Polymarket RTDS (Chainlink Price Stream)');
+      _subscribeChainlinkPrices();
+      _startPing();
+      if (handlers.onConnected) handlers.onConnected();
+    };
+
+    _ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.topic === 'crypto_prices_chainlink') {
+          const payload = msg.payload;
+          if (payload && payload.symbol === 'btc/usd') {
+            const price = typeof payload.value === 'number' ? payload.value : parseFloat(payload.value);
+            const ts = payload.timestamp || msg.timestamp || Date.now();
+            if (!isNaN(price) && price > 0) {
+              _currentBtcPrice = price;
+              _lastTimestamp = ts;
+              if (handlers.onBtcPrice) {
+                handlers.onBtcPrice(price, ts);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // ignore non-JSON or heartbeat acks
+      }
+    };
+
+    _ws.onerror = (err) => {
+      console.warn('[PolyRTDS] WebSocket error:', err);
+    };
+
+    _ws.onclose = () => {
+      _clearTimers();
+      if (handlers.onDisconnected) handlers.onDisconnected();
+      if (!_destroyed) _scheduleReconnect();
+    };
+  }
+
+  function _subscribeChainlinkPrices() {
+    if (!_ws || _ws.readyState !== WebSocket.OPEN) return;
+    const subMsg = {
+      action: 'subscribe',
+      subscriptions: [
+        {
+          topic: 'crypto_prices_chainlink',
+          type: '*',
+          filters: '',
+        }
+      ]
+    };
+    _ws.send(JSON.stringify(subMsg));
+  }
+
+  function _startPing() {
+    _clearTimers();
+    _pingTimer = setInterval(() => {
+      if (_ws && _ws.readyState === WebSocket.OPEN) {
+        try {
+          _ws.send(JSON.stringify({ action: 'ping' }));
+        } catch {}
+      }
+    }, PING_INTERVAL_MS);
+  }
+
+  function _clearTimers() {
+    if (_pingTimer) clearInterval(_pingTimer);
+    _pingTimer = null;
+    if (_reconnectTimer) clearTimeout(_reconnectTimer);
+    _reconnectTimer = null;
+  }
+
+  function _scheduleReconnect() {
+    if (_reconnectTimer || _destroyed) return;
+    _reconnectTimer = setTimeout(() => {
+      _reconnectTimer = null;
+      connect();
+    }, RECONNECT_DELAY_MS);
+  }
+
+  function getLatestBtcPrice() {
+    return _currentBtcPrice;
+  }
+
+  function destroy() {
+    _destroyed = true;
+    _clearTimers();
+    if (_ws) {
+      _ws.close();
+      _ws = null;
+    }
+  }
+
+  return {
+    connect,
+    getLatestBtcPrice,
+    handlers,
+    destroy,
+  };
+})();
+
+;
+
+/* ═══ MODULE: js/live_trading.js ═══ */
+/**
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine
+ * 
+ * Features:
+ * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
+ * - Anti-aliased glowing live price line with gradient under-fill
+ * - Pulsing live leading dot at the current second
+ * - Blue dashed vertical second & minute grid lines (+01:00, +02:00 ... / 30s, 90s ...)
+ * - 0–100¢ right price scale & horizontal reference grid (50¢ anchor)
+ * - Interactive hover crosshair with exact price & elapsed second tooltip
+ * - Single-line top header HUD with slug link, ⏳ LIVE session badge & Chainlink BTC price stream
+ * - Immediate historical pre-fill from session startTs to now
+ */
+'use strict';
+
+window.LiveTradingManager = (() => {
+  let _container     = null;
+  let _canvas        = null;
+  let _ctx           = null;
+  let _tooltipEl     = null;
+
+  let _currentMarket = null;
+  let _startTs       = 0;
+  let _endTs         = 0;
+  let _durationSecs  = 300;     // 300 for 5M, 900 for 15M
+  let _outcomeMode   = 'up';    // 'up' | 'down'
+  let _rawTicks      = [];      // Array of [unixSec, rawUpCents]
+  let _lastPrice     = 50.0;
+
+  let _btcOpen       = null;
+  let _btcCurrent    = null;
+  let _btcChange     = null;
+
+  let _hoverX        = null;
+  let _hoverY        = null;
+  let _rafId         = null;
+  let _pulsePhase    = 0;
+
+  const TOP_HUD_H    = 26;
+  const RIGHT_SCALE_W= 52;
+  const BOTTOM_AXIS_H= 22;
+
+  function init(container) {
+    if (!container) return false;
+    _container = container;
+    _container.innerHTML = '';
+    _container.style.position = 'relative';
+    _container.style.width = '100%';
+    _container.style.height = '100%';
+    _container.style.overflow = 'hidden';
+    _container.style.background = '#080b0f';
+
+    _canvas = document.createElement('canvas');
+    _canvas.id = 'live-trading-canvas';
+    _canvas.style.width = '100%';
+    _canvas.style.height = '100%';
+    _canvas.style.display = 'block';
+    _canvas.style.cursor = 'crosshair';
+    _container.appendChild(_canvas);
+    _ctx = _canvas.getContext('2d');
+
+    // Tooltip element
+    _tooltipEl = document.createElement('div');
+    _tooltipEl.id = 'live-trading-tooltip';
+    _tooltipEl.style.position = 'absolute';
+    _tooltipEl.style.display = 'none';
+    _tooltipEl.style.pointerEvents = 'none';
+    _tooltipEl.style.zIndex = '20';
+    _tooltipEl.style.background = 'rgba(13, 22, 38, 0.94)';
+    _tooltipEl.style.border = '1px solid #1e293b';
+    _tooltipEl.style.borderRadius = '6px';
+    _tooltipEl.style.padding = '4px 8px';
+    _tooltipEl.style.color = '#ffffff';
+    _tooltipEl.style.fontFamily = "'JetBrains Mono', monospace";
+    _tooltipEl.style.fontSize = '11px';
+    _tooltipEl.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
+    _container.appendChild(_tooltipEl);
+
+    _setupInteractions();
+    _setupResize();
+    _startAnimationLoop();
+
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized');
+    return true;
+  }
+
+  // ─── Market Initialization & History Population ────────────────────
+  function setMarket(market) {
+    if (!market) return;
+    _currentMarket = market;
+    _startTs = market.startTs || Math.floor(Date.now() / 1000);
+    _endTs = market.endTs || (_startTs + 300);
+    _durationSecs = Math.max(60, _endTs - _startTs);
+
+    _rawTicks = [];
+
+    // Pre-populate with any ticks already recorded for this session in TickBuffer
+    if (window.TickBuffer) {
+      const bufferTicks = window.TickBuffer.getRawTicks() || [];
+      for (const t of bufferTicks) {
+        if (t.time >= _startTs && t.time <= _endTs && typeof t.value === 'number') {
+          _rawTicks.push([t.time, t.value]);
+        }
+      }
+    }
+
+    // If no ticks yet, start with current price from PriceEngine or midpoint
+    const nowSec = Math.floor(Date.now() / 1000);
+    const eff = window.PriceEngine ? window.PriceEngine.effectivePrice() : 0.5;
+    const curCents = (eff !== null && !isNaN(eff)) ? eff * 100 : 50.0;
+    _lastPrice = curCents;
+
+    if (_rawTicks.length === 0) {
+      _rawTicks.push([_startTs, curCents]);
+      if (nowSec > _startTs && nowSec <= _endTs) {
+        _rawTicks.push([nowSec, curCents]);
+      }
+    } else {
+      // Ensure starting anchor at startTs
+      if (_rawTicks[0][0] > _startTs) {
+        _rawTicks.unshift([_startTs, _rawTicks[0][1]]);
+      }
+    }
+
+    _btcOpen = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice) || null;
+    _btcCurrent = _btcOpen;
+    _btcChange = 0;
+
+    _render();
+  }
+
+  // ─── Real-Time Tick Ingestion ──────────────────────────────────────
+  function pushTick(unixSec, rawUpCents) {
+    if (typeof unixSec !== 'number' || typeof rawUpCents !== 'number' || isNaN(rawUpCents)) return;
+    if (!_startTs || !_endTs) {
+      _startTs = Math.floor(unixSec / 300) * 300;
+      _endTs = _startTs + 300;
+      _durationSecs = 300;
+    }
+
+    _lastPrice = rawUpCents;
+
+    // Ensure start anchor
+    if (_rawTicks.length === 0) {
+      _rawTicks.push([_startTs, rawUpCents]);
+    }
+
+    // Avoid duplicate timestamp overwriting
+    if (_rawTicks.length > 0 && _rawTicks[_rawTicks.length - 1][0] === unixSec) {
+      _rawTicks[_rawTicks.length - 1][1] = rawUpCents;
+    } else {
+      _rawTicks.push([unixSec, rawUpCents]);
+    }
+  }
+
+  function setOutcomeMode(mode) {
+    _outcomeMode = mode;
+    _render();
+  }
+
+  function updateBtcPrice(btcOpen, btcClose, btcChange) {
+    if (btcOpen !== undefined && btcOpen !== null) _btcOpen = btcOpen;
+    if (btcClose !== undefined && btcClose !== null) _btcCurrent = btcClose;
+    if (btcChange !== undefined && btcChange !== null) _btcChange = btcChange;
+  }
+
+  // ─── Core Rendering Engine ─────────────────────────────────────────
+  function _render() {
+    if (!_canvas || !_ctx || !_container) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const w = _container.clientWidth;
+    const h = _container.clientHeight;
+
+    if (w <= 0 || h <= 0) return;
+
+    if (_canvas.width !== Math.round(w * dpr) || _canvas.height !== Math.round(h * dpr)) {
+      _canvas.width = Math.round(w * dpr);
+      _canvas.height = Math.round(h * dpr);
+    }
+
+    _ctx.save();
+    _ctx.scale(dpr, dpr);
+    _ctx.clearRect(0, 0, w, h);
+
+    const plotLeft   = 0;
+    const plotTop    = TOP_HUD_H;
+    const plotRight  = w - RIGHT_SCALE_W;
+    const plotBottom = h - BOTTOM_AXIS_H;
+    const plotW      = Math.max(10, plotRight - plotLeft);
+    const plotH      = Math.max(10, plotBottom - plotTop);
+
+    // 1. Background Grid & Horizontal Price Lines (0¢, 20¢, 40¢, 50¢, 60¢, 80¢, 100¢)
+    _ctx.lineWidth = 1;
+    _ctx.font = '10px "JetBrains Mono", monospace';
+    _ctx.textBaseline = 'middle';
+
+    const priceLevels = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+    for (const p of priceLevels) {
+      const y = plotBottom - (p / 100) * plotH;
+      const is50 = (p === 50);
+      const isBoundary = (p === 0 || p === 100);
+
+      _ctx.beginPath();
+      _ctx.strokeStyle = is50 ? 'rgba(56, 189, 248, 0.45)' : (isBoundary ? 'rgba(255,255,255,0.1)' : 'rgba(255, 255, 255, 0.04)');
+      _ctx.setLineDash(is50 ? [4, 4] : []);
+      _ctx.moveTo(plotLeft, y);
+      _ctx.lineTo(plotRight, y);
+      _ctx.stroke();
+
+      // Right price scale label
+      if (p % 20 === 0 || p === 50) {
+        _ctx.fillStyle = is50 ? '#38bdf8' : '#64748b';
+        _ctx.fillText(`${p.toFixed(1)}¢`, plotRight + 6, y);
+      }
+    }
+
+    // 2. Vertical Blue Dashed Second Subdivision Lines
+    const is5m = _durationSecs <= 300;
+    const stepSecs = is5m ? 30 : 60;
+    const majorStepSecs = is5m ? 60 : 180;
+
+    _ctx.textAlign = 'center';
+    _ctx.textBaseline = 'bottom';
+
+    for (let s = 0; s <= _durationSecs; s += stepSecs) {
+      const x = plotLeft + (s / _durationSecs) * plotW;
+      const isMajor = (s % majorStepSecs === 0);
+
+      _ctx.beginPath();
+      _ctx.strokeStyle = isMajor ? 'rgba(56, 189, 248, 0.75)' : 'rgba(56, 189, 248, 0.28)';
+      _ctx.lineWidth = isMajor ? 1.5 : 1;
+      _ctx.setLineDash(isMajor ? [4, 4] : [2, 3]);
+      _ctx.moveTo(Math.round(x) + 0.5, plotTop + 1);
+      _ctx.lineTo(Math.round(x) + 0.5, plotBottom);
+      _ctx.stroke();
+
+      // Bottom Axis Time Tag
+      const m = Math.floor(s / 60);
+      const secRem = s % 60;
+      const fullTag = `+${String(m).padStart(2, '0')}:${String(secRem).padStart(2, '0')}`;
+      const timeTag = isMajor ? `${m}m` : `${s}s`;
+
+      _ctx.fillStyle = isMajor ? '#38bdf8' : '#64748b';
+      _ctx.font = isMajor ? 'bold 10px "JetBrains Mono", monospace' : '9px "JetBrains Mono", monospace';
+      _ctx.fillText(isMajor ? fullTag : timeTag, x, h - 4);
+    }
+
+    // 3. Price Movement Curve & Gradient Under-Fill
+    _ctx.setLineDash([]);
+    if (_rawTicks.length > 0 && _durationSecs > 0) {
+      const points = [];
+      for (const [ts, upCents] of _rawTicks) {
+        if (ts >= _startTs && ts <= _endTs) {
+          const val = _outcomeMode === 'down' ? (100 - upCents) : upCents;
+          const x = plotLeft + ((ts - _startTs) / _durationSecs) * plotW;
+          const y = plotBottom - (Math.min(100, Math.max(0, val)) / 100) * plotH;
+          points.push({ x, y, val, ts });
+        }
+      }
+
+      if (points.length >= 1) {
+        // If single point, duplicate to startTs
+        if (points.length === 1) {
+          points.unshift({ x: plotLeft, y: points[0].y, val: points[0].val, ts: _startTs });
+        }
+
+        const latestPt = points[points.length - 1];
+        const isUpWinning = latestPt.val >= 50;
+        const mainColor = latestPt.val > 52 ? '#00d4aa' : (latestPt.val < 48 ? '#ff4d6d' : '#38bdf8');
+
+        // Draw Area Fill Under Curve
+        const grad = _ctx.createLinearGradient(0, plotTop, 0, plotBottom);
+        grad.addColorStop(0, mainColor + '33'); // 20% opacity
+        grad.addColorStop(1, mainColor + '00'); // 0% opacity
+
+        _ctx.beginPath();
+        _ctx.moveTo(points[0].x, plotBottom);
+        for (let i = 0; i < points.length; i++) {
+          _ctx.lineTo(points[i].x, points[i].y);
+        }
+        _ctx.lineTo(latestPt.x, plotBottom);
+        _ctx.closePath();
+        _ctx.fillStyle = grad;
+        _ctx.fill();
+
+        // Draw Price Line with Glow
+        _ctx.save();
+        _ctx.shadowColor = mainColor;
+        _ctx.shadowBlur = 8;
+        _ctx.strokeStyle = mainColor;
+        _ctx.lineWidth = 2.5;
+        _ctx.lineJoin = 'round';
+        _ctx.lineCap = 'round';
+
+        _ctx.beginPath();
+        _ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          _ctx.lineTo(points[i].x, points[i].y);
+        }
+        _ctx.stroke();
+        _ctx.restore();
+
+        // Draw Pulsing Live Head Dot
+        const pulseR = 4 + Math.sin(_pulsePhase) * 1.5;
+        _ctx.beginPath();
+        _ctx.arc(latestPt.x, latestPt.y, pulseR + 4, 0, Math.PI * 2);
+        _ctx.fillStyle = mainColor + '44';
+        _ctx.fill();
+
+        _ctx.beginPath();
+        _ctx.arc(latestPt.x, latestPt.y, pulseR, 0, Math.PI * 2);
+        _ctx.fillStyle = mainColor;
+        _ctx.fill();
+
+        _ctx.beginPath();
+        _ctx.arc(latestPt.x, latestPt.y, 2, 0, Math.PI * 2);
+        _ctx.fillStyle = '#ffffff';
+        _ctx.fill();
+
+        // Current Price Line to Right Scale
+        _ctx.beginPath();
+        _ctx.strokeStyle = mainColor + '66';
+        _ctx.lineWidth = 1;
+        _ctx.setLineDash([3, 3]);
+        _ctx.moveTo(latestPt.x, latestPt.y);
+        _ctx.lineTo(plotRight, latestPt.y);
+        _ctx.stroke();
+        _ctx.setLineDash([]);
+
+        // Right Scale Highlight Badge
+        _ctx.fillStyle = mainColor;
+        _roundRect(_ctx, plotRight + 2, latestPt.y - 9, RIGHT_SCALE_W - 4, 18, 4, true, false);
+        _ctx.fillStyle = '#090d16';
+        _ctx.font = 'bold 11px "JetBrains Mono", monospace';
+        _ctx.textAlign = 'left';
+        _ctx.textBaseline = 'middle';
+        _ctx.fillText(`${latestPt.val.toFixed(1)}¢`, plotRight + 6, latestPt.y);
+      }
+    }
+
+    // 4. Hover Crosshair & Tooltip
+    if (_hoverX !== null && _hoverY !== null && _hoverX >= plotLeft && _hoverX <= plotRight && _hoverY >= plotTop && _hoverY <= plotBottom) {
+      _ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      _ctx.lineWidth = 1;
+      _ctx.setLineDash([3, 3]);
+
+      _ctx.beginPath();
+      _ctx.moveTo(_hoverX, plotTop);
+      _ctx.lineTo(_hoverX, plotBottom);
+      _ctx.moveTo(plotLeft, _hoverY);
+      _ctx.lineTo(plotRight, _hoverY);
+      _ctx.stroke();
+      _ctx.setLineDash([]);
+
+      // Compute hovered price & second
+      const hoverSec = Math.round(((_hoverX - plotLeft) / plotW) * _durationSecs);
+      const hoverPrice = (1 - ((_hoverY - plotTop) / plotH)) * 100;
+      const m = Math.floor(hoverSec / 60);
+      const s = hoverSec % 60;
+      const timeTag = `+${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')} (${hoverSec}s)`;
+
+      if (_tooltipEl) {
+        _tooltipEl.style.display = 'block';
+        _tooltipEl.style.left = `${Math.min(w - 140, _hoverX + 12)}px`;
+        _tooltipEl.style.top = `${Math.min(h - 40, _hoverY - 28)}px`;
+        _tooltipEl.innerHTML = `<span style="color:#38bdf8; font-weight:bold;">${hoverPrice.toFixed(1)}¢</span> · <span style="color:#94a3b8;">${timeTag}</span>`;
+      }
+    } else if (_tooltipEl) {
+      _tooltipEl.style.display = 'none';
+    }
+
+    // 5. Top Slim Header HUD (Single-Line Monospace)
+    _ctx.fillStyle = 'rgba(9, 17, 30, 0.92)';
+    _ctx.fillRect(0, 0, w, TOP_HUD_H);
+
+    _ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+    _ctx.lineWidth = 1;
+    _ctx.beginPath();
+    _ctx.moveTo(0, TOP_HUD_H + 0.5);
+    _ctx.lineTo(w, TOP_HUD_H + 0.5);
+    _ctx.stroke();
+
+    const fullSlug = _currentMarket?.slug || 'Live Session';
+    const isMobile = (w < 600);
+    const slugText = isMobile ? `...${fullSlug.slice(-10)} ↗` : `${fullSlug} ↗`;
+    const labelDuration = isMobile ? (is5m ? '5M' : '15M') : (is5m ? '5M FIXED (300s)' : '15M FIXED (900s)');
+
+    let curX = isMobile ? 8 : 14;
+    const textY = 17;
+
+    _ctx.textAlign = 'left';
+    _ctx.textBaseline = 'alphabetic';
+
+    // Slug Header
+    _ctx.font = isMobile ? '600 11px "JetBrains Mono", monospace' : '600 12px "JetBrains Mono", monospace';
+    _ctx.fillStyle = '#ffffff';
+    _ctx.fillText(slugText, curX, textY);
+    curX += _ctx.measureText(slugText).width + (isMobile ? 6 : 10);
+
+    // Separator
+    _ctx.fillStyle = '#64748b';
+    _ctx.fillText('·', curX, textY);
+    curX += isMobile ? 10 : 14;
+
+    // Live Badge
+    _ctx.fillStyle = '#38bdf8';
+    _ctx.font = isMobile ? '800 11px "JetBrains Mono", monospace' : '800 12px "JetBrains Mono", monospace';
+    _ctx.fillText(`⏳ ${labelDuration}`, curX, textY);
+    curX += _ctx.measureText(`⏳ ${labelDuration}`).width + (isMobile ? 6 : 10);
+
+    // Chainlink BTC Price Feed
+    if (_btcCurrent && curX + 110 < w - RIGHT_SCALE_W) {
+      _ctx.fillStyle = '#64748b';
+      _ctx.fillText('·', curX, textY);
+      curX += isMobile ? 10 : 14;
+
+      const sign = (_btcChange || 0) >= 0 ? '+' : '';
+      const chgStr = _btcChange !== null && _btcChange !== undefined ? ` (${sign}${_btcChange.toFixed(2)}%)` : '';
+
+      _ctx.fillStyle = '#94a3b8';
+      _ctx.font = isMobile ? '600 11px "JetBrains Mono", monospace' : '600 12px "JetBrains Mono", monospace';
+      _ctx.fillText('BTC ', curX, textY);
+      curX += _ctx.measureText('BTC ').width;
+
+      let priceText = '';
+      if (isMobile) {
+        priceText = `$${_btcCurrent.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${chgStr}`;
+      } else {
+        const openStr = _btcOpen ? '$' + _btcOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--';
+        const curStr  = '$' + _btcCurrent.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        priceText = `${openStr} → ${curStr}${chgStr}`;
+      }
+
+      _ctx.fillStyle = (_btcChange || 0) >= 0 ? '#34d399' : '#cbd5e1';
+      _ctx.fillText(priceText, curX, textY, (w - RIGHT_SCALE_W - curX - 6));
+    }
+
+    _ctx.restore();
+  }
+
+  function _roundRect(ctx, x, y, width, height, radius, fill, stroke) {
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+    if (fill) ctx.fill();
+    if (stroke) ctx.stroke();
+  }
+
+  function _startAnimationLoop() {
+    function loop() {
+      _pulsePhase += 0.08;
+      _render();
+      _rafId = requestAnimationFrame(loop);
+    }
+    _rafId = requestAnimationFrame(loop);
+  }
+
+  function _setupInteractions() {
+    if (!_canvas) return;
+
+    // Mouse interactions
+    _canvas.addEventListener('mousemove', (e) => {
+      const rect = _canvas.getBoundingClientRect();
+      _hoverX = e.clientX - rect.left;
+      _hoverY = e.clientY - rect.top;
+
+      if (_hoverY <= TOP_HUD_H) {
+        _canvas.style.cursor = 'pointer';
+      } else {
+        _canvas.style.cursor = 'crosshair';
+      }
+    });
+
+    _canvas.addEventListener('mouseleave', () => {
+      _hoverX = null;
+      _hoverY = null;
+      if (_tooltipEl) _tooltipEl.style.display = 'none';
+    });
+
+    // Mobile touch interactions
+    _canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 0) {
+        const rect = _canvas.getBoundingClientRect();
+        _hoverX = e.touches[0].clientX - rect.left;
+        _hoverY = e.touches[0].clientY - rect.top;
+      }
+    }, { passive: true });
+
+    _canvas.addEventListener('touchmove', (e) => {
+      if (e.touches.length > 0) {
+        const rect = _canvas.getBoundingClientRect();
+        _hoverX = e.touches[0].clientX - rect.left;
+        _hoverY = e.touches[0].clientY - rect.top;
+      }
+    }, { passive: true });
+
+    _canvas.addEventListener('touchend', () => {
+      setTimeout(() => {
+        _hoverX = null;
+        _hoverY = null;
+        if (_tooltipEl) _tooltipEl.style.display = 'none';
+      }, 3000);
+    });
+
+    _canvas.addEventListener('click', (e) => {
+      const rect = _canvas.getBoundingClientRect();
+      const my = e.clientY - rect.top;
+      if (my <= TOP_HUD_H && _currentMarket?.slug) {
+        window.open(`https://polymarket.com/event/${_currentMarket.slug}`, '_blank');
+      }
+    });
+  }
+
+  function _setupResize() {
+    if (!_container) return;
+    const ro = new ResizeObserver(() => {
+      _render();
+    });
+    ro.observe(_container);
+  }
+
+  function resize() {
+    _render();
+  }
+
+  function destroy() {
+    if (_rafId) cancelAnimationFrame(_rafId);
+  }
+
+  return {
+    init,
+    setMarket,
+    pushTick,
+    setOutcomeMode,
+    updateBtcPrice,
+    resize,
+    destroy,
+  };
+})();
+
+;
+
+/* ═══ MODULE: js/chart.js ═══ */
+/**
+ * chart.js — Lightweight Charts v5 Manager v1.3
+ * 
+ * Fixes in v1.3:
+ * - autoScale: true with fixed autoscaleInfoProvider (0–100¢) ensures the right scale is always fully visible on boot
+ * - No need to double-click the scale to reset or show full range
+ * - Smooth live updates without sawtooth jitter
+ * - Floating price tooltip on crosshair hover (rounded badge above dot)
+ */
+'use strict';
+
+window.ChartManager = (() => {
+  const LC = window.LightweightCharts;
+
+  let _chart         = null;
+  let _series        = null;
+  let _markers       = [];
+  let _lastTime      = 0;
+  let _currentTf     = 1;
+  let _outcomeMode   = 'up'; // 'up' | 'down'
+  let _tooltipEl     = null;
+  let _overlayCanvas = null;
+  let _overlayCtx    = null;
+  let _sessionBoundaries = new Set(); // set of unixSec timestamps for session dividers
+  let _sessionCardsData  = [];        // array of session card metadata
+  let _clickableRegions  = [];        // array of interactive clickable bounding boxes
+
+  let _pendingUpdate = null;
+  let _rafId         = null;
+
+  function init(container) {
+    if (!LC) {
+      console.error('[ChartManager] LightweightCharts library not found!');
+      return false;
+    }
+
+    _tooltipEl = document.getElementById('chart-tooltip');
+
+    _chart = LC.createChart(container, {
+      layout: {
+        background: { type: 'solid', color: '#080b0f' },
+        textColor: '#8899aa',
+        fontFamily: "'JetBrains Mono', 'Inter', monospace",
+        fontSize: 11,
+      },
+      grid: {
+        vertLines: { color: '#0d1117', style: 1 },
+        horzLines: { color: '#111720', style: 1 },
+      },
+      crosshair: {
+        mode: LC.CrosshairMode?.Normal ?? 0,
+        vertLine: {
+          color: '#2a3a50',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#161d27',
+        },
+        horzLine: {
+          color: '#2a3a50',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#161d27',
+        },
+      },
+      rightPriceScale: {
+        borderColor: '#1e2a38',
+        scaleMargins: { top: 0.06, bottom: 0.04 }, // Slim 6% top zone for single-line session info
+        autoScale: true,          // TRUE: allows autoscaleInfoProvider to calculate full 0-100 scale on load
+        entireTextOnly: false,
+        visible: true,
+      },
+      timeScale: {
+        borderColor: '#1e2a38',
+        timeVisible: true,
+        secondsVisible: true,
+        rightOffset: 8,
+        tickMarkFormatter: (time) => {
+          const d = new Date(time * 1000);
+          const h = String(d.getHours()).padStart(2, '0');
+          const m = String(d.getMinutes()).padStart(2, '0');
+          const s = String(d.getSeconds()).padStart(2, '0');
+          return `${h}:${m}:${s}`;
+        },
+      },
+      localization: {
+        priceFormatter: (p) => p.toFixed(1) + '¢',
+      },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: true,
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+      },
+      watermark: { visible: false },
+    });
+
+    // Create main LineSeries
+    _series = _chart.addSeries(LC.LineSeries, {
+      color: '#00d4aa',
+      lineWidth: 2,
+      lineType: 0,
+      lastValueVisible: true,
+      priceLineVisible: true,
+      priceLineColor: 'rgba(0, 212, 170, 0.5)',
+      priceLineWidth: 1,
+      priceLineStyle: 1,
+      crosshairMarkerVisible: true,
+      crosshairMarkerRadius: 5,
+      crosshairMarkerBackgroundColor: '#00d4aa',
+      crosshairMarkerBorderColor: '#ffffff',
+      crosshairMarkerBorderWidth: 1,
+
+      // Fixed 0–100¢ range guaranteed
+      autoscaleInfoProvider: () => ({
+        priceRange: { minValue: 0, maxValue: 100 },
+      }),
+
+      priceFormat: {
+        type: 'custom',
+        formatter: (v) => v.toFixed(1) + '¢',
+        minMove: 0.1,
+      },
+    });
+
+    // Reference line at 50¢
+    _addReferenceLine(50, '#2a3a50', '50¢');
+
+    // Anchor invisible price lines at 0 and 100
+    _setScaleAnchors();
+
+    // Create overlay canvas for dashed blue session separators
+    _overlayCanvas = document.createElement('canvas');
+    _overlayCanvas.id = 'chart-overlay-canvas';
+    _overlayCanvas.style.position = 'absolute';
+    _overlayCanvas.style.top = '0';
+    _overlayCanvas.style.left = '0';
+    _overlayCanvas.style.width = '100%';
+    _overlayCanvas.style.height = '100%';
+    _overlayCanvas.style.pointerEvents = 'none';
+    _overlayCanvas.style.zIndex = '10';
+    container.style.position = 'relative';
+    container.appendChild(_overlayCanvas);
+    _overlayCtx = _overlayCanvas.getContext('2d');
+
+    // Redraw dashed blue separators on visible range changes & scroll
+    _chart.timeScale().subscribeVisibleTimeRangeChange(_drawSessionDividers);
+    _chart.timeScale().subscribeVisibleLogicalRangeChange(_drawSessionDividers);
+
+    // Setup interactive canvas clicks & hover for session badges
+    _setupCanvasInteractions(container);
+
+    // Setup Crosshair Tooltip Hover listener
+    _setupCrosshairTooltip(container);
+
+    // Auto-resize observer
+    _setupResize(container);
+
+    // Start RAF rendering loop
+    _startRenderLoop();
+
+    console.log('[ChartManager] Lightweight Charts v5 initialized with visible 0–100 scale & session dividers');
+    return true;
+  }
+
+  function _addReferenceLine(price, color, title) {
+    if (!_series) return;
+    _series.createPriceLine({
+      price,
+      color,
+      lineWidth: 1,
+      lineStyle: 1,
+      axisLabelVisible: false,
+      title,
+    });
+  }
+
+  function _setScaleAnchors() {
+    if (!_series) return;
+    _series.createPriceLine({ price: 0,   color: 'transparent', lineWidth: 1, lineStyle: 0, axisLabelVisible: false, title: '' });
+    _series.createPriceLine({ price: 100, color: 'transparent', lineWidth: 1, lineStyle: 0, axisLabelVisible: false, title: '' });
+  }
+
+  // ─── Floating Tooltip on Hover ──────────────────────────────────────
+  function _setupCrosshairTooltip(container) {
+    if (!_chart || !_tooltipEl) return;
+
+    _chart.subscribeCrosshairMove((param) => {
+      if (
+        !param ||
+        !param.point ||
+        param.point.x < 0 ||
+        param.point.x > container.clientWidth ||
+        param.point.y < 0 ||
+        param.point.y > container.clientHeight
+      ) {
+        _tooltipEl.style.display = 'none';
+        return;
+      }
+
+      const seriesData = param.seriesData.get(_series);
+      if (!seriesData || typeof seriesData.value !== 'number') {
+        _tooltipEl.style.display = 'none';
+        return;
+      }
+
+      const val = seriesData.value;
+      const formattedPrice = val.toFixed(1) + '¢';
+
+      let timeStr = '';
+      if (param.time) {
+        const d = new Date(param.time * 1000);
+        timeStr = d.toLocaleTimeString('en-US', { hour12: false });
+      }
+
+      _tooltipEl.innerHTML = `<span class="tt-val">${formattedPrice}</span>${timeStr ? ` <span class="tt-time" style="font-size:10px; opacity:0.7; font-weight:normal; margin-left:4px;">${timeStr}</span>` : ''}`;
+
+      _tooltipEl.className = '';
+      if (val > 52) _tooltipEl.className = 'tt-green';
+      else if (val < 48) _tooltipEl.className = 'tt-red';
+      else _tooltipEl.className = 'tt-blue';
+
+      const x = param.point.x;
+      const y = param.point.y;
+
+      _tooltipEl.style.left = `${x}px`;
+      _tooltipEl.style.top = `${y}px`;
+      _tooltipEl.style.display = 'block';
+    });
+  }
+
+  // ─── Data Management ────────────────────────────────────────────────
+  function setData(data) {
+    if (!_series || !data || data.length === 0) return;
+
+    const sorted = [...data].sort((a, b) => a.time - b.time);
+    if (sorted.length === 0) return;
+
+    _lastTime = sorted[sorted.length - 1].time;
+    _series.setData(sorted);
+    if (_markers.length > 0) {
+      try { _series.setMarkers(_markers); } catch {}
+    }
+
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      if (typeof sorted[i].value === 'number' && !isNaN(sorted[i].value)) {
+        _updateSeriesColor(sorted[i].value);
+        break;
+      }
+    }
+
+    _drawSessionDividers();
+  }
+
+  function pushTick(unixSec, valueCents) {
+    if (isNaN(valueCents) || isNaN(unixSec)) return;
+    const bucket = Math.floor(unixSec / _currentTf) * _currentTf;
+
+    if (bucket < _lastTime) return;
+
+    _pendingUpdate = { time: bucket, value: valueCents };
+  }
+
+  function _startRenderLoop() {
+    function loop() {
+      if (_pendingUpdate && _series) {
+        const { time, value } = _pendingUpdate;
+        _pendingUpdate = null;
+
+        try {
+          _series.update({ time, value });
+          _lastTime = Math.max(_lastTime, time);
+          _updateSeriesColor(value);
+        } catch (e) {
+          // Ignore non-monotone exceptions during boundary transitions
+        }
+      }
+      _rafId = requestAnimationFrame(loop);
+    }
+    _rafId = requestAnimationFrame(loop);
+  }
+
+  function addWhitespace(unixSec) {
+    if (!_series) return;
+    const t = Math.max(unixSec, _lastTime + 1);
+    try {
+      _series.update({ time: t });
+      _lastTime = t;
+    } catch {}
+  }
+
+  function _updateSeriesColor(valueCents) {
+    if (!_series) return;
+    let color;
+    if (valueCents > 52) color = '#00d4aa';
+    else if (valueCents < 48) color = '#ff4d6d';
+    else color = '#4dabf7';
+
+    _series.applyOptions({
+      color,
+      crosshairMarkerBackgroundColor: color,
+      priceLineColor: color + '88',
+    });
+  }
+
+  // ─── Markers ────────────────────────────────────────────────────────
+  function addMarketBoundaryMarker(unixSec, label) {
+    _markers.push({
+      time: unixSec,
+      position: 'belowBar',
+      color: '#4dabf7',
+      shape: 'arrowUp',
+      text: label || 'New Market',
+      size: 1,
+    });
+    _markers.sort((a, b) => a.time - b.time);
+    try {
+      _series.setMarkers(_markers);
+    } catch {}
+  }
+
+  /**
+   * Winner Badge Marker:
+   * - UP WON: White badge (#ffffff)
+   * - DOWN WON: Coral red badge (#ff4d6d)
+   */
+  function addWinnerBadgeMarker(unixSec, label, side = 'up') {
+    const isUp = side === 'up' || (typeof label === 'string' && label.includes('UP'));
+    _markers.push({
+      time: unixSec,
+      position: 'aboveBar',
+      color: isUp ? '#ffffff' : '#ff4d6d',
+      shape: 'arrowDown',
+      text: label || (isUp ? '🏆 UP WON' : '🏆 DOWN WON'),
+      size: 2,
+    });
+    _markers.sort((a, b) => a.time - b.time);
+    try {
+      _series.setMarkers(_markers);
+    } catch {}
+  }
+
+  // ─── Dashed Blue Session Dividers ──────────────────────────────────
+  function _drawSessionDividers() {
+    if (!_overlayCanvas || !_overlayCtx || !_chart) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const w = _overlayCanvas.clientWidth;
+    const h = _overlayCanvas.clientHeight;
+
+    if (_overlayCanvas.width !== w * dpr || _overlayCanvas.height !== h * dpr) {
+      _overlayCanvas.width = w * dpr;
+      _overlayCanvas.height = h * dpr;
+    }
+
+    _overlayCtx.save();
+    _overlayCtx.scale(dpr, dpr);
+    _overlayCtx.clearRect(0, 0, w, h);
+
+    if (_sessionBoundaries.size === 0) {
+      _overlayCtx.restore();
+      return;
+    }
+
+    const timeScale = _chart.timeScale();
+    const HEADER_H = 26; // Ultra-slim single-line top header panel height (px)
+
+    // 1. Draw top session header panels for each session
+    _drawSessionHeaderPanels(w, h, timeScale, HEADER_H);
+
+    // 2. Draw continuous horizontal dividing line below the top header panel
+    _overlayCtx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+    _overlayCtx.lineWidth = 1;
+    _overlayCtx.setLineDash([]); // solid line
+    _overlayCtx.beginPath();
+    _overlayCtx.moveTo(0, HEADER_H + 0.5);
+    _overlayCtx.lineTo(w, HEADER_H + 0.5);
+    _overlayCtx.stroke();
+
+    // 3. Draw vertical session dividers (thicker, brighter electric cyan/blue dashed lines)
+    _overlayCtx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+    _overlayCtx.lineWidth = 2;
+    _overlayCtx.setLineDash([6, 4]);
+
+    const sorted = Array.from(_sessionBoundaries).sort((a, b) => a - b);
+    let lastDrawnX = -9999;
+    const minPixelGap = 20;
+
+    for (const ts of sorted) {
+      let x = timeScale.timeToCoordinate(ts);
+      if (x === null) {
+        for (let delta = 1; delta <= 30; delta++) {
+          x = timeScale.timeToCoordinate(ts + delta);
+          if (x !== null) break;
+          x = timeScale.timeToCoordinate(ts - delta);
+          if (x !== null) break;
+        }
+      }
+
+      if (x !== null && x >= 0 && x <= w) {
+        if (Math.abs(x - lastDrawnX) < minPixelGap) {
+          continue;
+        }
+        lastDrawnX = x;
+
+        _overlayCtx.beginPath();
+        _overlayCtx.moveTo(Math.round(x) + 0.5, 0);
+        _overlayCtx.lineTo(Math.round(x) + 0.5, h);
+        _overlayCtx.stroke();
+      }
+    }
+
+    _overlayCtx.restore();
+  }
+
+  function _drawSessionHeaderPanels(w, h, timeScale, HEADER_H) {
+    _clickableRegions = [];
+    if (!_sessionCardsData || _sessionCardsData.length === 0) return;
+
+    _overlayCtx.font = '600 12px "JetBrains Mono", monospace';
+
+    for (const s of _sessionCardsData) {
+      let xStart = timeScale.timeToCoordinate(s.startTs);
+      if (xStart === null && s.startTs) {
+        for (let delta = 1; delta <= 300; delta += 2) {
+          xStart = timeScale.timeToCoordinate(s.startTs + delta);
+          if (xStart !== null) break;
+          xStart = timeScale.timeToCoordinate(s.startTs - delta);
+          if (xStart !== null) break;
+        }
+      }
+
+      let xEnd = timeScale.timeToCoordinate(s.endTs);
+      if (xEnd === null && s.endTs) {
+        for (let delta = 1; delta <= 300; delta += 2) {
+          xEnd = timeScale.timeToCoordinate(s.endTs - delta);
+          if (xEnd !== null) break;
+          xEnd = timeScale.timeToCoordinate(s.endTs + delta);
+          if (xEnd !== null) break;
+        }
+      }
+
+      if (xStart === null && xEnd === null) continue;
+      if (xStart === null) xStart = xEnd - 250;
+      if (xEnd === null) xEnd = xStart + 250;
+
+      if (xEnd < 0 || xStart > w) continue;
+      const spanW = Math.abs(xEnd - xStart);
+      if (spanW < 25) continue; // too compact when zoomed far out
+
+      // Panel spans from xStart to xEnd in the top HEADER_H zone
+      const panelX = Math.round(xStart);
+      const panelW = Math.round(spanW);
+
+      // Background fill for this session's header column
+      _overlayCtx.fillStyle = 'rgba(9, 17, 30, 0.88)';
+      _overlayCtx.fillRect(panelX, 0, panelW, HEADER_H);
+
+      // Subtle right divider border for the header column
+      _overlayCtx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+      _overlayCtx.lineWidth = 1;
+      _overlayCtx.setLineDash([]);
+      _overlayCtx.beginPath();
+      _overlayCtx.moveTo(panelX + panelW + 0.5, 0);
+      _overlayCtx.lineTo(panelX + panelW + 0.5, HEADER_H);
+      _overlayCtx.stroke();
+
+      // Make the entire session header panel clickable to open Polymarket
+      _clickableRegions.push({
+        x: panelX,
+        y: 0,
+        w: panelW,
+        h: HEADER_H,
+        slug: s.slug,
+        url: `https://polymarket.com/event/${s.slug}`,
+      });
+
+      const isUp = s.winner === 'UP';
+      const isDown = s.winner === 'DOWN';
+      const isLive = s.winner === 'LIVE' || s.isLive || s.winner === 'PENDING';
+      const badgeText = isUp ? '🏆 UP WON' : (isDown ? '🏆 DOWN WON' : '⏳ LIVE');
+      const badgeColor = isUp ? '#34d399' : (isDown ? '#f43f5e' : '#38bdf8');
+
+      // ── Level of Detail 1: Ultra-compact when zoomed far out (< 85px)
+      if (spanW < 85) {
+        _overlayCtx.fillStyle = badgeColor;
+        _overlayCtx.font = '800 10px "JetBrains Mono", monospace';
+        const miniText = isUp ? '🏆 UP' : (isDown ? '🏆 DWN' : '⏳ LIVE');
+        _overlayCtx.fillText(miniText, panelX + 6, 17, panelW - 10);
+        continue;
+      }
+
+      // ── Level of Detail 2: Single-Line Modern Monospace Header
+      let curX = panelX + 10;
+      const textY = 17;
+      const rightLimit = panelX + panelW - 10;
+
+      // 1. Slug link text
+      const slugText = (s.slug || 'Session') + ' ↗';
+      _overlayCtx.font = '600 12px "JetBrains Mono", monospace';
+      _overlayCtx.fillStyle = '#e2e8f0';
+      _overlayCtx.fillText(slugText, curX, textY, Math.max(60, rightLimit - curX));
+      curX += _overlayCtx.measureText(slugText).width + 8;
+
+      if (curX + 60 < rightLimit) {
+        // Dot separator
+        _overlayCtx.fillStyle = '#64748b';
+        _overlayCtx.fillText('·', curX, textY);
+        curX += 12;
+
+        // 2. Winner text (plain text, NO pill)
+        _overlayCtx.fillStyle = badgeColor;
+        _overlayCtx.font = '800 12px "JetBrains Mono", monospace';
+        _overlayCtx.fillText(badgeText, curX, textY);
+        curX += _overlayCtx.measureText(badgeText).width + 8;
+      }
+
+      // 3. BTC Reference Prices (if space permits)
+      if (curX + 180 < rightLimit && s.btcOpen && s.btcClose) {
+        _overlayCtx.fillStyle = '#64748b';
+        _overlayCtx.fillText('·', curX, textY);
+        curX += 12;
+
+        const btcOpenFmt = '$' + (typeof s.btcOpen === 'number' ? s.btcOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : s.btcOpen);
+        const btcCloseFmt = '$' + (typeof s.btcClose === 'number' ? s.btcClose.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : s.btcClose);
+        const sign = s.btcClose >= s.btcOpen ? '+' : '';
+        const chgFmt = s.btcChange !== null && s.btcChange !== undefined ? ` (${sign}${s.btcChange.toFixed(2)}%)` : '';
+
+        _overlayCtx.fillStyle = '#94a3b8';
+        _overlayCtx.font = '600 12px "JetBrains Mono", monospace';
+        const labelText = 'BTC ';
+        _overlayCtx.fillText(labelText, curX, textY);
+        curX += _overlayCtx.measureText(labelText).width;
+
+        const priceText = `${btcOpenFmt} → ${btcCloseFmt}${chgFmt}`;
+        _overlayCtx.fillStyle = s.btcClose >= s.btcOpen ? '#34d399' : '#cbd5e1';
+        _overlayCtx.fillText(priceText, curX, textY, rightLimit - curX);
+        curX += _overlayCtx.measureText(priceText).width + 8;
+      }
+
+      // 4. Time window (if ample space remains)
+      if (curX + 100 < rightLimit && s.startTs && s.endTs) {
+        _overlayCtx.fillStyle = '#64748b';
+        _overlayCtx.fillText('·', curX, textY);
+        curX += 12;
+
+        const fmtTime = ts => {
+          const d = new Date(ts * 1000);
+          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+        };
+        const windowStr = `${fmtTime(s.startTs)} – ${fmtTime(s.endTs)}`;
+        _overlayCtx.fillStyle = '#64748b';
+        _overlayCtx.font = '600 11px "JetBrains Mono", monospace';
+        _overlayCtx.fillText(windowStr, curX, textY, rightLimit - curX);
+      }
+    }
+  }
+
+  function _roundRect(ctx, x, y, width, height, radius, fill, stroke) {
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+    if (fill) ctx.fill();
+    if (stroke) ctx.stroke();
+  }
+
+  function setSessionCardsData(cards) {
+    _sessionCardsData = Array.isArray(cards) ? cards : [];
+    _drawSessionDividers();
+  }
+
+  function addSessionBoundary(unixSec) {
+    if (typeof unixSec === 'number') {
+      _sessionBoundaries.add(unixSec);
+      _drawSessionDividers();
+    }
+  }
+
+  function setSessionBoundaries(timestampsArray) {
+    _sessionBoundaries = new Set();
+    if (Array.isArray(timestampsArray)) {
+      for (const t of timestampsArray) {
+        if (typeof t === 'number') _sessionBoundaries.add(t);
+      }
+    }
+    _drawSessionDividers();
+  }
+
+  function clearSessionBoundaries() {
+    _sessionBoundaries.clear();
+    _sessionCardsData = [];
+    _drawSessionDividers();
+  }
+
+  function updateLiveSessionBtc(slug, btcOpen, btcClose, btcChange) {
+    if (!_sessionCardsData || _sessionCardsData.length === 0) return;
+    let card = _sessionCardsData.find(c => c.slug === slug);
+    if (!card) {
+      const last = _sessionCardsData[_sessionCardsData.length - 1];
+      if (last && (last.isLive || last.winner === 'LIVE' || last.winner === 'PENDING')) {
+        card = last;
+      }
+    }
+    if (card) {
+      if (btcOpen !== undefined && btcOpen !== null) card.btcOpen = btcOpen;
+      if (btcClose !== undefined && btcClose !== null) card.btcClose = btcClose;
+      if (btcChange !== undefined && btcChange !== null) card.btcChange = btcChange;
+      _drawSessionDividers();
+    }
+  }
+
+  function clearMarkers() {
+    _markers = [];
+    try { _series.setMarkers([]); } catch {}
+  }
+
+  // ─── Controls ───────────────────────────────────────────────────────
+  function setTimeframe(tfSeconds) {
+    _currentTf = tfSeconds;
+  }
+
+  function setOutcomeMode(mode) {
+    _outcomeMode = mode;
+  }
+
+  function getCurrentTf() { return _currentTf; }
+  function getLastTime()  { return _lastTime; }
+
+  function resetZoom() {
+    if (_chart) {
+      _chart.timeScale().fitContent();
+      _drawSessionDividers();
+    }
+  }
+
+  function scrollToStart() {
+    if (!_chart) return;
+    let minTime = Infinity;
+    if (_sessionCardsData && _sessionCardsData.length > 0) {
+      for (const s of _sessionCardsData) {
+        if (s.startTs && s.startTs < minTime) minTime = s.startTs;
+      }
+    }
+    if (minTime === Infinity) {
+      const raw = window.TickBuffer?.getRawTicks() || [];
+      if (raw.length > 0) minTime = raw[0].time;
+    }
+    if (minTime < Infinity) {
+      _chart.timeScale().setVisibleRange({
+        from: minTime,
+        to: minTime + 1200, // Show first ~4 sessions with full single-line details
+      });
+      _drawSessionDividers();
+    }
+  }
+
+  function scrollToEnd() {
+    if (!_chart) return;
+    const now = _lastTime || Math.floor(Date.now() / 1000);
+    _chart.timeScale().setVisibleRange({
+      from: now - 900,
+      to: now + 300,
+    });
+    _drawSessionDividers();
+  }
+
+  function _setupResize(container) {
+    const ro = new ResizeObserver(() => {
+      if (_chart && container) {
+        const h = container.clientHeight || 500;
+        const topMargin = Math.min(0.08, Math.max(0.04, 32 / h));
+        _chart.applyOptions({
+          width:  container.clientWidth,
+          height: h,
+          rightPriceScale: {
+            scaleMargins: { top: topMargin, bottom: 0.04 },
+          },
+        });
+        _drawSessionDividers();
+      }
+    });
+    ro.observe(container);
+  }
+
+  function updateTickSize(tickSize) {
+    if (!_series) return;
+    const ts = parseFloat(tickSize);
+    if (isNaN(ts) || ts <= 0) return;
+    _series.applyOptions({
+      priceFormat: {
+        type: 'custom',
+        formatter: (v) => v.toFixed(ts < 0.01 ? 2 : 1) + '¢',
+        minMove: ts * 100,
+      },
+    });
+  }
+
+  function _setupCanvasInteractions(container) {
+    if (!container) return;
+
+    container.addEventListener('mousemove', (e) => {
+      const rect = container.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+
+      let hovered = false;
+      for (const reg of _clickableRegions) {
+        if (mx >= reg.x && mx <= reg.x + reg.w && my >= reg.y && my <= reg.y + reg.h) {
+          hovered = true;
+          break;
+        }
+      }
+      container.style.cursor = hovered ? 'pointer' : '';
+    });
+
+    container.addEventListener('click', (e) => {
+      const rect = container.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+
+      for (const reg of _clickableRegions) {
+        if (mx >= reg.x && mx <= reg.x + reg.w && my >= reg.y && my <= reg.y + reg.h) {
+          if (reg.url) {
+            window.open(reg.url, '_blank');
+          }
+          break;
+        }
+      }
+    });
+  }
+
+  function destroy() {
+    if (_rafId) cancelAnimationFrame(_rafId);
+    if (_chart) {
+      _chart.remove();
+      _chart = null;
+      _series = null;
+    }
+  }
+
+  return {
+    init,
+    setData,
+    pushTick,
+    addWhitespace,
+    addMarketBoundaryMarker,
+    addWinnerBadgeMarker,
+    addSessionBoundary,
+    setSessionBoundaries,
+    clearSessionBoundaries,
+    setSessionCardsData,
+    updateLiveSessionBtc,
+    clearMarkers,
+    setTimeframe,
+    setOutcomeMode,
+    getCurrentTf,
+    getLastTime,
+    resetZoom,
+    scrollToStart,
+    scrollToEnd,
+    updateTickSize,
+    destroy,
+  };
+})();
+
+;
+
+/* ═══ MODULE: js/panel.js ═══ */
+/**
+ * panel.js — History & Database Management Panel Controller v1.4
+ * 
+ * Features:
+ * - Full-screen interactive history & database panel
+ * - Storage connection management & auto-save settings
+ * - Polymarket history downloader with visual progress & presets (6h, 12h, 24h, 3d, 7d)
+ * - Session table with selection checkboxes [✓], filters, and bulk operations
+ * - Win-rate statistics & aggregated metrics
+ */
+'use strict';
+
+window.HistoryPanel = (() => {
+  const $ = id => document.getElementById(id);
+
+  let _selectedSlugs = new Set();
+  let _selectedTfMinutes = 5;
+  let _selectedPresetCount = 72; // default 6h for 5m
+
+  function init() {
+    _bindEvents();
+    _renderStorageInfo();
+    _renderSessionTable();
+    _renderStats();
+
+    // Subscribe to DB updates
+    if (window.DBManager) {
+      window.DBManager.subscribe((event, data) => {
+        _renderStorageInfo();
+        _renderSessionTable();
+        _renderStats();
+      });
+    }
+  }
+
+  function _bindEvents() {
+    // DB File Actions
+    $('btn-connect-file')?.addEventListener('click', async () => {
+      const ok = await window.DBManager.connectFile();
+      if (ok) {
+        window.App?.showToast('Database file connected successfully', 'info', 3000);
+      }
+    });
+
+    $('btn-save-file')?.addEventListener('click', async () => {
+      const ok = await window.DBManager.saveFile();
+      if (ok) {
+        window.App?.showToast('Saved to database file', 'info', 2000);
+      } else {
+        window.App?.showToast('Please connect a file first', 'warn', 2500);
+      }
+    });
+
+    $('btn-export-json')?.addEventListener('click', () => {
+      window.DBManager.exportJSON();
+    });
+
+    $('btn-import-json')?.addEventListener('click', () => {
+      $('file-import-input')?.click();
+    });
+
+    $('file-import-input')?.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        try {
+          const count = await window.DBManager.importJSON(file);
+          window.App?.showToast(`Imported ${count} sessions successfully`, 'info', 3000);
+          _renderStats();
+          _renderSessionTable();
+          _updateStorageCard();
+        } catch {
+          window.App?.showToast('Failed to import JSON', 'error', 3000);
+        }
+      }
+    });
+
+    $('chk-autosave')?.addEventListener('change', (e) => {
+      window.DBManager.setAutoSave(e.target.checked);
+    });
+
+    // Backfill TF selector (5M / 15M)
+    const bfTfBtns = document.querySelectorAll('.bf-tf-btn');
+    bfTfBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        bfTfBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        _selectedTfMinutes = parseInt(btn.dataset.tf, 10) || 5;
+        _updatePresetCounts();
+      });
+    });
+
+    // Backfill Presets
+    const presetBtns = document.querySelectorAll('.preset-btn');
+    presetBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        presetBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const hours = parseInt(btn.dataset.hours, 10);
+        _selectedPresetCount = Math.round((hours * 60) / _selectedTfMinutes);
+        $('bf-count-display').textContent = `${_selectedPresetCount} sessions (${hours}h)`;
+      });
+    });
+
+    // Start / Stop Backfill
+    $('btn-start-backfill')?.addEventListener('click', _handleStartBackfill);
+    $('btn-stop-backfill')?.addEventListener('click', () => {
+      window.BackfillEngine.stop();
+      $('btn-stop-backfill').disabled = true;
+    });
+
+    // Table Select All / Deselect All
+    $('chk-select-all')?.addEventListener('change', (e) => {
+      const all = window.DBManager.getAllSessions();
+      if (e.target.checked) {
+        all.forEach(s => _selectedSlugs.add(s.slug));
+      } else {
+        _selectedSlugs.clear();
+      }
+      _renderSessionTable(false);
+    });
+
+    // Bulk Actions
+    $('btn-delete-selected')?.addEventListener('click', () => {
+      if (_selectedSlugs.size === 0) return;
+      if (confirm(`Delete ${_selectedSlugs.size} selected session(s) from database?`)) {
+        window.DBManager.deleteSessions(Array.from(_selectedSlugs));
+        _selectedSlugs.clear();
+        window.App?.showToast('Deleted selected sessions', 'info', 2000);
+      }
+    });
+
+    $('btn-load-to-chart')?.addEventListener('click', () => {
+      _loadHistoryToChart();
+    });
+
+    $('btn-clear-db')?.addEventListener('click', () => {
+      if (confirm('Clear all sessions from database?')) {
+        window.DBManager.clearAll();
+        _selectedSlugs.clear();
+        window.App?.showToast('Database cleared', 'info', 2000);
+      }
+    });
+  }
+
+  function _updatePresetCounts() {
+    const activePreset = document.querySelector('.preset-btn.active');
+    if (activePreset) {
+      const hours = parseInt(activePreset.dataset.hours, 10);
+      _selectedPresetCount = Math.round((hours * 60) / _selectedTfMinutes);
+      $('bf-count-display').textContent = `${_selectedPresetCount} sessions (${hours}h)`;
+    }
+  }
+
+  // ─── Backfill Process ───────────────────────────────────────────────
+  async function _handleStartBackfill() {
+    if (window.BackfillEngine.isRunning()) return;
+
+    const startBtn = $('btn-start-backfill');
+    const stopBtn = $('btn-stop-backfill');
+    const progWrap = $('bf-progress-wrap');
+    const progBar = $('bf-progress-bar');
+    const progText = $('bf-progress-text');
+    const smartMerge = $('chk-smart-merge')?.checked ?? true;
+
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    progWrap.style.display = 'block';
+    progBar.style.width = '0%';
+    progText.textContent = 'Initializing backfill...';
+
+    const res = await window.BackfillEngine.startBackfill(
+      {
+        tfMinutes: _selectedTfMinutes,
+        sessionCount: _selectedPresetCount,
+        smartMerge,
+      },
+      ({ current, total, slug, savedCount, skippedCount, status }) => {
+        const pct = Math.round((current / total) * 100);
+        progBar.style.width = `${pct}%`;
+        progText.innerHTML = `<span>[${current}/${total}] <b>${pct}%</b> — ${status}</span> <span class="bf-slug">${slug}</span>`;
+      }
+    );
+
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    progText.textContent = `Completed! Saved: ${res.saved}, Skipped (already in DB): ${res.skipped}`;
+
+    window.App?.showToast(`Backfill complete: ${res.saved} new sessions saved`, 'info', 3500);
+    _renderSessionTable();
+    _renderStats();
+
+    // Auto-update chart with new history
+    _loadHistoryToChart(false);
+  }
+
+  // ─── Render Storage Info ────────────────────────────────────────────
+  function _renderStorageInfo() {
+    if (!window.DBManager) return;
+    const isConn = window.DBManager.isConnected();
+    const fileName = window.DBManager.getFileName();
+    const fileSize = window.DBManager.getFileSize();
+    const lastSaved = window.DBManager.getLastSavedMs();
+
+    const statusBadge = $('db-status-badge');
+    if (statusBadge) {
+      statusBadge.className = isConn ? 'badge-connected' : 'badge-disconnected';
+      statusBadge.textContent = isConn ? `CONNECTED: ${fileName}` : 'NOT CONNECTED (Using In-Memory DB)';
+    }
+
+    const sizeEl = $('db-file-size');
+    if (sizeEl) {
+      sizeEl.textContent = fileSize > 0 ? (fileSize / 1024).toFixed(1) + ' KB' : '-- KB';
+    }
+
+    const lastSavedEl = $('db-last-saved');
+    if (lastSavedEl) {
+      lastSavedEl.textContent = lastSaved ? new Date(lastSaved).toLocaleTimeString() : 'Never';
+    }
+  }
+
+  // ─── Render Stats ───────────────────────────────────────────────────
+  function _renderStats() {
+    if (!window.DBManager) return;
+    const sessions = window.DBManager.getAllSessions();
+    const totalSessions = sessions.length;
+    const totalTicks = window.DBManager.getTotalTickCount();
+
+    let upWins = 0;
+    let downWins = 0;
+    let totalVolume = 0;
+
+    for (const s of sessions) {
+      if (s.winner === 'UP') upWins++;
+      else if (s.winner === 'DOWN') downWins++;
+      totalVolume += s.volume || 0;
+    }
+
+    const upPct = totalSessions > 0 ? ((upWins / totalSessions) * 100).toFixed(1) : '0.0';
+    const downPct = totalSessions > 0 ? ((downWins / totalSessions) * 100).toFixed(1) : '0.0';
+
+    $('stat-total-sessions') && ($('stat-total-sessions').textContent = totalSessions);
+    $('stat-total-ticks') && ($('stat-total-ticks').textContent = totalTicks.toLocaleString());
+    $('stat-up-pct') && ($('stat-up-pct').textContent = `${upPct}% (${upWins})`);
+    $('stat-down-pct') && ($('stat-down-pct').textContent = `${downPct}% (${downWins})`);
+    $('stat-total-volume') && ($('stat-total-volume').textContent = '$' + totalVolume.toLocaleString(undefined, { maximumFractionDigits: 0 }));
+  }
+
+  // ─── Render Session Table ───────────────────────────────────────────
+  function _renderSessionTable(rebuildSelectAll = true) {
+    if (!window.DBManager) return;
+    const tbody = $('session-table-body');
+    if (!tbody) return;
+
+    const sessions = window.DBManager.getAllSessions().reverse(); // newest first
+
+    if (sessions.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="empty-table-msg">No historical sessions in database yet. Use "Start Backfill" above or let the live chart record sessions.</td></tr>`;
+      return;
+    }
+
+    let html = '';
+    for (const s of sessions) {
+      const isChecked = _selectedSlugs.has(s.slug) ? 'checked' : '';
+      const fmtTime = ts => ts ? new Date(ts * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '--';
+
+      // Winner Badge (UP = White Badge, DOWN = Coral Red Badge)
+      let winnerBadge = '<span class="badge-pending">PENDING</span>';
+      if (s.winner === 'UP') {
+        winnerBadge = '<span class="badge-winner-up">🏆 UP WON</span>';
+      } else if (s.winner === 'DOWN') {
+        winnerBadge = '<span class="badge-winner-down">🏆 DOWN WON</span>';
+      }
+
+      const openFmt = s.open !== null && s.open !== undefined ? s.open.toFixed(1) + '¢' : '--';
+      const highFmt = s.high !== null && s.high !== undefined ? s.high.toFixed(1) + '¢' : '--';
+      const lowFmt = s.low !== null && s.low !== undefined ? s.low.toFixed(1) + '¢' : '--';
+      const closeFmt = s.close !== null && s.close !== undefined ? s.close.toFixed(1) + '¢' : '--';
+      const tickCount = Array.isArray(s.ticks) ? s.ticks.length : 0;
+      const volFmt = s.volume ? '$' + Math.round(s.volume).toLocaleString() : '--';
+
+      let btcFmt = '--';
+      if (s.btcOpen && s.btcClose) {
+        const sign = s.btcClose >= s.btcOpen ? '+' : '';
+        const chg = s.btcChange !== null && s.btcChange !== undefined ? `(${sign}${s.btcChange.toFixed(2)}%)` : '';
+        const cls = s.btcClose >= s.btcOpen ? 'btc-up' : 'btc-down';
+        btcFmt = `<span class="${cls}">$${Math.round(s.btcOpen).toLocaleString()} → $${Math.round(s.btcClose).toLocaleString()} ${chg}</span>`;
+      }
+
+      html += `
+        <tr data-slug="${s.slug}" class="${isChecked ? 'row-selected' : ''}">
+          <td class="col-chk"><input type="checkbox" class="session-chk" data-slug="${s.slug}" ${isChecked} /></td>
+          <td class="col-time">
+            <a href="https://polymarket.com/event/${s.slug}" target="_blank" class="session-link-title" title="Open on Polymarket">
+              <b>${s.slug}</b> ↗
+            </a>
+            <div class="session-time-sub">${fmtTime(s.startTs)} <span class="time-sep">→</span> ${fmtTime(s.endTs)} · ${btcFmt}</div>
+          </td>
+          <td class="col-tf"><span class="badge-tf">${s.tf}M</span></td>
+          <td class="col-winner">${winnerBadge}</td>
+          <td class="col-ohlc"><span class="o">${openFmt}</span> / <span class="h">${highFmt}</span> / <span class="l">${lowFmt}</span> / <span class="c">${closeFmt}</span></td>
+          <td class="col-ticks"><span class="badge-ticks">${tickCount} pts</span></td>
+          <td class="col-vol">${volFmt}</td>
+          <td class="col-actions">
+            <button class="tbl-btn-del" data-slug="${s.slug}" title="Delete session">✕</button>
+          </td>
+        </tr>
+      `;
+    }
+
+    tbody.innerHTML = html;
+
+    // Row selection checkboxes
+    tbody.querySelectorAll('.session-chk').forEach(chk => {
+      chk.addEventListener('change', (e) => {
+        const slug = e.target.dataset.slug;
+        if (e.target.checked) _selectedSlugs.add(slug);
+        else _selectedSlugs.delete(slug);
+        const row = e.target.closest('tr');
+        row?.classList.toggle('row-selected', e.target.checked);
+        _updateSelectedCount();
+      });
+    });
+
+    // Delete single session buttons
+    tbody.querySelectorAll('.tbl-btn-del').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const slug = e.target.dataset.slug;
+        if (slug && confirm(`Delete session ${slug}?`)) {
+          window.DBManager.deleteSessions([slug]);
+          _selectedSlugs.delete(slug);
+        }
+      });
+    });
+
+    _updateSelectedCount();
+  }
+
+  function _updateSelectedCount() {
+    const selCountEl = $('selected-sessions-count');
+    if (selCountEl) {
+      selCountEl.textContent = `${_selectedSlugs.size} selected`;
+    }
+  }
+
+  // ─── Load Merged History into Chart ─────────────────────────────────
+  async function _loadHistoryToChart(switchView = true) {
+    if (!window.DBManager || !window.ChartManager || !window.TickBuffer) return;
+
+    let allSessions = window.DBManager.getAllSessions();
+    if (allSessions.length === 0) {
+      try {
+        const res = await fetch('./history.json');
+        if (res.ok) {
+          const text = await res.text();
+          window.DBManager.importJSON(text);
+          allSessions = window.DBManager.getAllSessions();
+        }
+      } catch {}
+    }
+
+    if (allSessions.length === 0) {
+      window.App?.showToast('No sessions in database to load', 'warn', 2000);
+      return;
+    }
+
+    // Helper: Resample / Step-hold ticks to ensure uniform 300s session width
+    function _expandSessionTicks(ticks, startTs, endTs, stepSec = 2) {
+      if (!ticks || ticks.length === 0) return [];
+      const sorted = ticks
+        .map(pt => [
+          Array.isArray(pt) ? pt[0] : (pt.t || pt.time),
+          Array.isArray(pt) ? pt[1] : (pt.v || pt.value)
+        ])
+        .filter(([t, v]) => typeof t === 'number' && typeof v === 'number' && !isNaN(v))
+        .sort((a, b) => a[0] - b[0]);
+
+      if (sorted.length === 0) return [];
+
+      const filled = [];
+      let curVal = sorted[0][1];
+      let tickIdx = 0;
+
+      // Resample from startTs + 1 to endTs - 1 with stepSec intervals
+      for (let t = startTs + 1; t < endTs; t += stepSec) {
+        while (tickIdx < sorted.length && sorted[tickIdx][0] <= t) {
+          curVal = sorted[tickIdx][1];
+          tickIdx++;
+        }
+        filled.push([t, curVal]);
+      }
+
+      // Ensure exact settlement point at endTs - 1
+      const lastVal = sorted[sorted.length - 1][1];
+      filled.push([endTs - 1, lastVal]);
+      return filled;
+    }
+
+    const bulkTicks = [];
+
+    for (const s of allSessions) {
+      if (Array.isArray(s.ticks) && s.ticks.length > 0) {
+        const start = s.startTs || 0;
+        const end = s.endTs || (start ? start + (s.tf || 5) * 60 : 0);
+        if (start > 0 && end > start) {
+          const expanded = _expandSessionTicks(s.ticks, start, end, 2);
+          for (const pt of expanded) {
+            bulkTicks.push(pt);
+          }
+        } else {
+          for (const pt of s.ticks) {
+            const t = Array.isArray(pt) ? pt[0] : (pt.t || pt.time);
+            const v = Array.isArray(pt) ? pt[1] : (pt.v || pt.value);
+            if (typeof t === 'number' && typeof v === 'number' && !isNaN(v)) {
+              bulkTicks.push([t, v]);
+            }
+          }
+        }
+      }
+    }
+
+    // Also append currently active live session ticks
+    if (window.App && typeof window.App.getCurrentSessionTicks === 'function') {
+      const liveTicks = window.App.getCurrentSessionTicks();
+      if (Array.isArray(liveTicks)) {
+        for (const pt of liveTicks) {
+          const t = Array.isArray(pt) ? pt[0] : (pt.t || pt.time);
+          const v = Array.isArray(pt) ? pt[1] : (pt.v || pt.value);
+          if (typeof t === 'number' && typeof v === 'number' && !isNaN(v)) {
+            bulkTicks.push([t, v]);
+          }
+        }
+      }
+    }
+
+    TickBuffer.reset(false);
+    TickBuffer.addBulk(bulkTicks);
+
+    // Re-render chart series with explicit whitespace gaps between sessions
+    const curTf = ChartManager.getCurrentTf();
+    const outcomeMode = window.App?.getOutcomeMode() || 'up';
+    const aggregated = TickBuffer.aggregate(curTf, outcomeMode);
+
+    // Inject WhitespaceData items at every session boundary so lines never connect across sessions
+    const seriesWithGaps = [];
+    const seenTimes = new Set();
+    
+    // 1. Add all aggregated price points
+    for (const item of aggregated) {
+      seriesWithGaps.push(item);
+      seenTimes.add(item.time);
+    }
+    
+    // 2. Add whitespace gaps at each session endTs
+    for (const s of allSessions) {
+      if (s.endTs && !seenTimes.has(s.endTs)) {
+        seriesWithGaps.push({ time: s.endTs }); // Whitespace point!
+        seenTimes.add(s.endTs);
+      }
+    }
+
+    seriesWithGaps.sort((a, b) => a.time - b.time);
+
+    if (seriesWithGaps.length > 0) {
+      ChartManager.setData(seriesWithGaps);
+    }
+
+    // Now place interactive session cards and dashed blue session dividers
+    ChartManager.clearMarkers();
+    const boundaries = [];
+    const sessionCards = [];
+
+    if (aggregated.length > 0) {
+      for (const s of allSessions) {
+        if (s.startTs) boundaries.push(s.startTs);
+        if (s.endTs) {
+          boundaries.push(s.endTs);
+          // Add whitespace boundary to disconnect lines between sessions
+          ChartManager.addWhitespace(s.endTs);
+        }
+
+        sessionCards.push({
+          slug: s.slug,
+          startTs: s.startTs,
+          endTs: s.endTs,
+          winner: s.winner,
+          btcOpen: s.btcOpen,
+          btcClose: s.btcClose,
+          btcChange: s.btcChange,
+        });
+
+        if (s.winner && s.winner !== 'PENDING') {
+          const isUp = s.winner === 'UP';
+          const targetTs = s.endTs || (Array.isArray(s.ticks) && s.ticks.length > 0 ? s.ticks[s.ticks.length - 1][0] : null);
+          if (targetTs) {
+            // Find closest point in aggregated data that is <= targetTs
+            let closestPt = aggregated[0];
+            let minDiff = Infinity;
+            for (const pt of aggregated) {
+              const diff = Math.abs(pt.time - targetTs);
+              if (diff < minDiff) {
+                minDiff = diff;
+                closestPt = pt;
+              }
+            }
+            if (closestPt) {
+              ChartManager.addWinnerBadgeMarker(
+                closestPt.time,
+                isUp ? '🏆 UP WON' : '🏆 DOWN WON',
+                isUp ? 'up' : 'down'
+              );
+            }
+          }
+        }
+      }
+      ChartManager.setSessionBoundaries(boundaries);
+      ChartManager.setSessionCardsData(sessionCards);
+      ChartManager.resetZoom();
+    }
+
+    if (switchView && window.App) {
+      window.App.switchView('chart');
+      window.App.showToast(`Loaded ${allSessions.length} sessions (${bulkTicks.length} ticks) to chart`, 'info', 3000);
+    }
+  }
+
+  return {
+    init,
+    loadHistoryToChart: _loadHistoryToChart,
+  };
+})();
+
+;
+
+/* ═══ MODULE: js/app.js ═══ */
+/**
+ * app.js — Main Application Coordinator v1.4
+ * 
+ * Orchestrates: MarketManager, PolyWS, TickBuffer, PriceEngine, ChartManager, DBManager, BackfillEngine, HistoryPanel
+ * Features:
+ * - View switcher: Live Chart vs History & Database Control Panel
+ * - Real-time auto-saving of completed sessions into local database file
+ * - Live official winner badges (White for UP, Coral-red for DOWN)
+ * - Seamless integration with Polymarket CLOB WebSocket & Gamma API
+ */
+'use strict';
+
+window.App = (() => {
+  const $ = id => document.getElementById(id);
+
+  const el = {
+    tradingView:       $('trading-view'),
+    chartView:         $('chart-view'),
+    historyView:       $('history-panel-view'),
+    tabTrading:        $('tab-view-trading'),
+    tabChart:          $('tab-view-chart'),
+    tabHistory:        $('tab-view-history'),
+
+    tradingContainer:  $('trading-chart-container'),
+    chartContainer:    $('chart-container'),
+    loadingOverlay:    $('loading-overlay'),
+    loadingSub:        $('loading-sub'),
+    errorOverlay:      $('error-overlay'),
+    errorText:         $('error-text'),
+
+    statusIndicator:   $('status-indicator'),
+    statusText:        $('status-text'),
+    timerCenter:       $('timer-center'),
+    timerLabelTop:     $('timer-label-top'),
+    timerValue:        $('timer-value'),
+
+    priceCurrent:      $('price-current'),
+    priceBid:          $('price-bid'),
+    priceAsk:          $('price-ask'),
+    priceMid:          $('price-mid'),
+    priceLast:         $('price-last'),
+    priceSpread:       $('price-spread'),
+    priceAge:          $('price-age'),
+
+    marketSlug:        $('market-slug-display'),
+    marketWindow:      $('market-window-display'),
+    marketCount:       $('market-count-display'),
+
+    btnMkt5m:          $('btn-mkt-5m'),
+    btnMkt15m:         $('btn-mkt-15m'),
+    btnOutcomeUp:      $('btn-outcome-up'),
+    btnOutcomeDown:    $('btn-outcome-down'),
+    btnResetZoom:      $('btn-reset-zoom'),
+    btnScrollStart:    $('btn-scroll-start'),
+    btnScrollLive:     $('btn-scroll-live'),
+    btnQuickLoadDb:    $('btn-quick-load-db'),
+    btnRetry:          $('btn-retry'),
+  };
+
+  let _currentTfMinutes  = 5;      // 5 or 15 minutes market
+  let _currentTfSeconds  = 1;      // 1s / 5s / 15s / 30s / 60s chart TF
+  let _isInitialized     = false;
+  let _marketSwitchCount = 0;
+  let _loadingRetries    = 0;
+  let _outcomeMode       = 'up';   // 'up' | 'down'
+  let _timerMode         = 'remaining'; // 'remaining' | 'elapsed'
+  let _activeView        = 'trading'; // 'trading' | 'chart' | 'history'
+
+  // In-memory buffer of current live session ticks: [[t, v_cents], ...]
+  let _currentSessionTicks = [];
+
+  // ─── View Switching (Trading vs All Sessions vs History) ───────────
+  function switchView(viewName) {
+    _activeView = viewName;
+
+    // Reset visibility
+    el.tradingView?.classList.toggle('hidden-view', viewName !== 'trading');
+    el.tradingView?.classList.toggle('active-view', viewName === 'trading');
+
+    el.chartView?.classList.toggle('hidden-view', viewName !== 'chart');
+    el.chartView?.classList.toggle('active-view', viewName === 'chart');
+
+    el.historyView?.classList.toggle('hidden-view', viewName !== 'history');
+    el.historyView?.classList.toggle('active-view', viewName === 'history');
+
+    // Update tab styling
+    el.tabTrading?.classList.toggle('active', viewName === 'trading');
+    el.tabChart?.classList.toggle('active', viewName === 'chart');
+    el.tabHistory?.classList.toggle('active', viewName === 'history');
+
+    if (viewName === 'trading') {
+      setTimeout(() => window.LiveTradingManager?.resize(), 50);
+    } else if (viewName === 'chart') {
+      setTimeout(() => ChartManager.resetZoom(), 50);
+    }
+  }
+
+  // ─── Boot Sequence ────────────────────────────────────────────────
+  async function boot() {
+    // 1. Initialize Stationary Live Trading Chart
+    if (window.LiveTradingManager) {
+      LiveTradingManager.init(el.tradingContainer);
+    }
+
+    // 2. Initialize Multi-Session Timeline Chart
+    const chartOk = ChartManager.init(el.chartContainer);
+    if (!chartOk) {
+      showError('Failed to initialize chart engine. Please refresh.');
+      return;
+    }
+
+    // 3. Try auto-connecting DB handle from cache
+    if (window.DBManager) {
+      await window.DBManager.tryAutoConnect();
+    }
+
+    // 4. Initialize History Panel
+    if (window.HistoryPanel) {
+      window.HistoryPanel.init();
+    }
+
+    // 5. Bind View Switcher
+    el.tabTrading?.addEventListener('click', () => switchView('trading'));
+    el.tabChart?.addEventListener('click', () => switchView('chart'));
+    el.tabHistory?.addEventListener('click', () => switchView('history'));
+    el.btnQuickLoadDb?.addEventListener('click', () => {
+      window.HistoryPanel?.loadHistoryToChart(true);
+    });
+
+    // 6. Bind Interactive Timer Toggle (Remaining <-> Elapsed)
+    el.timerCenter?.addEventListener('click', () => {
+      _timerMode = (_timerMode === 'remaining' ? 'elapsed' : 'remaining');
+      _updateTimer();
+      showToast(_timerMode === 'remaining' ? '⏱ Timer: Countdown (Remaining)' : '⏱ Timer: Count-up (Elapsed)', 'info', 2000);
+    });
+
+    // 5. Connect WebSocket Handlers (CLOB + RTDS Chainlink Stream)
+    _setupWSHandlers();
+    _setupRTDSHandlers();
+
+    // 6. Bind UI Controls
+    _bindUIControls();
+
+    // 7. Start Timers
+    _startTimer();
+    setInterval(_updatePriceUI, 1000);
+    setInterval(_flushLiveTicksToDB, 30000); // periodic auto-save
+
+    // 8. Load Current Active Market
+    setStatus('connecting', 'CONNECTING');
+    await loadMarket(_currentTfMinutes);
+  }
+
+  // ─── RTDS Chainlink BTC Price Feed Handlers ───────────────────────
+  let _liveBtcOpen = null;
+  let _liveBtcCurrent = null;
+  let _liveBtcChange = null;
+
+  function _setupRTDSHandlers() {
+    if (!window.PolyRTDS) return;
+
+    PolyRTDS.handlers.onBtcPrice = (price, ts) => {
+      const cur = MarketManager.getCurrentMarket();
+      if (!cur) return;
+
+      if (_liveBtcOpen === null) {
+        _liveBtcOpen = price;
+      }
+      _liveBtcCurrent = price;
+      if (_liveBtcOpen > 0) {
+        _liveBtcChange = Math.round(((_liveBtcCurrent - _liveBtcOpen) / _liveBtcOpen) * 10000) / 100;
+      }
+
+      ChartManager.updateLiveSessionBtc(cur.slug, _liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+      if (window.LiveTradingManager) {
+        LiveTradingManager.updateBtcPrice(_liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+      }
+    };
+
+    PolyRTDS.connect();
+  }
+
+  // ─── WebSocket Handlers ───────────────────────────────────────────
+  function _setupWSHandlers() {
+    PolyWS.handlers.onConnected = () => {
+      setStatus('live', 'LIVE');
+      hideError();
+    };
+
+    PolyWS.handlers.onDisconnected = () => {
+      setStatus('connecting', 'RECONNECTING');
+    };
+
+    PolyWS.handlers.onError = () => {
+      setStatus('connecting', 'RECONNECTING');
+    };
+
+    PolyWS.handlers.onBook = (msg) => {
+      const bids = msg.bids || [];
+      const asks = msg.asks || [];
+      if (bids.length > 0 && asks.length > 0) {
+        const bestBid = parseFloat(bids[bids.length - 1].price);
+        const bestAsk = parseFloat(asks[asks.length - 1].price);
+        if (!isNaN(bestBid) && !isNaN(bestAsk)) {
+          PriceEngine.updateBidAsk(bestBid, bestAsk);
+          _emitPrice();
+        }
+      }
+      if (msg.last_trade_price || msg.lastTradePrice) {
+        PriceEngine.updateLastTrade(msg.last_trade_price || msg.lastTradePrice);
+      }
+    };
+
+    PolyWS.handlers.onPriceChange = (msg) => {
+      if (msg.best_bid !== undefined && msg.best_ask !== undefined) {
+        PriceEngine.updateBidAsk(msg.best_bid, msg.best_ask);
+      } else if (msg.price !== undefined) {
+        if (msg.side === 'BUY')  PriceEngine.updateBidAsk(msg.price, PriceEngine.toAsk());
+        if (msg.side === 'SELL') PriceEngine.updateBidAsk(PriceEngine.toBid(), msg.price);
+      }
+      _emitPrice();
+    };
+
+    PolyWS.handlers.onBestBidAsk = (msg) => {
+      if (msg.best_bid !== undefined && msg.best_ask !== undefined) {
+        PriceEngine.updateBidAsk(msg.best_bid, msg.best_ask);
+        _emitPrice();
+      }
+    };
+
+    PolyWS.handlers.onLastTrade = (msg) => {
+      if (msg.price !== undefined) {
+        PriceEngine.updateLastTrade(msg.price);
+        _emitPrice();
+      }
+    };
+
+    PolyWS.handlers.onTickSizeChange = (msg) => {
+      if (msg.tick_size) {
+        ChartManager.updateTickSize(msg.tick_size);
+      }
+    };
+  }
+
+  // ─── Price Flow & Emission ────────────────────────────────────────
+  function _emitPrice() {
+    const rawUpPrice = PriceEngine.effectivePrice(); // 0.00–1.00 (Up token)
+    const rawUpCents = rawUpPrice * 100;             // 0.0–100.0¢
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    // Save to historical tick buffer
+    TickBuffer.addTick(nowSec, rawUpCents);
+
+    // Save to current live session buffer for DB
+    _currentSessionTicks.push([nowSec, Math.round(rawUpCents * 10) / 10]);
+
+    // Compute display value for current outcome mode
+    const displayCents = _outcomeMode === 'down' ? (100 - rawUpCents) : rawUpCents;
+
+    // Send tick to multi-session chart
+    ChartManager.pushTick(nowSec, displayCents);
+
+    // Send tick to stationary 300s/900s LiveTradingManager chart
+    if (window.LiveTradingManager) {
+      LiveTradingManager.pushTick(nowSec, rawUpCents);
+    }
+
+    // Update UI numbers
+    _updatePriceUI();
+  }
+
+  function _updatePriceUI() {
+    const rawBid  = PriceEngine.toBid();
+    const rawAsk  = PriceEngine.toAsk();
+    const rawLast = PriceEngine.toLast();
+    const rawMid  = PriceEngine.getMid();
+    const rawEff  = PriceEngine.effectivePrice();
+    const spread  = PriceEngine.getSpread();
+    const ageMs   = PriceEngine.getLastUpdateMs();
+
+    let effCents, bidCents, askCents, midCents, lastCents;
+
+    if (_outcomeMode === 'down') {
+      effCents  = 100 - (rawEff * 100);
+      bidCents  = rawAsk !== null ? (1 - rawAsk) * 100 : null;
+      askCents  = rawBid !== null ? (1 - rawBid) * 100 : null;
+      midCents  = 100 - (rawMid * 100);
+      lastCents = rawLast !== null ? (100 - rawLast * 100) : null;
+    } else {
+      effCents  = rawEff * 100;
+      bidCents  = rawBid !== null ? rawBid * 100 : null;
+      askCents  = rawAsk !== null ? rawAsk * 100 : null;
+      midCents  = rawMid * 100;
+      lastCents = rawLast !== null ? rawLast * 100 : null;
+    }
+
+    const fmt = v => v !== null ? v.toFixed(1) + '¢' : '--.-¢';
+    const prevCurrent = el.priceCurrent.textContent;
+    const newCurrent  = fmt(effCents);
+
+    let displaySpread = null;
+    if (askCents !== null && bidCents !== null) {
+      displaySpread = Math.abs(askCents - bidCents);
+    } else if (spread !== null) {
+      displaySpread = Math.abs(spread * 100);
+    }
+
+    el.priceCurrent.textContent = newCurrent;
+    el.priceBid.textContent     = fmt(bidCents);
+    el.priceAsk.textContent     = fmt(askCents);
+    el.priceMid.textContent     = fmt(midCents);
+    el.priceLast.textContent    = fmt(lastCents);
+    el.priceSpread.textContent  = displaySpread !== null ? displaySpread.toFixed(1) + '¢' : '--.-¢';
+
+    // Flash animation on price change
+    if (newCurrent !== prevCurrent && prevCurrent !== '--.-¢') {
+      const prev = parseFloat(prevCurrent);
+      const cur  = parseFloat(newCurrent);
+      if (!isNaN(prev) && !isNaN(cur)) {
+        el.priceCurrent.classList.remove('price-flash-up', 'price-flash-down');
+        void el.priceCurrent.offsetWidth;
+        if (cur > prev) el.priceCurrent.classList.add('price-flash-up');
+        else if (cur < prev) el.priceCurrent.classList.add('price-flash-down');
+      }
+    }
+
+    // Data latency age
+    if (ageMs) {
+      const ageSec = Math.round((Date.now() - ageMs) / 1000);
+      el.priceAge.textContent = ageSec < 2 ? 'LIVE' : `${ageSec}s ago`;
+      el.priceAge.style.color = ageSec > 10 ? 'var(--red)' : '';
+    }
+  }
+
+  // ─── Outcome Switching (UP / DOWN) ─────────────────────────────────
+  function switchOutcome(mode) {
+    if (_outcomeMode === mode) return;
+    _outcomeMode = mode;
+
+    el.btnOutcomeUp?.classList.toggle('active', mode === 'up');
+    el.btnOutcomeDown?.classList.toggle('active', mode === 'down');
+
+    ChartManager.setOutcomeMode(mode);
+    if (window.LiveTradingManager) {
+      LiveTradingManager.setOutcomeMode(mode);
+    }
+
+    const aggregated = TickBuffer.aggregate(_currentTfSeconds, mode);
+    if (aggregated.length > 0) {
+      ChartManager.setData(aggregated);
+    }
+
+    _updatePriceUI();
+    showToast(mode === 'up' ? '📈 Viewing UP Outcome' : '📉 Viewing DOWN Outcome', 'info', 2000);
+  }
+
+  // ─── Market Loading ───────────────────────────────────────────────
+  async function loadMarket(tfMinutes) {
+    showLoading('Fetching market discovery...');
+    _loadingRetries = 0;
+    PriceEngine.reset();
+    _currentSessionTicks = [];
+
+    let market = null;
+
+    while (!market && _loadingRetries < 5) {
+      setLoadingSub(`Connecting to Gamma API... attempt ${_loadingRetries + 1}`);
+      market = await MarketManager.loadCurrentMarket(tfMinutes);
+      if (!market) {
+        _loadingRetries++;
+        if (_loadingRetries < 5) await _sleep(1500);
+      }
+    }
+
+    if (!market) {
+      showError('Could not find active market. Retrying...');
+      setTimeout(() => loadMarket(_currentTfMinutes), 10000);
+      return;
+    }
+
+    console.log('[App] Market loaded:', market);
+    MarketManager.setCurrentMarket(market);
+    // 5. Update UI
+    _updateMarketUI(market);
+    if (window.LiveTradingManager) {
+      LiveTradingManager.setMarket(market);
+    }
+
+    // Initial price via REST
+    setLoadingSub('Fetching initial price...');
+    const mid = await MarketManager.fetchMidpoint(market.upTokenId);
+    if (mid !== null) {
+      PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+      const rawUpCents = mid * 100;
+      const nowSec = Math.floor(Date.now() / 1000);
+      TickBuffer.addTick(nowSec, rawUpCents);
+      _currentSessionTicks.push([nowSec, Math.round(rawUpCents * 10) / 10]);
+
+      const displayCents = _outcomeMode === 'down' ? (100 - rawUpCents) : rawUpCents;
+      ChartManager.setData([{ time: nowSec, value: displayCents }]);
+      _updatePriceUI();
+    }
+
+    // Connect WebSocket
+    setLoadingSub('Connecting to live CLOB WebSocket...');
+    PolyWS.subscribe(market.upTokenId);
+    if (!PolyWS.isConnected()) {
+      PolyWS.connect();
+    }
+
+    // Schedule next rollover
+    MarketManager.scheduleRollover(market, _onMarketSwitch);
+
+    // Initialize Chainlink live prices for active session
+    _liveBtcOpen = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice) || PolyRTDS?.getLatestBtcPrice() || null;
+    _liveBtcCurrent = PolyRTDS?.getLatestBtcPrice() || _liveBtcOpen;
+    if (_liveBtcOpen && _liveBtcCurrent) {
+      _liveBtcChange = Math.round(((_liveBtcCurrent - _liveBtcOpen) / _liveBtcOpen) * 10000) / 100;
+      ChartManager.updateLiveSessionBtc(market.slug, _liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+    }
+
+    hideLoading();
+    _isInitialized = true;
+  }
+
+  // ─── Market Switch (Rollover Callback) ────────────────────────────
+  async function _onMarketSwitch(newMarket, prevMarket) {
+    console.log('[App] Market rollover:', prevMarket?.slug, '→', newMarket.slug);
+    _marketSwitchCount++;
+
+    _liveBtcOpen = PolyRTDS?.getLatestBtcPrice() || null;
+    _liveBtcCurrent = _liveBtcOpen;
+    _liveBtcChange = 0;
+
+    const boundaryTs = prevMarket ? prevMarket.endTs : Math.floor(Date.now() / 1000);
+
+    // 4. Update stationary Live Trading chart for new session
+    if (window.LiveTradingManager) {
+      LiveTradingManager.setMarket(newMarket);
+    }
+
+    // 5. Query resolution for previous market after small delay to DB
+    if (prevMarket && prevMarket.slug) {
+      const finalPrice = PriceEngine.effectivePrice(); // 0.0–1.0
+      const isUpWon = finalPrice >= 0.5;
+      const winnerStr = isUpWon ? 'UP' : 'DOWN';
+
+      // Add winner badge marker on chart:
+      // UP WON = White badge, DOWN WON = Coral Red badge
+      ChartManager.addWinnerBadgeMarker(
+        boundaryTs,
+        isUpWon ? '🏆 UP WON' : '🏆 DOWN WON',
+        isUpWon ? 'up' : 'down'
+      );
+
+      // Save initial completed session to local DB
+      if (window.DBManager) {
+        window.DBManager.upsertSession({
+          slug: prevMarket.slug,
+          tf: prevMarket.slug.includes('-15m-') ? 15 : 5,
+          startTs: prevMarket.startTs,
+          endTs: prevMarket.endTs,
+          winner: winnerStr,
+          ticks: _currentSessionTicks,
+        }, true);
+      }
+
+      // Schedule async query of official Gamma API resolution & Chainlink TWAP prices
+      const completedSlug = prevMarket.slug;
+      setTimeout(async () => {
+        try {
+          const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${completedSlug}`);
+          if (res.ok) {
+            const data = await res.json();
+            const ev = Array.isArray(data) ? data[0] : data;
+            if (ev && Array.isArray(ev.markets) && ev.markets[0]) {
+              const m = ev.markets[0];
+              let outP = m.outcomePrices;
+              if (typeof outP === 'string') outP = JSON.parse(outP);
+              let resolvedWinner = null;
+              if (Array.isArray(outP) && outP.length >= 2) {
+                const upP = parseFloat(outP[0]);
+                if (!isNaN(upP)) {
+                  if (upP > 0.5) resolvedWinner = 'UP';
+                  else if (upP < 0.5) resolvedWinner = 'DOWN';
+                }
+              }
+
+              const meta = ev.eventMetadata || m.eventMetadata;
+              let bOpen = null, bClose = null, bChg = null;
+              if (meta && typeof meta === 'object') {
+                bOpen = parseFloat(meta.priceToBeat || meta.targetPrice);
+                bClose = parseFloat(meta.finalPrice || meta.settlementPrice);
+                if (!isNaN(bOpen) && !isNaN(bClose) && bOpen > 0) {
+                  bChg = Math.round(((bClose - bOpen) / bOpen) * 10000) / 100;
+                }
+              }
+
+              if (window.DBManager) {
+                const updatePayload = { slug: completedSlug };
+                if (resolvedWinner) updatePayload.winner = resolvedWinner;
+                if (bOpen !== null) updatePayload.btcOpen = bOpen;
+                if (bClose !== null) updatePayload.btcClose = bClose;
+                if (bChg !== null) updatePayload.btcChange = bChg;
+                window.DBManager.upsertSession(updatePayload, true);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[App] Could not fetch post-resolution metadata:', err);
+        }
+      }, 15000);
+    }
+
+    // 2. Add visual boundary separator to chart
+    ChartManager.addWhitespace(boundaryTs);
+    ChartManager.addSessionBoundary(boundaryTs);
+    ChartManager.addMarketBoundaryMarker(boundaryTs + 1, '│ New Market');
+    TickBuffer.addMarketBoundary(boundaryTs);
+
+    // 3. Reset state for new market
+    PriceEngine.reset();
+    _currentSessionTicks = [];
+
+    PolyWS.subscribe(newMarket.upTokenId);
+    _updateMarketUI(newMarket);
+    el.marketCount.textContent = `Markets: ${_marketSwitchCount + 1}`;
+
+    const mid = await MarketManager.fetchMidpoint(newMarket.upTokenId);
+    if (mid !== null) {
+      PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+      const rawUpCents = mid * 100;
+      const nowSec = Math.floor(Date.now() / 1000);
+      TickBuffer.addTick(nowSec, rawUpCents);
+      _currentSessionTicks.push([nowSec, Math.round(rawUpCents * 10) / 10]);
+
+      const displayCents = _outcomeMode === 'down' ? (100 - rawUpCents) : rawUpCents;
+      ChartManager.pushTick(nowSec, displayCents);
+      _updatePriceUI();
+    }
+
+    showToast(`Rollover: ${newMarket.slug}`, 'info', 3500);
+  }
+
+  function _flushLiveTicksToDB() {
+    const cur = MarketManager.getCurrentMarket();
+    if (!cur || !cur.slug || _currentSessionTicks.length === 0) return;
+    if (window.DBManager && window.DBManager.isConnected() && window.DBManager.isAutoSave()) {
+      window.DBManager.upsertSession({
+        slug: cur.slug,
+        tf: cur.slug.includes('-15m-') ? 15 : 5,
+        startTs: cur.startTs,
+        endTs: cur.endTs,
+        winner: 'PENDING',
+        ticks: _currentSessionTicks,
+      }, true);
+    }
+  }
+
+  // ─── Timeframe Switch ─────────────────────────────────────────────
+  function switchTf(tfSeconds) {
+    _currentTfSeconds = tfSeconds;
+    ChartManager.setTimeframe(tfSeconds);
+
+    const aggregated = TickBuffer.aggregate(tfSeconds, _outcomeMode);
+    if (aggregated.length > 0) {
+      ChartManager.setData(aggregated);
+    }
+  }
+
+  // ─── UI Helpers ───────────────────────────────────────────────────
+  function _updateMarketUI(market) {
+    el.marketSlug.textContent = market.slug || '---';
+
+    if (market.startTs && market.endTs) {
+      const fmtTime = ts => {
+        const d = new Date(ts * 1000);
+        return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      };
+      el.marketWindow.textContent = `${fmtTime(market.startTs)} – ${fmtTime(market.endTs)}`;
+    }
+  }
+
+  function setStatus(type, text) {
+    el.statusIndicator.className = `status-${type}`;
+    el.statusText.textContent = text;
+  }
+
+  function showLoading(text) {
+    el.loadingOverlay.style.display = 'flex';
+    el.loadingOverlay.querySelector('#loading-text').textContent = text;
+    el.errorOverlay.style.display = 'none';
+  }
+
+  function setLoadingSub(text) {
+    el.loadingSub.textContent = text;
+    el.loadingSub.style.display = 'block';
+  }
+
+  function hideLoading() {
+    el.loadingOverlay.style.display = 'none';
+    el.loadingSub.style.display = 'none';
+  }
+
+  function showError(text) {
+    el.errorOverlay.style.display = 'flex';
+    el.errorText.textContent = text;
+    hideLoading();
+  }
+
+  function hideError() {
+    el.errorOverlay.style.display = 'none';
+  }
+
+  function showToast(message, type = 'info', duration = 3000) {
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+    setTimeout(() => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), 400);
+    }, duration);
+  }
+
+  // ─── Countdown Timer & Rollover Watchdog ──────────────────────────
+  function _updateTimer() {
+    const secs = MarketManager.getSecondsRemaining();
+    const current = MarketManager.getCurrentMarket();
+    if (secs === null || !current) {
+      el.timerValue.textContent = '--:--';
+      return;
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const totalDuration = (_currentTfMinutes || 5) * 60;
+    const startTs = current.startTs || (nowSec - Math.max(0, totalDuration - secs));
+    const elapsedSecs = Math.max(0, nowSec - startTs);
+
+    if (_timerMode === 'elapsed') {
+      if (el.timerLabelTop) el.timerLabelTop.textContent = 'ELAPSED';
+      const m = Math.floor(elapsedSecs / 60);
+      const s = elapsedSecs % 60;
+      el.timerValue.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      el.timerValue.classList.remove('urgent');
+    } else {
+      if (el.timerLabelTop) el.timerLabelTop.textContent = 'ENDS IN';
+      const m = Math.floor(secs / 60);
+      const s = secs % 60;
+      el.timerValue.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      el.timerValue.classList.toggle('urgent', secs <= 30);
+    }
+  }
+
+  function _startTimer() {
+    setInterval(() => {
+      _updateTimer();
+
+      const current = MarketManager.getCurrentMarket();
+      if (current && current.endTs) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (nowSec >= current.endTs + 3) {
+          console.warn('[App] Watchdog: Market expired past endTs, triggering rollover...');
+          MarketManager.triggerRollover();
+        }
+      }
+    }, 500);
+  }
+
+  function _bindUIControls() {
+    el.btnMkt5m?.addEventListener('click', () => {
+      if (_currentTfMinutes === 5) return;
+      _currentTfMinutes = 5;
+      el.btnMkt5m.classList.add('active');
+      el.btnMkt15m.classList.remove('active');
+      TickBuffer.reset(false);
+      ChartManager.clearMarkers();
+      loadMarket(5);
+    });
+
+    el.btnMkt15m?.addEventListener('click', () => {
+      if (_currentTfMinutes === 15) return;
+      _currentTfMinutes = 15;
+      el.btnMkt15m.classList.add('active');
+      el.btnMkt5m.classList.remove('active');
+      TickBuffer.reset(false);
+      ChartManager.clearMarkers();
+      loadMarket(15);
+    });
+
+    el.btnOutcomeUp?.addEventListener('click', () => switchOutcome('up'));
+    el.btnOutcomeDown?.addEventListener('click', () => switchOutcome('down'));
+
+    const tfBtns = {
+      'btn-tf-1s':  1,
+      'btn-tf-5s':  5,
+      'btn-tf-15s': 15,
+      'btn-tf-30s': 30,
+      'btn-tf-1m':  60,
+    };
+
+    Object.entries(tfBtns).forEach(([id, secs]) => {
+      const btn = $(id);
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        switchTf(secs);
+      });
+    });
+
+    el.btnResetZoom?.addEventListener('click', () => ChartManager.resetZoom());
+    el.btnScrollStart?.addEventListener('click', () => ChartManager.scrollToStart());
+    el.btnScrollLive?.addEventListener('click', () => ChartManager.scrollToEnd());
+    el.btnRetry?.addEventListener('click', () => {
+      hideError();
+      loadMarket(_currentTfMinutes);
+    });
+  }
+
+  function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  function getOutcomeMode() { return _outcomeMode; }
+
+  // ─── Self Execution ───────────────────────────────────────────────
+  boot().catch(err => {
+    console.error('[App] Boot error:', err);
+  });
+
+  return {
+    switchView,
+    showToast,
+    getOutcomeMode,
+    getCurrentSessionTicks: () => _currentSessionTicks,
+  };
+})();
+
+;
+
+</script>
+</body>
+</html>
