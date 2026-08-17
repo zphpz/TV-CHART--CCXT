@@ -290,8 +290,19 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 1px;
-  padding: 0 24px;
+  padding: 2px 20px;
   min-width: 140px;
+  border-radius: 8px;
+  transition: background var(--tr-fast), transform var(--tr-fast);
+}
+
+#timer-center:hover {
+  background: rgba(56, 189, 248, 0.09);
+  transform: scale(1.02);
+}
+
+#timer-center:active {
+  transform: scale(0.98);
 }
 
 #timer-label-top {

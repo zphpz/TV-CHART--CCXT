@@ -14,11 +14,14 @@ window.App = (() => {
   const $ = id => document.getElementById(id);
 
   const el = {
+    tradingView:       $('trading-view'),
     chartView:         $('chart-view'),
     historyView:       $('history-panel-view'),
+    tabTrading:        $('tab-view-trading'),
     tabChart:          $('tab-view-chart'),
     tabHistory:        $('tab-view-history'),
 
+    tradingContainer:  $('trading-chart-container'),
     chartContainer:    $('chart-container'),
     loadingOverlay:    $('loading-overlay'),
     loadingSub:        $('loading-sub'),
@@ -27,6 +30,8 @@ window.App = (() => {
 
     statusIndicator:   $('status-indicator'),
     statusText:        $('status-text'),
+    timerCenter:       $('timer-center'),
+    timerLabelTop:     $('timer-label-top'),
     timerValue:        $('timer-value'),
 
     priceCurrent:      $('price-current'),
@@ -58,56 +63,75 @@ window.App = (() => {
   let _marketSwitchCount = 0;
   let _loadingRetries    = 0;
   let _outcomeMode       = 'up';   // 'up' | 'down'
-  let _activeView        = 'chart';
+  let _timerMode         = 'remaining'; // 'remaining' | 'elapsed'
+  let _activeView        = 'trading'; // 'trading' | 'chart' | 'history'
 
   // In-memory buffer of current live session ticks: [[t, v_cents], ...]
   let _currentSessionTicks = [];
 
-  // ─── View Switching ───────────────────────────────────────────────
+  // ─── View Switching (Trading vs All Sessions vs History) ───────────
   function switchView(viewName) {
     _activeView = viewName;
-    if (viewName === 'chart') {
-      el.chartView?.classList.remove('hidden-view');
-      el.chartView?.classList.add('active-view');
-      el.historyView?.classList.add('hidden-view');
-      el.historyView?.classList.remove('active-view');
-      el.tabChart?.classList.add('active');
-      el.tabHistory?.classList.remove('active');
+
+    // Reset visibility
+    el.tradingView?.classList.toggle('hidden-view', viewName !== 'trading');
+    el.tradingView?.classList.toggle('active-view', viewName === 'trading');
+
+    el.chartView?.classList.toggle('hidden-view', viewName !== 'chart');
+    el.chartView?.classList.toggle('active-view', viewName === 'chart');
+
+    el.historyView?.classList.toggle('hidden-view', viewName !== 'history');
+    el.historyView?.classList.toggle('active-view', viewName === 'history');
+
+    // Update tab styling
+    el.tabTrading?.classList.toggle('active', viewName === 'trading');
+    el.tabChart?.classList.toggle('active', viewName === 'chart');
+    el.tabHistory?.classList.toggle('active', viewName === 'history');
+
+    if (viewName === 'trading') {
+      setTimeout(() => window.LiveTradingManager?.resize(), 50);
+    } else if (viewName === 'chart') {
       setTimeout(() => ChartManager.resetZoom(), 50);
-    } else {
-      el.historyView?.classList.remove('hidden-view');
-      el.historyView?.classList.add('active-view');
-      el.chartView?.classList.add('hidden-view');
-      el.chartView?.classList.remove('active-view');
-      el.tabHistory?.classList.add('active');
-      el.tabChart?.classList.remove('active');
     }
   }
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    // 1. Initialize Chart
+    // 1. Initialize Stationary Live Trading Chart
+    if (window.LiveTradingManager) {
+      LiveTradingManager.init(el.tradingContainer);
+    }
+
+    // 2. Initialize Multi-Session Timeline Chart
     const chartOk = ChartManager.init(el.chartContainer);
     if (!chartOk) {
       showError('Failed to initialize chart engine. Please refresh.');
       return;
     }
 
-    // 2. Try auto-connecting DB handle from cache
+    // 3. Try auto-connecting DB handle from cache
     if (window.DBManager) {
       await window.DBManager.tryAutoConnect();
     }
 
-    // 3. Initialize History Panel
+    // 4. Initialize History Panel
     if (window.HistoryPanel) {
       window.HistoryPanel.init();
     }
 
-    // 4. Bind View Switcher
+    // 5. Bind View Switcher
+    el.tabTrading?.addEventListener('click', () => switchView('trading'));
     el.tabChart?.addEventListener('click', () => switchView('chart'));
     el.tabHistory?.addEventListener('click', () => switchView('history'));
     el.btnQuickLoadDb?.addEventListener('click', () => {
       window.HistoryPanel?.loadHistoryToChart(true);
+    });
+
+    // 6. Bind Interactive Timer Toggle (Remaining <-> Elapsed)
+    el.timerCenter?.addEventListener('click', () => {
+      _timerMode = (_timerMode === 'remaining' ? 'elapsed' : 'remaining');
+      _updateTimer();
+      showToast(_timerMode === 'remaining' ? '⏱ Timer: Countdown (Remaining)' : '⏱ Timer: Count-up (Elapsed)', 'info', 2000);
     });
 
     // 5. Connect WebSocket Handlers (CLOB + RTDS Chainlink Stream)
@@ -148,6 +172,9 @@ window.App = (() => {
       }
 
       ChartManager.updateLiveSessionBtc(cur.slug, _liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+      if (window.LiveTradingManager) {
+        LiveTradingManager.updateBtcPrice(_liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+      }
     };
 
     PolyRTDS.connect();
@@ -230,8 +257,13 @@ window.App = (() => {
     // Compute display value for current outcome mode
     const displayCents = _outcomeMode === 'down' ? (100 - rawUpCents) : rawUpCents;
 
-    // Send tick to chart
+    // Send tick to multi-session chart
     ChartManager.pushTick(nowSec, displayCents);
+
+    // Send tick to stationary 300s/900s LiveTradingManager chart
+    if (window.LiveTradingManager) {
+      LiveTradingManager.pushTick(nowSec, rawUpCents);
+    }
 
     // Update UI numbers
     _updatePriceUI();
@@ -309,6 +341,9 @@ window.App = (() => {
     el.btnOutcomeDown?.classList.toggle('active', mode === 'down');
 
     ChartManager.setOutcomeMode(mode);
+    if (window.LiveTradingManager) {
+      LiveTradingManager.setOutcomeMode(mode);
+    }
 
     const aggregated = TickBuffer.aggregate(_currentTfSeconds, mode);
     if (aggregated.length > 0) {
@@ -345,7 +380,11 @@ window.App = (() => {
 
     console.log('[App] Market loaded:', market);
     MarketManager.setCurrentMarket(market);
+    // 5. Update UI
     _updateMarketUI(market);
+    if (window.LiveTradingManager) {
+      LiveTradingManager.setMarket(market);
+    }
 
     // Initial price via REST
     setLoadingSub('Fetching initial price...');
@@ -395,7 +434,12 @@ window.App = (() => {
 
     const boundaryTs = prevMarket ? prevMarket.endTs : Math.floor(Date.now() / 1000);
 
-    // 1. Determine winner for completed market and save to DB
+    // 4. Update stationary Live Trading chart for new session
+    if (window.LiveTradingManager) {
+      LiveTradingManager.setMarket(newMarket);
+    }
+
+    // 5. Query resolution for previous market after small delay to DB
     if (prevMarket && prevMarket.slug) {
       const finalPrice = PriceEngine.effectivePrice(); // 0.0–1.0
       const isUpWon = finalPrice >= 0.5;
@@ -581,18 +625,37 @@ window.App = (() => {
   }
 
   // ─── Countdown Timer & Rollover Watchdog ──────────────────────────
-  function _startTimer() {
-    setInterval(() => {
-      const secs = MarketManager.getSecondsRemaining();
-      if (secs === null) {
-        el.timerValue.textContent = '--:--';
-        return;
-      }
+  function _updateTimer() {
+    const secs = MarketManager.getSecondsRemaining();
+    const current = MarketManager.getCurrentMarket();
+    if (secs === null || !current) {
+      el.timerValue.textContent = '--:--';
+      return;
+    }
 
+    const nowSec = Math.floor(Date.now() / 1000);
+    const totalDuration = (_currentTfMinutes || 5) * 60;
+    const startTs = current.startTs || (nowSec - Math.max(0, totalDuration - secs));
+    const elapsedSecs = Math.max(0, nowSec - startTs);
+
+    if (_timerMode === 'elapsed') {
+      if (el.timerLabelTop) el.timerLabelTop.textContent = 'ELAPSED';
+      const m = Math.floor(elapsedSecs / 60);
+      const s = elapsedSecs % 60;
+      el.timerValue.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      el.timerValue.classList.remove('urgent');
+    } else {
+      if (el.timerLabelTop) el.timerLabelTop.textContent = 'ENDS IN';
       const m = Math.floor(secs / 60);
       const s = secs % 60;
       el.timerValue.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
       el.timerValue.classList.toggle('urgent', secs <= 30);
+    }
+  }
+
+  function _startTimer() {
+    setInterval(() => {
+      _updateTimer();
 
       const current = MarketManager.getCurrentMarket();
       if (current && current.endTs) {
