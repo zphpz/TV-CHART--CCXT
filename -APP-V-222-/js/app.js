@@ -1,8 +1,10 @@
 /**
- * app.js — Main Application Coordinator v6.1
+ * app.js — Main Application Coordinator v6.2
  * 
- * Features & Fixes in v6.1:
- * - Direct STRIKE & DELTA Parity Fix: Multi-Tier CORS-Proof Strike Engine (Preddy -> Local -> Binance 1m kline)
+ * Features & Fixes in v6.2:
+ * - 1:1 Polymarket TWAP Strike Server Integration (Port 8088 Proxy + Preddy Engine)
+ * - Fixed Windows cp1251 encoding in run_app.py
+ * - Direct STRIKE & DELTA Parity Fix: Multi-Tier CORS-Proof Strike Engine
  * - Fixed Delta Zero Freeze: Prevents _liveBtcOpen from falling back to _liveBtcCurrent mid-session
  * - High-Legibility Large Font Scales (bold 14px / 12px Mono) across Left & Right Scales and Bottom Timeline
  * - 1:1 Accurate STRIKE Price for 15M & 5M Markets (direct Preddy API TWAP 60s priority & duration binding)
@@ -125,7 +127,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.1...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.2...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);

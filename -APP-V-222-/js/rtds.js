@@ -50,9 +50,11 @@ window.PolyRTDS = (() => {
     const startISO = new Date(winStartSec * 1000).toISOString().replace('.000Z', 'Z');
     const endISO = new Date(endSec * 1000).toISOString().replace('.000Z', 'Z');
 
-    // 1. Try Direct Preddy & Local API Proxy
+    // 1. Try Direct Preddy & Local API Proxy (Port 8088 / 8080)
     const endpoints = [
       `/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
+      `http://localhost:8088/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
+      `http://127.0.0.1:8088/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `http://localhost:8080/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `https://polymarket.com/api/crypto/crypto-price?symbol=BTC&eventStartTime=${startISO}&endDate=${endISO}&twapEnabled=true&twapLookbackSeconds=60`,

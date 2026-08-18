@@ -150,14 +150,19 @@ class AppHTTPHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
+import sys
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 def run_server():
     server = HTTPServer(("0.0.0.0", PORT), AppHTTPHandler)
     local_ip = get_local_ip()
     print("=" * 65)
-    print("🚀 POLYMARKET BTC 1:1 TWAP LIVE CHART SERVER (v6.1)")
-    print(f"💻 На ПК:       http://localhost:{PORT}")
-    print(f"📱 На телефоне:  http://{local_ip}:{PORT}")
-    print(f"📁 Папка:       {ROOT_DIR}")
+    print(">> POLYMARKET BTC 1:1 TWAP LIVE CHART SERVER (v6.2)")
+    print(f"   PC:     http://localhost:{PORT}")
+    print(f"   LAN:    http://{local_ip}:{PORT}")
+    print(f"   DIR:    {ROOT_DIR}")
     print("=" * 65)
     server.serve_forever()
 

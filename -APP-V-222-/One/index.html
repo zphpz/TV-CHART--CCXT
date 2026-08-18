@@ -1871,7 +1871,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v6.1</span>
+        <span id="app-version">v6.2</span>
       </div>
     </footer>
 
@@ -3749,9 +3749,11 @@ window.PolyRTDS = (() => {
     const startISO = new Date(winStartSec * 1000).toISOString().replace('.000Z', 'Z');
     const endISO = new Date(endSec * 1000).toISOString().replace('.000Z', 'Z');
 
-    // 1. Try Direct Preddy & Local API Proxy
+    // 1. Try Direct Preddy & Local API Proxy (Port 8088 / 8080)
     const endpoints = [
       `/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
+      `http://localhost:8088/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
+      `http://127.0.0.1:8088/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `http://localhost:8080/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `https://polymarket.com/api/crypto/crypto-price?symbol=BTC&eventStartTime=${startISO}&endDate=${endISO}&twapEnabled=true&twapLookbackSeconds=60`,
@@ -6562,10 +6564,12 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v6.1
+ * app.js — Main Application Coordinator v6.2
  * 
- * Features & Fixes in v6.1:
- * - Direct STRIKE & DELTA Parity Fix: Multi-Tier CORS-Proof Strike Engine (Preddy -> Local -> Binance 1m kline)
+ * Features & Fixes in v6.2:
+ * - 1:1 Polymarket TWAP Strike Server Integration (Port 8088 Proxy + Preddy Engine)
+ * - Fixed Windows cp1251 encoding in run_app.py
+ * - Direct STRIKE & DELTA Parity Fix: Multi-Tier CORS-Proof Strike Engine
  * - Fixed Delta Zero Freeze: Prevents _liveBtcOpen from falling back to _liveBtcCurrent mid-session
  * - High-Legibility Large Font Scales (bold 14px / 12px Mono) across Left & Right Scales and Bottom Timeline
  * - 1:1 Accurate STRIKE Price for 15M & 5M Markets (direct Preddy API TWAP 60s priority & duration binding)
@@ -6688,7 +6692,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.1...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.2...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
