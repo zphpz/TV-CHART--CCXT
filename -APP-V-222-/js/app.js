@@ -1,12 +1,15 @@
 /**
- * app.js — Main Application Coordinator v4.3
+ * app.js — Main Application Coordinator v4.4
  * 
- * Performance Optimizations in v4.3:
+ * Features & Fixes in v4.4:
+ * - Dual-token WebSocket subscription (tracks both UP and DOWN orderbook trades)
+ * - Clean market rollover price initialization (never carries over frozen prices from expired markets)
+ * - Automatic background midpoint watchdog polling (prevents price stagnation on quiet books)
+ * - Dual Graph Modes: ₿ BTC ($) live curve vs ¢ PROB (%) option token curve
  * - Eliminated DOM layout thrashing (removed forced synchronous reflow offsetWidth)
  * - Smart background throttling for inactive chart tabs (reduces CPU to ~0.5%)
  * - Auto-pruning memory manager prevents multi-hour leaks
  * - Parallel REST history hydration on session start
- * - Dual Graph Modes: ₿ BTC ($) live curve vs ¢ PROB (%) option token curve
  * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent background)
  * - 1-second continuous live ticker loop ensures price line advances immediately from second 0
  * - 1:1 Polymarket TWAP 60s live stream parity & accurate Target Price
@@ -105,7 +108,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.3 (Ultra-Optimized)...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.4...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -157,14 +160,26 @@ window.App = (() => {
       _emitPrice();
     }, 1000);
 
-    // Periodic DB sync & memory pruning
-    setInterval(() => {
+    // Periodic Midpoint Watchdog & Memory Pruning
+    setInterval(async () => {
       _flushLiveTicksToDB();
       const nowSec = Math.floor(Date.now() / 1000);
       if (window.TickBuffer) {
-        TickBuffer.pruneOld(nowSec - 86400); // keep last 24h
+        TickBuffer.pruneOld(nowSec - 86400);
       }
-    }, 30000);
+
+      // Midpoint Watchdog: if price hasn't updated from WS in > 4s, refresh from CLOB
+      const cur = MarketManager.getCurrentMarket();
+      if (cur && cur.upTokenId && PriceEngine.getLastUpdateMs() && (Date.now() - PriceEngine.getLastUpdateMs() > 4000)) {
+        try {
+          const mid = await MarketManager.fetchMidpoint(cur.upTokenId);
+          if (mid !== null) {
+            PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+            _emitPrice();
+          }
+        } catch {}
+      }
+    }, 4000);
 
     setStatus('connecting', 'CONNECTING');
     await loadMarket(_currentTfMinutes);
@@ -361,7 +376,6 @@ window.App = (() => {
     if (el.priceLast)    el.priceLast.textContent    = fmt(lastCents);
     if (el.priceSpread)  el.priceSpread.textContent  = displaySpread !== null ? displaySpread.toFixed(1) + '¢' : '--.-¢';
 
-    // Zero-reflow smooth price flash
     if (el.priceCurrent && newCurrent !== prevCurrent && prevCurrent !== '--.-¢') {
       const prev = parseFloat(prevCurrent);
       const cur  = parseFloat(newCurrent);
@@ -438,12 +452,16 @@ window.App = (() => {
     MarketManager.setCurrentMarket(market);
     _updateMarketUI(market);
 
+    // Initial price seed from market data
+    const initialProb = market.initialProb || 0.50;
+    PriceEngine.updateLastTrade(initialProb);
+
     // 1. Initialize stationary Live Trading chart
     if (window.LiveTradingManager) {
       await LiveTradingManager.setMarket(market);
     }
 
-    // 2. Fetch session price history for multi-session chart in parallel
+    // 2. Fetch session price history in parallel
     setLoadingSub('Fetching session price history in parallel...');
     try {
       const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.startTs, market.endTs);
@@ -460,9 +478,9 @@ window.App = (() => {
       }
     } catch (e) {}
 
-    // 3. Connect WebSocket
-    setLoadingSub('Connecting to live CLOB WebSocket...');
-    PolyWS.subscribe(market.upTokenId);
+    // 3. Connect Dual-Token WebSocket (UP & DOWN)
+    setLoadingSub('Connecting to live CLOB Dual-Token WebSocket...');
+    PolyWS.subscribe(market.upTokenId, market.downTokenId);
     if (!PolyWS.isConnected()) {
       PolyWS.connect();
     }
@@ -474,7 +492,7 @@ window.App = (() => {
       PolyRTDS.checkAndRefreshWindow();
     }
 
-    // 5. Background fetch midpoint
+    // 5. Fetch accurate midpoint for UP and DOWN tokens
     MarketManager.fetchMidpoint(market.upTokenId).then(mid => {
       if (mid !== null) {
         PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
@@ -495,8 +513,8 @@ window.App = (() => {
     try {
       const boundaryTs = prevMarket ? prevMarket.endTs : Math.floor(Date.now() / 1000);
 
-      if (prevMarket && prevMarket.upTokenId) {
-        try { PolyWS.unsubscribe(prevMarket.upTokenId); } catch {}
+      if (prevMarket && (prevMarket.upTokenId || prevMarket.downTokenId)) {
+        try { PolyWS.unsubscribe(prevMarket.upTokenId, prevMarket.downTokenId); } catch {}
       }
 
       if (prevMarket && prevMarket.slug) {
@@ -581,14 +599,14 @@ window.App = (() => {
         console.warn('[App] Error adding chart boundary:', e);
       }
 
-      // Carry over current last price
-      const lastKnownPrice = PriceEngine.effectivePrice();
+      // Clean price initialization for the new market
       PriceEngine.reset();
-      PriceEngine.updateLastTrade(lastKnownPrice);
+      const newProb = newMarket.initialProb || 0.50;
+      PriceEngine.updateLastTrade(newProb);
       _currentSessionTicks = [];
 
       const nowSec = Math.floor(Date.now() / 1000);
-      const initialRawCents = lastKnownPrice * 100;
+      const initialRawCents = newProb * 100;
 
       // Seed new session in LiveTradingManager immediately
       if (window.LiveTradingManager) {
@@ -615,11 +633,12 @@ window.App = (() => {
         PolyRTDS.checkAndRefreshWindow();
       }
 
-      PolyWS.subscribe(newMarket.upTokenId);
+      // Dual-token subscription for new market
+      PolyWS.subscribe(newMarket.upTokenId, newMarket.downTokenId);
       _updateMarketUI(newMarket);
       if (el.marketCount) el.marketCount.textContent = `Markets: ${_marketSwitchCount + 1}`;
 
-      // Background fetch midpoint for new market
+      // Immediate midpoint lookup for new market
       MarketManager.fetchMidpoint(newMarket.upTokenId).then(mid => {
         if (mid !== null) {
           PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
