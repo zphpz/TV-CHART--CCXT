@@ -1,13 +1,11 @@
 /**
- * app.js — Main Application Coordinator v3.7
+ * app.js — Main Application Coordinator v3.8
  * 
- * Orchestrates: MarketManager, PolyWS, TickBuffer, PriceEngine, ChartManager, DBManager, BackfillEngine, HistoryPanel, PolyRTDS
- * Features:
+ * Fixes in v3.8:
+ * - 1-second continuous live ticker loop ensures price line advances immediately from second 0
+ * - Instant curve rendering on market rollover without waiting for trades or requiring page refresh
  * - 1:1 Polymarket TWAP 60s live stream parity & accurate Target Price
  * - Multi-view switcher: Live Trading (300s/900s) vs All Sessions Timeline vs History & Database
- * - Real-time auto-saving of completed sessions into local database file
- * - Live official winner badges (White for UP, Coral-red for DOWN)
- * - Seamless integration with Polymarket CLOB WebSocket & Gamma API with dual file:/// and local server support
  */
 'use strict';
 
@@ -99,7 +97,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v3.7...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v3.8...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -139,7 +137,12 @@ window.App = (() => {
     _bindUIControls();
 
     _startTimer();
-    setInterval(_updatePriceUI, 1000);
+    
+    // Continuous 1-second price emission ticker
+    setInterval(() => {
+      _emitPrice();
+    }, 1000);
+
     setInterval(_flushLiveTicksToDB, 30000);
 
     setStatus('connecting', 'CONNECTING');
@@ -226,6 +229,7 @@ window.App = (() => {
       }
       if (msg.last_trade_price || msg.lastTradePrice) {
         PriceEngine.updateLastTrade(msg.last_trade_price || msg.lastTradePrice);
+        _emitPrice();
       }
     };
 
@@ -246,7 +250,7 @@ window.App = (() => {
       }
     };
 
-    PolyWS.handlers.onLastTradePrice = (msg) => {
+    PolyWS.handlers.onLastTrade = (msg) => {
       if (msg.price !== undefined) {
         PriceEngine.updateLastTrade(msg.price);
         _emitPrice();
@@ -260,7 +264,7 @@ window.App = (() => {
       }
     };
 
-    PolyWS.handlers.onMarketStructure = (msg) => {
+    PolyWS.handlers.onTickSizeChange = (msg) => {
       if (msg.tick_size) {
         ChartManager.updateTickSize(msg.tick_size);
       }
@@ -405,22 +409,25 @@ window.App = (() => {
       LiveTradingManager.setMarket(market);
     }
 
-    setLoadingSub('Fetching initial price...');
-    const mid = await MarketManager.fetchMidpoint(market.upTokenId);
-    if (mid !== null) {
-      PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
-      const rawUpCents = mid * 100;
-      const nowSec = Math.floor(Date.now() / 1000);
-      TickBuffer.addTick(nowSec, rawUpCents);
-      _currentSessionTicks.push([nowSec, Math.round(rawUpCents * 10) / 10]);
+    // Initial anchor
+    const nowSec = Math.floor(Date.now() / 1000);
+    const initialRawPrice = PriceEngine.effectivePrice();
+    const initialRawCents = initialRawPrice * 100;
+    TickBuffer.addTick(market.startTs || nowSec, initialRawCents);
+    TickBuffer.addTick(nowSec, initialRawCents);
+    _currentSessionTicks.push([market.startTs || nowSec, initialRawCents]);
+    _currentSessionTicks.push([nowSec, initialRawCents]);
 
-      const displayCents = _outcomeMode === 'down' ? (100 - rawUpCents) : rawUpCents;
-      ChartManager.setData([{ time: nowSec, value: displayCents }]);
-      if (window.LiveTradingManager) {
-        LiveTradingManager.pushTick(nowSec, rawUpCents);
-      }
-      _updatePriceUI();
+    const displayCents = _outcomeMode === 'down' ? (100 - initialRawCents) : initialRawCents;
+    ChartManager.setData([
+      { time: market.startTs || nowSec, value: displayCents },
+      { time: nowSec, value: displayCents }
+    ]);
+    if (window.LiveTradingManager) {
+      LiveTradingManager.pushTick(market.startTs || nowSec, initialRawCents);
+      LiveTradingManager.pushTick(nowSec, initialRawCents);
     }
+    _updatePriceUI();
 
     setLoadingSub('Connecting to live CLOB WebSocket...');
     PolyWS.subscribe(market.upTokenId);
@@ -434,6 +441,14 @@ window.App = (() => {
     if (window.PolyRTDS) {
       PolyRTDS.checkAndRefreshWindow();
     }
+
+    // Background fetch midpoint
+    MarketManager.fetchMidpoint(market.upTokenId).then(mid => {
+      if (mid !== null) {
+        PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+        _emitPrice();
+      }
+    }).catch(() => {});
 
     hideLoading();
     _isInitialized = true;
@@ -523,6 +538,7 @@ window.App = (() => {
         }
       }
 
+      // Add visual boundary separator to chart
       try {
         ChartManager.addWhitespace(boundaryTs);
         ChartManager.addSessionBoundary(boundaryTs);
@@ -532,40 +548,48 @@ window.App = (() => {
         console.warn('[App] Error adding chart boundary:', e);
       }
 
+      // Reset and carry over current last price
+      const lastKnownPrice = PriceEngine.effectivePrice();
       PriceEngine.reset();
+      PriceEngine.updateLastTrade(lastKnownPrice);
       _currentSessionTicks = [];
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const initialRawCents = lastKnownPrice * 100;
+
+      // Seed new session in LiveTradingManager immediately
+      if (window.LiveTradingManager) {
+        LiveTradingManager.setMarket(newMarket);
+        LiveTradingManager.pushTick(newMarket.startTs || nowSec, initialRawCents);
+        LiveTradingManager.pushTick(nowSec, initialRawCents);
+      }
+
+      TickBuffer.addTick(newMarket.startTs || nowSec, initialRawCents);
+      TickBuffer.addTick(nowSec, initialRawCents);
+      _currentSessionTicks.push([newMarket.startTs || nowSec, initialRawCents]);
+      _currentSessionTicks.push([nowSec, initialRawCents]);
+
+      const displayCents = _outcomeMode === 'down' ? (100 - initialRawCents) : initialRawCents;
+      ChartManager.pushTick(nowSec, displayCents);
 
       if (window.PolyRTDS) {
         PolyRTDS.setDurationSecs(_currentTfMinutes * 60);
         PolyRTDS.checkAndRefreshWindow();
       }
 
-      if (window.LiveTradingManager) {
-        LiveTradingManager.setMarket(newMarket);
-      }
-
       PolyWS.subscribe(newMarket.upTokenId);
       _updateMarketUI(newMarket);
       if (el.marketCount) el.marketCount.textContent = `Markets: ${_marketSwitchCount + 1}`;
 
-      try {
-        const mid = await MarketManager.fetchMidpoint(newMarket.upTokenId);
+      // Background fetch midpoint for new market
+      MarketManager.fetchMidpoint(newMarket.upTokenId).then(mid => {
         if (mid !== null) {
           PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
-          const rawUpCents = mid * 100;
-          const nowSec = Math.floor(Date.now() / 1000);
-          TickBuffer.addTick(nowSec, rawUpCents);
-          _currentSessionTicks.push([nowSec, Math.round(rawUpCents * 10) / 10]);
-
-          const displayCents = _outcomeMode === 'down' ? (100 - rawUpCents) : rawUpCents;
-          ChartManager.pushTick(nowSec, displayCents);
-          if (window.LiveTradingManager) {
-            LiveTradingManager.pushTick(nowSec, rawUpCents);
-          }
-          _updatePriceUI();
+          _emitPrice();
         }
-      } catch (e) {}
+      }).catch(() => {});
 
+      _updatePriceUI();
       showToast(`Rollover: ${newMarket.slug}`, 'info', 3500);
     } catch (err) {
       console.error('[App] Rollover error:', err);
@@ -575,7 +599,7 @@ window.App = (() => {
   function _flushLiveTicksToDB() {
     const cur = MarketManager.getCurrentMarket();
     if (!cur || !cur.slug || _currentSessionTicks.length === 0) return;
-    if (window.DBManager && window.DBManager.isAutoSave()) {
+    if (window.DBManager && window.DBManager.isConnected() && window.DBManager.isAutoSave()) {
       window.DBManager.upsertSession({
         slug: cur.slug,
         tf: cur.slug.includes('-15m-') ? 15 : 5,
@@ -687,7 +711,7 @@ window.App = (() => {
       const current = MarketManager.getCurrentMarket();
       if (current && current.endTs) {
         const nowSec = Math.floor(Date.now() / 1000);
-        if (nowSec >= current.endTs + 3) {
+        if (nowSec >= current.endTs + 2) {
           console.warn('[App] Watchdog: Market expired past endTs, triggering rollover...');
           MarketManager.triggerRollover();
         }

@@ -1,15 +1,16 @@
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v3.8
  * 
  * Features:
  * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
+ * - Real-time auto-advancing line & pulsing head from second 0 to nowSec (zero delay on rollover!)
  * - Anti-aliased glowing live price line with gradient under-fill
- * - Pulsing live leading dot at the current second
+ * - Pulsing live leading dot at the current active second
  * - Blue dashed vertical second & minute grid lines (+01:00, +02:00 ... / 30s, 90s ...)
  * - 0–100¢ right price scale & horizontal reference grid (50¢ anchor)
  * - Interactive hover crosshair with exact price & elapsed second tooltip
  * - Single-line top header HUD with slug link, ⏳ LIVE session badge & TWAP BTC price stream
- * - Immediate historical pre-fill from session startTs to now
+ * - Immediate historical pre-fill and live step-hold projection
  */
 'use strict';
 
@@ -80,7 +81,7 @@ window.LiveTradingManager = (() => {
     _setupResize();
     _startAnimationLoop();
 
-    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized');
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v3.8)');
     return true;
   }
 
@@ -104,20 +105,25 @@ window.LiveTradingManager = (() => {
       }
     }
 
-    // If no ticks yet, start with current price from PriceEngine or midpoint
     const nowSec = Math.floor(Date.now() / 1000);
     const eff = window.PriceEngine ? window.PriceEngine.effectivePrice() : 0.5;
     const curCents = (eff !== null && !isNaN(eff)) ? eff * 100 : 50.0;
     _lastPrice = curCents;
 
+    // Anchor from second 0 and extend to current second
     if (_rawTicks.length === 0) {
       _rawTicks.push([_startTs, curCents]);
-      if (nowSec > _startTs && nowSec <= _endTs) {
-        _rawTicks.push([nowSec, curCents]);
+      if (nowSec > _startTs) {
+        const clampedNow = Math.min(_endTs, nowSec);
+        _rawTicks.push([clampedNow, curCents]);
       }
     } else {
       if (_rawTicks[0][0] > _startTs) {
         _rawTicks.unshift([_startTs, _rawTicks[0][1]]);
+      }
+      const lastT = _rawTicks[_rawTicks.length - 1][0];
+      if (nowSec > lastT && nowSec <= _endTs) {
+        _rawTicks.push([nowSec, _rawTicks[_rawTicks.length - 1][1]]);
       }
     }
 
@@ -130,7 +136,13 @@ window.LiveTradingManager = (() => {
 
   // ─── Real-Time Tick Ingestion ──────────────────────────────────────
   function pushTick(unixSec, rawUpCents) {
-    if (typeof unixSec !== 'number' || typeof rawUpCents !== 'number' || isNaN(rawUpCents)) return;
+    if (typeof unixSec !== 'number' || isNaN(unixSec)) return;
+    
+    // If rawUpCents not provided, use last price
+    if (typeof rawUpCents !== 'number' || isNaN(rawUpCents)) {
+      rawUpCents = _lastPrice;
+    }
+
     if (!_startTs || !_endTs) {
       _startTs = Math.floor(unixSec / 300) * 300;
       _endTs = _startTs + 300;
@@ -187,7 +199,7 @@ window.LiveTradingManager = (() => {
     const plotW      = Math.max(10, plotRight - plotLeft);
     const plotH      = Math.max(10, plotBottom - plotTop);
 
-    // 1. Background Grid & Horizontal Price Lines
+    // 1. Background Grid & Horizontal Price Lines (0¢ ... 50¢ ... 100¢)
     _ctx.lineWidth = 1;
     _ctx.font = '10px "JetBrains Mono", monospace';
     _ctx.textBaseline = 'middle';
@@ -241,22 +253,40 @@ window.LiveTradingManager = (() => {
       _ctx.fillText(isMajor ? fullTag : timeTag, x, h - 4);
     }
 
-    // 3. Price Movement Curve & Gradient Under-Fill
+    // 3. Dynamic Real-Time Price Movement Curve & Area Fill
     _ctx.setLineDash([]);
-    if (_rawTicks.length > 0 && _durationSecs > 0) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const effectiveNowSec = (_startTs && _endTs) ? Math.min(_endTs, Math.max(_startTs, nowSec)) : nowSec;
+
+    // Filter raw ticks in the active session window
+    let sessionTicks = _rawTicks.filter(([ts]) => ts >= _startTs && ts <= _endTs);
+
+    // If empty or missing start, anchor at _startTs
+    if (sessionTicks.length === 0) {
+      sessionTicks.push([_startTs, _lastPrice]);
+    } else if (sessionTicks[0][0] > _startTs) {
+      sessionTicks.unshift([_startTs, sessionTicks[0][1]]);
+    }
+
+    // Extend line forward to current live second (so line is NEVER zero-length!)
+    const lastTick = sessionTicks[sessionTicks.length - 1];
+    if (effectiveNowSec > lastTick[0]) {
+      sessionTicks.push([effectiveNowSec, lastTick[1]]);
+    }
+
+    if (sessionTicks.length > 0 && _durationSecs > 0) {
       const points = [];
-      for (const [ts, upCents] of _rawTicks) {
-        if (ts >= _startTs && ts <= _endTs) {
-          const val = _outcomeMode === 'down' ? (100 - upCents) : upCents;
-          const x = plotLeft + ((ts - _startTs) / _durationSecs) * plotW;
-          const y = plotBottom - (Math.min(100, Math.max(0, val)) / 100) * plotH;
-          points.push({ x, y, val, ts });
-        }
+      for (const [ts, upCents] of sessionTicks) {
+        const val = _outcomeMode === 'down' ? (100 - upCents) : upCents;
+        const x = plotLeft + ((ts - _startTs) / _durationSecs) * plotW;
+        const y = plotBottom - (Math.min(100, Math.max(0, val)) / 100) * plotH;
+        points.push({ x, y, val, ts });
       }
 
       if (points.length >= 1) {
         if (points.length === 1) {
-          points.unshift({ x: plotLeft, y: points[0].y, val: points[0].val, ts: _startTs });
+          const extraX = Math.max(points[0].x + 1, plotLeft + ((effectiveNowSec - _startTs) / _durationSecs) * plotW);
+          points.push({ x: extraX, y: points[0].y, val: points[0].val, ts: effectiveNowSec });
         }
 
         const latestPt = points[points.length - 1];
@@ -277,7 +307,7 @@ window.LiveTradingManager = (() => {
         _ctx.fillStyle = grad;
         _ctx.fill();
 
-        // Draw Price Line with Glow
+        // Draw Glowing Price Line
         _ctx.save();
         _ctx.shadowColor = mainColor;
         _ctx.shadowBlur = 8;
@@ -294,7 +324,7 @@ window.LiveTradingManager = (() => {
         _ctx.stroke();
         _ctx.restore();
 
-        // Draw Pulsing Live Head Dot
+        // Draw Pulsing Live Head Dot at the current active second
         const pulseR = 4 + Math.sin(_pulsePhase) * 1.5;
         _ctx.beginPath();
         _ctx.arc(latestPt.x, latestPt.y, pulseR + 4, 0, Math.PI * 2);

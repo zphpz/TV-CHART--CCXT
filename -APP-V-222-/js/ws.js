@@ -1,9 +1,9 @@
 /**
- * ws.js — Polymarket CLOB WebSocket Client v1.3
+ * ws.js — Polymarket CLOB WebSocket Client v1.4
  * 
- * Fixes in v1.3:
+ * Fixes in v1.4:
+ * - String-safe token matching for price_changes & orderbook
  * - Proper unsubscription tracking on market/timeframe switch
- * - Strict token matching for price_changes array (eliminates sawtooth noise from other markets)
  * - Safe subscribe / unsubscribe state machine
  * - Heartbeat PING (10s) and Watchdog (15s)
  */
@@ -107,18 +107,15 @@ window.PolyWS = (() => {
 
     switch (msg.event_type) {
       case 'book': {
-        // Only accept orderbook for our currently subscribed token
-        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+        if (msg.asset_id && _currentTokenId && String(msg.asset_id) !== String(_currentTokenId)) return;
         if (handlers.onBook) handlers.onBook(msg);
         break;
       }
 
       case 'price_change': {
-        // Polymarket CLOB sends price_changes array: [ { asset_id, price, best_bid, best_ask, ... } ]
         if (Array.isArray(msg.price_changes)) {
           if (_currentTokenId) {
-            // STRICT MATCH: Only accept entry that matches our subscribed token!
-            const matched = msg.price_changes.find(p => p.asset_id === _currentTokenId);
+            const matched = msg.price_changes.find(p => String(p.asset_id) === String(_currentTokenId));
             if (matched && handlers.onPriceChange) {
               handlers.onPriceChange(matched);
             }
@@ -126,20 +123,20 @@ window.PolyWS = (() => {
             handlers.onPriceChange(msg.price_changes[0]);
           }
         } else {
-          if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+          if (msg.asset_id && _currentTokenId && String(msg.asset_id) !== String(_currentTokenId)) return;
           if (handlers.onPriceChange) handlers.onPriceChange(msg);
         }
         break;
       }
 
       case 'best_bid_ask': {
-        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+        if (msg.asset_id && _currentTokenId && String(msg.asset_id) !== String(_currentTokenId)) return;
         if (handlers.onBestBidAsk) handlers.onBestBidAsk(msg);
         break;
       }
 
       case 'last_trade_price': {
-        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+        if (msg.asset_id && _currentTokenId && String(msg.asset_id) !== String(_currentTokenId)) return;
         if (handlers.onLastTrade) handlers.onLastTrade(msg);
         break;
       }
@@ -167,7 +164,7 @@ window.PolyWS = (() => {
   // ─── Subscribe / Unsubscribe ────────────────────────────────────────
   function _sendSubscribe(tokenId) {
     const msg = {
-      assets_ids: [tokenId],
+      assets_ids: [String(tokenId)],
       type: 'market',
       custom_feature_enabled: true,
     };
@@ -176,23 +173,19 @@ window.PolyWS = (() => {
 
   function _sendUnsubscribe(tokenId) {
     _send(JSON.stringify({
-      assets_ids: [tokenId],
+      assets_ids: [String(tokenId)],
       type: 'market',
       operation: 'unsubscribe',
     }));
   }
 
-  /**
-   * Subscribe to a new token ID.
-   * Unsubscribes from the previous token cleanly to prevent cross-market data bleed.
-   */
   function subscribe(newTokenId) {
     if (!newTokenId) return;
     const prev = _currentTokenId;
-    _currentTokenId = newTokenId;
+    _currentTokenId = String(newTokenId);
 
     if (_ws && _ws.readyState === WebSocket.OPEN) {
-      if (prev && prev !== newTokenId) {
+      if (prev && String(prev) !== String(newTokenId)) {
         console.log('[PolyWS] Unsubscribing from previous token:', prev);
         _sendUnsubscribe(prev);
       }
@@ -206,7 +199,6 @@ window.PolyWS = (() => {
     }
   }
 
-  // ─── Send helper ────────────────────────────────────────────────────
   function _send(data) {
     if (_ws && _ws.readyState === WebSocket.OPEN) {
       try {
@@ -217,7 +209,6 @@ window.PolyWS = (() => {
     }
   }
 
-  // ─── Heartbeat PING ─────────────────────────────────────────────────
   function _startPing() {
     clearInterval(_pingTimer);
     _pingTimer = setInterval(() => {
@@ -227,7 +218,6 @@ window.PolyWS = (() => {
     }, PING_INTERVAL_MS);
   }
 
-  // ─── Watchdog ───────────────────────────────────────────────────────
   function _startWatchdog() {
     clearInterval(_watchdogTimer);
     _lastDataMs = Date.now();
@@ -240,7 +230,6 @@ window.PolyWS = (() => {
     }, 5000);
   }
 
-  // ─── Reconnect ──────────────────────────────────────────────────────
   function _scheduleReconnect() {
     clearTimeout(_reconnectTimer);
     const delay = Math.min(BASE_RECONNECT_MS * Math.pow(2, _reconnectAttempt), MAX_RECONNECT_MS);
@@ -258,7 +247,6 @@ window.PolyWS = (() => {
     _reconnectTimer = null;
   }
 
-  // ─── Cleanup ─────────────────────────────────────────────────────────
   function destroy() {
     _destroyed = true;
     _clearTimers();

@@ -1776,7 +1776,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v3.7</span>
+        <span id="app-version">v3.8</span>
       </div>
     </footer>
 
@@ -3141,11 +3141,11 @@ window.MarketManager = (() => {
 
 /* ═══ MODULE: js/ws.js ═══ */
 /**
- * ws.js — Polymarket CLOB WebSocket Client v1.3
+ * ws.js — Polymarket CLOB WebSocket Client v1.4
  * 
- * Fixes in v1.3:
+ * Fixes in v1.4:
+ * - String-safe token matching for price_changes & orderbook
  * - Proper unsubscription tracking on market/timeframe switch
- * - Strict token matching for price_changes array (eliminates sawtooth noise from other markets)
  * - Safe subscribe / unsubscribe state machine
  * - Heartbeat PING (10s) and Watchdog (15s)
  */
@@ -3249,18 +3249,15 @@ window.PolyWS = (() => {
 
     switch (msg.event_type) {
       case 'book': {
-        // Only accept orderbook for our currently subscribed token
-        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+        if (msg.asset_id && _currentTokenId && String(msg.asset_id) !== String(_currentTokenId)) return;
         if (handlers.onBook) handlers.onBook(msg);
         break;
       }
 
       case 'price_change': {
-        // Polymarket CLOB sends price_changes array: [ { asset_id, price, best_bid, best_ask, ... } ]
         if (Array.isArray(msg.price_changes)) {
           if (_currentTokenId) {
-            // STRICT MATCH: Only accept entry that matches our subscribed token!
-            const matched = msg.price_changes.find(p => p.asset_id === _currentTokenId);
+            const matched = msg.price_changes.find(p => String(p.asset_id) === String(_currentTokenId));
             if (matched && handlers.onPriceChange) {
               handlers.onPriceChange(matched);
             }
@@ -3268,20 +3265,20 @@ window.PolyWS = (() => {
             handlers.onPriceChange(msg.price_changes[0]);
           }
         } else {
-          if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+          if (msg.asset_id && _currentTokenId && String(msg.asset_id) !== String(_currentTokenId)) return;
           if (handlers.onPriceChange) handlers.onPriceChange(msg);
         }
         break;
       }
 
       case 'best_bid_ask': {
-        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+        if (msg.asset_id && _currentTokenId && String(msg.asset_id) !== String(_currentTokenId)) return;
         if (handlers.onBestBidAsk) handlers.onBestBidAsk(msg);
         break;
       }
 
       case 'last_trade_price': {
-        if (msg.asset_id && _currentTokenId && msg.asset_id !== _currentTokenId) return;
+        if (msg.asset_id && _currentTokenId && String(msg.asset_id) !== String(_currentTokenId)) return;
         if (handlers.onLastTrade) handlers.onLastTrade(msg);
         break;
       }
@@ -3309,7 +3306,7 @@ window.PolyWS = (() => {
   // ─── Subscribe / Unsubscribe ────────────────────────────────────────
   function _sendSubscribe(tokenId) {
     const msg = {
-      assets_ids: [tokenId],
+      assets_ids: [String(tokenId)],
       type: 'market',
       custom_feature_enabled: true,
     };
@@ -3318,23 +3315,19 @@ window.PolyWS = (() => {
 
   function _sendUnsubscribe(tokenId) {
     _send(JSON.stringify({
-      assets_ids: [tokenId],
+      assets_ids: [String(tokenId)],
       type: 'market',
       operation: 'unsubscribe',
     }));
   }
 
-  /**
-   * Subscribe to a new token ID.
-   * Unsubscribes from the previous token cleanly to prevent cross-market data bleed.
-   */
   function subscribe(newTokenId) {
     if (!newTokenId) return;
     const prev = _currentTokenId;
-    _currentTokenId = newTokenId;
+    _currentTokenId = String(newTokenId);
 
     if (_ws && _ws.readyState === WebSocket.OPEN) {
-      if (prev && prev !== newTokenId) {
+      if (prev && String(prev) !== String(newTokenId)) {
         console.log('[PolyWS] Unsubscribing from previous token:', prev);
         _sendUnsubscribe(prev);
       }
@@ -3348,7 +3341,6 @@ window.PolyWS = (() => {
     }
   }
 
-  // ─── Send helper ────────────────────────────────────────────────────
   function _send(data) {
     if (_ws && _ws.readyState === WebSocket.OPEN) {
       try {
@@ -3359,7 +3351,6 @@ window.PolyWS = (() => {
     }
   }
 
-  // ─── Heartbeat PING ─────────────────────────────────────────────────
   function _startPing() {
     clearInterval(_pingTimer);
     _pingTimer = setInterval(() => {
@@ -3369,7 +3360,6 @@ window.PolyWS = (() => {
     }, PING_INTERVAL_MS);
   }
 
-  // ─── Watchdog ───────────────────────────────────────────────────────
   function _startWatchdog() {
     clearInterval(_watchdogTimer);
     _lastDataMs = Date.now();
@@ -3382,7 +3372,6 @@ window.PolyWS = (() => {
     }, 5000);
   }
 
-  // ─── Reconnect ──────────────────────────────────────────────────────
   function _scheduleReconnect() {
     clearTimeout(_reconnectTimer);
     const delay = Math.min(BASE_RECONNECT_MS * Math.pow(2, _reconnectAttempt), MAX_RECONNECT_MS);
@@ -3400,7 +3389,6 @@ window.PolyWS = (() => {
     _reconnectTimer = null;
   }
 
-  // ─── Cleanup ─────────────────────────────────────────────────────────
   function destroy() {
     _destroyed = true;
     _clearTimers();
@@ -3761,17 +3749,18 @@ window.PolyRTDS = (() => {
 
 /* ═══ MODULE: js/live_trading.js ═══ */
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v3.8
  * 
  * Features:
  * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
+ * - Real-time auto-advancing line & pulsing head from second 0 to nowSec (zero delay on rollover!)
  * - Anti-aliased glowing live price line with gradient under-fill
- * - Pulsing live leading dot at the current second
+ * - Pulsing live leading dot at the current active second
  * - Blue dashed vertical second & minute grid lines (+01:00, +02:00 ... / 30s, 90s ...)
  * - 0–100¢ right price scale & horizontal reference grid (50¢ anchor)
  * - Interactive hover crosshair with exact price & elapsed second tooltip
  * - Single-line top header HUD with slug link, ⏳ LIVE session badge & TWAP BTC price stream
- * - Immediate historical pre-fill from session startTs to now
+ * - Immediate historical pre-fill and live step-hold projection
  */
 'use strict';
 
@@ -3842,7 +3831,7 @@ window.LiveTradingManager = (() => {
     _setupResize();
     _startAnimationLoop();
 
-    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized');
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v3.8)');
     return true;
   }
 
@@ -3866,20 +3855,25 @@ window.LiveTradingManager = (() => {
       }
     }
 
-    // If no ticks yet, start with current price from PriceEngine or midpoint
     const nowSec = Math.floor(Date.now() / 1000);
     const eff = window.PriceEngine ? window.PriceEngine.effectivePrice() : 0.5;
     const curCents = (eff !== null && !isNaN(eff)) ? eff * 100 : 50.0;
     _lastPrice = curCents;
 
+    // Anchor from second 0 and extend to current second
     if (_rawTicks.length === 0) {
       _rawTicks.push([_startTs, curCents]);
-      if (nowSec > _startTs && nowSec <= _endTs) {
-        _rawTicks.push([nowSec, curCents]);
+      if (nowSec > _startTs) {
+        const clampedNow = Math.min(_endTs, nowSec);
+        _rawTicks.push([clampedNow, curCents]);
       }
     } else {
       if (_rawTicks[0][0] > _startTs) {
         _rawTicks.unshift([_startTs, _rawTicks[0][1]]);
+      }
+      const lastT = _rawTicks[_rawTicks.length - 1][0];
+      if (nowSec > lastT && nowSec <= _endTs) {
+        _rawTicks.push([nowSec, _rawTicks[_rawTicks.length - 1][1]]);
       }
     }
 
@@ -3892,7 +3886,13 @@ window.LiveTradingManager = (() => {
 
   // ─── Real-Time Tick Ingestion ──────────────────────────────────────
   function pushTick(unixSec, rawUpCents) {
-    if (typeof unixSec !== 'number' || typeof rawUpCents !== 'number' || isNaN(rawUpCents)) return;
+    if (typeof unixSec !== 'number' || isNaN(unixSec)) return;
+    
+    // If rawUpCents not provided, use last price
+    if (typeof rawUpCents !== 'number' || isNaN(rawUpCents)) {
+      rawUpCents = _lastPrice;
+    }
+
     if (!_startTs || !_endTs) {
       _startTs = Math.floor(unixSec / 300) * 300;
       _endTs = _startTs + 300;
@@ -3949,7 +3949,7 @@ window.LiveTradingManager = (() => {
     const plotW      = Math.max(10, plotRight - plotLeft);
     const plotH      = Math.max(10, plotBottom - plotTop);
 
-    // 1. Background Grid & Horizontal Price Lines
+    // 1. Background Grid & Horizontal Price Lines (0¢ ... 50¢ ... 100¢)
     _ctx.lineWidth = 1;
     _ctx.font = '10px "JetBrains Mono", monospace';
     _ctx.textBaseline = 'middle';
@@ -4003,22 +4003,40 @@ window.LiveTradingManager = (() => {
       _ctx.fillText(isMajor ? fullTag : timeTag, x, h - 4);
     }
 
-    // 3. Price Movement Curve & Gradient Under-Fill
+    // 3. Dynamic Real-Time Price Movement Curve & Area Fill
     _ctx.setLineDash([]);
-    if (_rawTicks.length > 0 && _durationSecs > 0) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const effectiveNowSec = (_startTs && _endTs) ? Math.min(_endTs, Math.max(_startTs, nowSec)) : nowSec;
+
+    // Filter raw ticks in the active session window
+    let sessionTicks = _rawTicks.filter(([ts]) => ts >= _startTs && ts <= _endTs);
+
+    // If empty or missing start, anchor at _startTs
+    if (sessionTicks.length === 0) {
+      sessionTicks.push([_startTs, _lastPrice]);
+    } else if (sessionTicks[0][0] > _startTs) {
+      sessionTicks.unshift([_startTs, sessionTicks[0][1]]);
+    }
+
+    // Extend line forward to current live second (so line is NEVER zero-length!)
+    const lastTick = sessionTicks[sessionTicks.length - 1];
+    if (effectiveNowSec > lastTick[0]) {
+      sessionTicks.push([effectiveNowSec, lastTick[1]]);
+    }
+
+    if (sessionTicks.length > 0 && _durationSecs > 0) {
       const points = [];
-      for (const [ts, upCents] of _rawTicks) {
-        if (ts >= _startTs && ts <= _endTs) {
-          const val = _outcomeMode === 'down' ? (100 - upCents) : upCents;
-          const x = plotLeft + ((ts - _startTs) / _durationSecs) * plotW;
-          const y = plotBottom - (Math.min(100, Math.max(0, val)) / 100) * plotH;
-          points.push({ x, y, val, ts });
-        }
+      for (const [ts, upCents] of sessionTicks) {
+        const val = _outcomeMode === 'down' ? (100 - upCents) : upCents;
+        const x = plotLeft + ((ts - _startTs) / _durationSecs) * plotW;
+        const y = plotBottom - (Math.min(100, Math.max(0, val)) / 100) * plotH;
+        points.push({ x, y, val, ts });
       }
 
       if (points.length >= 1) {
         if (points.length === 1) {
-          points.unshift({ x: plotLeft, y: points[0].y, val: points[0].val, ts: _startTs });
+          const extraX = Math.max(points[0].x + 1, plotLeft + ((effectiveNowSec - _startTs) / _durationSecs) * plotW);
+          points.push({ x: extraX, y: points[0].y, val: points[0].val, ts: effectiveNowSec });
         }
 
         const latestPt = points[points.length - 1];
@@ -4039,7 +4057,7 @@ window.LiveTradingManager = (() => {
         _ctx.fillStyle = grad;
         _ctx.fill();
 
-        // Draw Price Line with Glow
+        // Draw Glowing Price Line
         _ctx.save();
         _ctx.shadowColor = mainColor;
         _ctx.shadowBlur = 8;
@@ -4056,7 +4074,7 @@ window.LiveTradingManager = (() => {
         _ctx.stroke();
         _ctx.restore();
 
-        // Draw Pulsing Live Head Dot
+        // Draw Pulsing Live Head Dot at the current active second
         const pulseR = 4 + Math.sin(_pulsePhase) * 1.5;
         _ctx.beginPath();
         _ctx.arc(latestPt.x, latestPt.y, pulseR + 4, 0, Math.PI * 2);
@@ -5548,15 +5566,13 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v3.7
+ * app.js — Main Application Coordinator v3.8
  * 
- * Orchestrates: MarketManager, PolyWS, TickBuffer, PriceEngine, ChartManager, DBManager, BackfillEngine, HistoryPanel, PolyRTDS
- * Features:
+ * Fixes in v3.8:
+ * - 1-second continuous live ticker loop ensures price line advances immediately from second 0
+ * - Instant curve rendering on market rollover without waiting for trades or requiring page refresh
  * - 1:1 Polymarket TWAP 60s live stream parity & accurate Target Price
  * - Multi-view switcher: Live Trading (300s/900s) vs All Sessions Timeline vs History & Database
- * - Real-time auto-saving of completed sessions into local database file
- * - Live official winner badges (White for UP, Coral-red for DOWN)
- * - Seamless integration with Polymarket CLOB WebSocket & Gamma API with dual file:/// and local server support
  */
 'use strict';
 
@@ -5648,7 +5664,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v3.7...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v3.8...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -5688,7 +5704,12 @@ window.App = (() => {
     _bindUIControls();
 
     _startTimer();
-    setInterval(_updatePriceUI, 1000);
+    
+    // Continuous 1-second price emission ticker
+    setInterval(() => {
+      _emitPrice();
+    }, 1000);
+
     setInterval(_flushLiveTicksToDB, 30000);
 
     setStatus('connecting', 'CONNECTING');
@@ -5775,6 +5796,7 @@ window.App = (() => {
       }
       if (msg.last_trade_price || msg.lastTradePrice) {
         PriceEngine.updateLastTrade(msg.last_trade_price || msg.lastTradePrice);
+        _emitPrice();
       }
     };
 
@@ -5795,7 +5817,7 @@ window.App = (() => {
       }
     };
 
-    PolyWS.handlers.onLastTradePrice = (msg) => {
+    PolyWS.handlers.onLastTrade = (msg) => {
       if (msg.price !== undefined) {
         PriceEngine.updateLastTrade(msg.price);
         _emitPrice();
@@ -5809,7 +5831,7 @@ window.App = (() => {
       }
     };
 
-    PolyWS.handlers.onMarketStructure = (msg) => {
+    PolyWS.handlers.onTickSizeChange = (msg) => {
       if (msg.tick_size) {
         ChartManager.updateTickSize(msg.tick_size);
       }
@@ -5954,22 +5976,25 @@ window.App = (() => {
       LiveTradingManager.setMarket(market);
     }
 
-    setLoadingSub('Fetching initial price...');
-    const mid = await MarketManager.fetchMidpoint(market.upTokenId);
-    if (mid !== null) {
-      PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
-      const rawUpCents = mid * 100;
-      const nowSec = Math.floor(Date.now() / 1000);
-      TickBuffer.addTick(nowSec, rawUpCents);
-      _currentSessionTicks.push([nowSec, Math.round(rawUpCents * 10) / 10]);
+    // Initial anchor
+    const nowSec = Math.floor(Date.now() / 1000);
+    const initialRawPrice = PriceEngine.effectivePrice();
+    const initialRawCents = initialRawPrice * 100;
+    TickBuffer.addTick(market.startTs || nowSec, initialRawCents);
+    TickBuffer.addTick(nowSec, initialRawCents);
+    _currentSessionTicks.push([market.startTs || nowSec, initialRawCents]);
+    _currentSessionTicks.push([nowSec, initialRawCents]);
 
-      const displayCents = _outcomeMode === 'down' ? (100 - rawUpCents) : rawUpCents;
-      ChartManager.setData([{ time: nowSec, value: displayCents }]);
-      if (window.LiveTradingManager) {
-        LiveTradingManager.pushTick(nowSec, rawUpCents);
-      }
-      _updatePriceUI();
+    const displayCents = _outcomeMode === 'down' ? (100 - initialRawCents) : initialRawCents;
+    ChartManager.setData([
+      { time: market.startTs || nowSec, value: displayCents },
+      { time: nowSec, value: displayCents }
+    ]);
+    if (window.LiveTradingManager) {
+      LiveTradingManager.pushTick(market.startTs || nowSec, initialRawCents);
+      LiveTradingManager.pushTick(nowSec, initialRawCents);
     }
+    _updatePriceUI();
 
     setLoadingSub('Connecting to live CLOB WebSocket...');
     PolyWS.subscribe(market.upTokenId);
@@ -5983,6 +6008,14 @@ window.App = (() => {
     if (window.PolyRTDS) {
       PolyRTDS.checkAndRefreshWindow();
     }
+
+    // Background fetch midpoint
+    MarketManager.fetchMidpoint(market.upTokenId).then(mid => {
+      if (mid !== null) {
+        PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+        _emitPrice();
+      }
+    }).catch(() => {});
 
     hideLoading();
     _isInitialized = true;
@@ -6072,6 +6105,7 @@ window.App = (() => {
         }
       }
 
+      // Add visual boundary separator to chart
       try {
         ChartManager.addWhitespace(boundaryTs);
         ChartManager.addSessionBoundary(boundaryTs);
@@ -6081,40 +6115,48 @@ window.App = (() => {
         console.warn('[App] Error adding chart boundary:', e);
       }
 
+      // Reset and carry over current last price
+      const lastKnownPrice = PriceEngine.effectivePrice();
       PriceEngine.reset();
+      PriceEngine.updateLastTrade(lastKnownPrice);
       _currentSessionTicks = [];
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const initialRawCents = lastKnownPrice * 100;
+
+      // Seed new session in LiveTradingManager immediately
+      if (window.LiveTradingManager) {
+        LiveTradingManager.setMarket(newMarket);
+        LiveTradingManager.pushTick(newMarket.startTs || nowSec, initialRawCents);
+        LiveTradingManager.pushTick(nowSec, initialRawCents);
+      }
+
+      TickBuffer.addTick(newMarket.startTs || nowSec, initialRawCents);
+      TickBuffer.addTick(nowSec, initialRawCents);
+      _currentSessionTicks.push([newMarket.startTs || nowSec, initialRawCents]);
+      _currentSessionTicks.push([nowSec, initialRawCents]);
+
+      const displayCents = _outcomeMode === 'down' ? (100 - initialRawCents) : initialRawCents;
+      ChartManager.pushTick(nowSec, displayCents);
 
       if (window.PolyRTDS) {
         PolyRTDS.setDurationSecs(_currentTfMinutes * 60);
         PolyRTDS.checkAndRefreshWindow();
       }
 
-      if (window.LiveTradingManager) {
-        LiveTradingManager.setMarket(newMarket);
-      }
-
       PolyWS.subscribe(newMarket.upTokenId);
       _updateMarketUI(newMarket);
       if (el.marketCount) el.marketCount.textContent = `Markets: ${_marketSwitchCount + 1}`;
 
-      try {
-        const mid = await MarketManager.fetchMidpoint(newMarket.upTokenId);
+      // Background fetch midpoint for new market
+      MarketManager.fetchMidpoint(newMarket.upTokenId).then(mid => {
         if (mid !== null) {
           PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
-          const rawUpCents = mid * 100;
-          const nowSec = Math.floor(Date.now() / 1000);
-          TickBuffer.addTick(nowSec, rawUpCents);
-          _currentSessionTicks.push([nowSec, Math.round(rawUpCents * 10) / 10]);
-
-          const displayCents = _outcomeMode === 'down' ? (100 - rawUpCents) : rawUpCents;
-          ChartManager.pushTick(nowSec, displayCents);
-          if (window.LiveTradingManager) {
-            LiveTradingManager.pushTick(nowSec, rawUpCents);
-          }
-          _updatePriceUI();
+          _emitPrice();
         }
-      } catch (e) {}
+      }).catch(() => {});
 
+      _updatePriceUI();
       showToast(`Rollover: ${newMarket.slug}`, 'info', 3500);
     } catch (err) {
       console.error('[App] Rollover error:', err);
@@ -6124,7 +6166,7 @@ window.App = (() => {
   function _flushLiveTicksToDB() {
     const cur = MarketManager.getCurrentMarket();
     if (!cur || !cur.slug || _currentSessionTicks.length === 0) return;
-    if (window.DBManager && window.DBManager.isAutoSave()) {
+    if (window.DBManager && window.DBManager.isConnected() && window.DBManager.isAutoSave()) {
       window.DBManager.upsertSession({
         slug: cur.slug,
         tf: cur.slug.includes('-15m-') ? 15 : 5,
@@ -6236,7 +6278,7 @@ window.App = (() => {
       const current = MarketManager.getCurrentMarket();
       if (current && current.endTs) {
         const nowSec = Math.floor(Date.now() / 1000);
-        if (nowSec >= current.endTs + 3) {
+        if (nowSec >= current.endTs + 2) {
           console.warn('[App] Watchdog: Market expired past endTs, triggering rollover...');
           MarketManager.triggerRollover();
         }
