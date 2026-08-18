@@ -51,6 +51,7 @@ window.LiveTradingManager = (() => {
   let _cachedGrad    = null;
 
   const TOP_HUD_H    = 26;
+  const LEFT_SCALE_W = 48;
   const RIGHT_SCALE_W= 68;
   const BOTTOM_AXIS_H= 22;
 
@@ -405,7 +406,7 @@ window.LiveTradingManager = (() => {
     _ctx.fillStyle = '#080b0f';
     _ctx.fillRect(0, 0, w, h);
 
-    const plotLeft   = 0;
+    const plotLeft   = LEFT_SCALE_W;
     const plotTop    = TOP_HUD_H;
     const plotRight  = w - RIGHT_SCALE_W;
     const plotBottom = h - BOTTOM_AXIS_H;
@@ -487,6 +488,15 @@ window.LiveTradingManager = (() => {
         _ctx.lineTo(plotRight, y);
         _ctx.stroke();
 
+        // Left Scale Label
+        _ctx.font = 'bold 11px "JetBrains Mono", monospace';
+        _ctx.textAlign = 'right';
+        _ctx.fillStyle = '#94a3b8';
+        _ctx.fillText(`$${p.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, plotLeft - 6, y);
+
+        // Right Scale Label
+        _ctx.font = '10px "JetBrains Mono", monospace';
+        _ctx.textAlign = 'left';
         _ctx.fillStyle = '#64748b';
         _ctx.fillText(`$${p.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, plotRight + 6, y);
       }
@@ -697,7 +707,6 @@ window.LiveTradingManager = (() => {
     // ─── MODE B: OPTION TOKEN (0–100¢) PROBABILITY MODE ──────────────
     else {
       _ctx.lineWidth = 1;
-      _ctx.font = '10px "JetBrains Mono", monospace';
       _ctx.textBaseline = 'middle';
 
       const priceLevels = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -708,15 +717,33 @@ window.LiveTradingManager = (() => {
         const isBoundary = (p === 0 || p === 100);
 
         _ctx.beginPath();
-        _ctx.strokeStyle = is50 ? 'rgba(56, 189, 248, 0.45)' : (isBoundary ? 'rgba(255,255,255,0.1)' : 'rgba(255, 255, 255, 0.04)');
+        _ctx.strokeStyle = is50 ? 'rgba(56, 189, 248, 0.45)' : (isBoundary ? 'rgba(255,255,255,0.12)' : 'rgba(255, 255, 255, 0.05)');
+        _ctx.lineWidth = is50 ? 1.2 : 1;
         _ctx.setLineDash(is50 ? [4, 4] : []);
         _ctx.moveTo(plotLeft, y);
         _ctx.lineTo(plotRight, y);
         _ctx.stroke();
 
+        // ─── Left Scale: Large bold font with step of 10 ───
+        _ctx.font = 'bold 12px "JetBrains Mono", monospace';
+        _ctx.textAlign = 'right';
+        if (p === 100) {
+          _ctx.fillStyle = '#34d399';
+        } else if (p === 50) {
+          _ctx.fillStyle = '#38bdf8';
+        } else if (p === 0) {
+          _ctx.fillStyle = '#ff4d6d';
+        } else {
+          _ctx.fillStyle = '#cbd5e1';
+        }
+        _ctx.fillText(`${p}¢`, plotLeft - 6, y);
+
+        // ─── Right Scale: Secondary axis labels ───
         if (p % 20 === 0 || p === 50) {
+          _ctx.font = '10px "JetBrains Mono", monospace';
+          _ctx.textAlign = 'left';
           _ctx.fillStyle = is50 ? '#38bdf8' : '#64748b';
-          _ctx.fillText(`${Math.round(p)}¢`, plotRight + 6, y);
+          _ctx.fillText(`${p}¢`, plotRight + 6, y);
         }
       }
 
@@ -898,6 +925,182 @@ window.LiveTradingManager = (() => {
         _ctx.textAlign = 'left';
         _ctx.textBaseline = 'middle';
         _ctx.fillText(`${Math.round(latestPt.val)}¢`, plotRight + 6, latestPt.y);
+      }
+    }
+
+    // ─── 3. Interactive Cursor Crosshair & Hover Info Badge (Cursor Tracking) ──
+    if (_hoverX !== null && _hoverY !== null &&
+        _hoverX >= plotLeft && _hoverX <= plotRight &&
+        _hoverY >= plotTop && _hoverY <= plotBottom) {
+      
+      const hoverRatio = Math.max(0, Math.min(1, (_hoverX - plotLeft) / plotW));
+      const hoverTs = Math.round(_startTs + hoverRatio * _durationSecs);
+
+      let hoverPrice = null;
+      let hoverY = _hoverY;
+
+      if (_chartMode === 'btc') {
+        if (_pointBuffer.length > 0) {
+          for (let i = _pointBuffer.length - 1; i >= 0; i--) {
+            if (_pointBuffer[i].ts <= hoverTs) {
+              hoverPrice = _pointBuffer[i].val;
+              hoverY = _pointBuffer[i].y;
+              break;
+            }
+          }
+          if (hoverPrice === null) {
+            hoverPrice = _pointBuffer[0].val;
+            hoverY = _pointBuffer[0].y;
+          }
+        } else if (_btcCurrent !== null) {
+          hoverPrice = _btcCurrent;
+        }
+      } else {
+        if (_pointBuffer.length > 0) {
+          for (let i = _pointBuffer.length - 1; i >= 0; i--) {
+            if (_pointBuffer[i].ts <= hoverTs) {
+              hoverPrice = _pointBuffer[i].val;
+              hoverY = _pointBuffer[i].y;
+              break;
+            }
+          }
+          if (hoverPrice === null) {
+            hoverPrice = _pointBuffer[0].val;
+            hoverY = _pointBuffer[0].y;
+          }
+        } else if (_lastPrice !== null) {
+          hoverPrice = _outcomeMode === 'down' ? (100 - _lastPrice) : _lastPrice;
+          hoverY = plotBottom - (Math.min(100, Math.max(0, hoverPrice)) / 100) * plotH;
+        }
+      }
+
+      if (hoverPrice !== null) {
+        const remSecs = Math.max(0, _endTs - hoverTs);
+        const remM = Math.floor(remSecs / 60);
+        const remS = remSecs % 60;
+        const remStr = `${String(remM).padStart(2, '0')}:${String(remS).padStart(2, '0')}`;
+
+        const priceStr = _chartMode === 'btc'
+          ? `$${hoverPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : `${Math.round(hoverPrice)}¢`;
+        
+        const timerStr = `⏱ ${remStr}`;
+
+        // A. Crosshair Lines
+        _ctx.save();
+        _ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+        _ctx.lineWidth = 1;
+        _ctx.setLineDash([3, 3]);
+
+        // Vertical line
+        _ctx.beginPath();
+        _ctx.moveTo(_hoverX, plotTop);
+        _ctx.lineTo(_hoverX, plotBottom);
+        _ctx.stroke();
+
+        // Horizontal line
+        _ctx.beginPath();
+        _ctx.moveTo(plotLeft, hoverY);
+        _ctx.lineTo(plotRight, hoverY);
+        _ctx.stroke();
+        _ctx.setLineDash([]);
+        _ctx.restore();
+
+        // B. Target Dot on the curve
+        const hColor = (_chartMode === 'btc')
+          ? (_btcOpen ? (hoverPrice >= _btcOpen ? '#00d4aa' : '#ff4d6d') : '#00d4aa')
+          : (hoverPrice > 52 ? '#00d4aa' : (hoverPrice < 48 ? '#ff4d6d' : '#38bdf8'));
+
+        _ctx.beginPath();
+        _ctx.arc(_hoverX, hoverY, 4.5, 0, Math.PI * 2);
+        _ctx.fillStyle = hColor;
+        _ctx.fill();
+        _ctx.strokeStyle = '#ffffff';
+        _ctx.lineWidth = 1.5;
+        _ctx.stroke();
+
+        // C. Hover Info Badge (Following cursor)
+        _ctx.save();
+        _ctx.font = 'bold 16px "JetBrains Mono", monospace';
+        const pW = _ctx.measureText(priceStr).width;
+        _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+        const tW = _ctx.measureText(timerStr).width;
+        const gap = 10;
+        const pad = 12;
+        const bW = Math.round(pad * 2 + pW + gap + tW);
+        const bH = 32;
+        const H_OFFSET = 12;
+
+        let bX = Math.round(_hoverX - bW / 2);
+        bX = Math.max(plotLeft + 4, Math.min(plotRight - bW - 4, bX));
+
+        let bY = Math.round(hoverY - bH - H_OFFSET);
+        let arrowBelow = true;
+        if (bY < plotTop + 4) {
+          bY = Math.round(hoverY + H_OFFSET + 4);
+          arrowBelow = false;
+        }
+
+        const bgDark = 'rgba(8, 14, 24, 0.90)';
+
+        // Arrow tip
+        _ctx.beginPath();
+        if (arrowBelow) {
+          _ctx.moveTo(_hoverX - 5, bY + bH);
+          _ctx.lineTo(_hoverX, hoverY - 4);
+          _ctx.lineTo(_hoverX + 5, bY + bH);
+        } else {
+          _ctx.moveTo(_hoverX - 5, bY);
+          _ctx.lineTo(_hoverX, hoverY + 4);
+          _ctx.lineTo(_hoverX + 5, bY);
+        }
+        _ctx.closePath();
+        _ctx.fillStyle = bgDark;
+        _ctx.fill();
+        _ctx.strokeStyle = hColor + 'cc';
+        _ctx.lineWidth = 1.4;
+        _ctx.stroke();
+
+        // Badge Box
+        _ctx.shadowColor = hColor + 'aa';
+        _ctx.shadowBlur = 10;
+        _ctx.fillStyle = bgDark;
+        _ctx.strokeStyle = hColor + 'ee';
+        _ctx.lineWidth = 1.5;
+        _roundRect(_ctx, bX, bY, bW, bH, 6, true, true);
+        _ctx.restore();
+
+        // Badge Texts
+        _ctx.save();
+        _ctx.textBaseline = 'middle';
+        const midH = bY + bH / 2;
+
+        let drawX = bX + pad;
+        _ctx.textAlign = 'left';
+        _ctx.font = 'bold 16px "JetBrains Mono", monospace';
+        _ctx.fillStyle = hColor;
+        _ctx.fillText(priceStr, drawX, midH);
+        drawX += pW + 4;
+
+        _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+        _ctx.fillStyle = '#64748b';
+        _ctx.fillText('·', drawX, midH);
+        drawX += gap;
+
+        _ctx.fillStyle = remSecs <= 30 ? '#ff4d6d' : '#ffffff';
+        _ctx.fillText(timerStr, drawX, midH);
+        _ctx.restore();
+
+        // D. Axis Tag Markers (Left Axis)
+        _ctx.save();
+        _ctx.fillStyle = hColor;
+        _roundRect(_ctx, plotLeft - 44, hoverY - 8, 40, 16, 3, true, false);
+        _ctx.fillStyle = '#090d16';
+        _ctx.font = 'bold 10px "JetBrains Mono", monospace';
+        _ctx.textAlign = 'center';
+        _ctx.textBaseline = 'middle';
+        _ctx.fillText(_chartMode === 'btc' ? `$${Math.round(hoverPrice)}` : `${Math.round(hoverPrice)}¢`, plotLeft - 24, hoverY);
+        _ctx.restore();
       }
     }
 

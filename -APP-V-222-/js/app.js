@@ -1,7 +1,9 @@
 /**
- * app.js — Main Application Coordinator v5.7
+ * app.js — Main Application Coordinator v5.8
  * 
- * Features & Fixes in v5.7:
+ * Features & Fixes in v5.8:
+ * - Dedicated Left Scale for Option Tokens (0–100¢) with Large Bold Text (step of 10: 0¢..100¢)
+ * - Dual-Badge Interactive System: Floating Live Head Badge + Interactive Hover Cursor Info Badge
  * - Clean Integer Cent Price Display (48¢, 50¢, 51¢, 99¢ matching official Polymarket UI without 0.5 fractions)
  * - F5-Proof Live Stream Cache (preserves high-frequency second-by-second live resolution across page reloads)
  * - Clean Multi-Page Market Pagination (eliminates asset_id spurious trades and sawtooth spikes)
@@ -118,7 +120,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.7...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.8...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
