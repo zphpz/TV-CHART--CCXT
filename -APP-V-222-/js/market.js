@@ -1,11 +1,11 @@
 /**
- * market.js — Polymarket Market Discovery & Active Session Rollover v4.0
+ * market.js — Polymarket Market Discovery & Active Session Rollover v4.3
  * 
- * Features:
- * - Direct REST discovery with multi-tier CORS proxy fallback
+ * Features & Optimizations in v4.3:
+ * - Parallel ultra-fast session price history hydration (Promise.allSettled on CLOB & Data API)
+ * - Multi-tier CORS proxy fallback
  * - Pre-fetching next market slot 25s in advance
  * - Dynamic 5m and 15m session boundary calculation
- * - Active session price history downloader (CLOB & Data API)
  * - Watchdog timer and rollover callbacks
  */
 'use strict';
@@ -71,7 +71,7 @@ window.MarketManager = (() => {
           console.warn(`[MarketManager] Fetch failed for ${rawUrl}:`, err.message);
         }
       }
-      await _sleep(400 * (i + 1));
+      await _sleep(300 * (i + 1));
     }
     return null;
   }
@@ -147,17 +147,17 @@ window.MarketManager = (() => {
     return isNaN(mid) ? null : mid;
   }
 
-  // ─── Active Session History Downloader ──────────────────────────────
+  // ─── Parallel Ultra-Fast Session History Downloader ────────────────
   async function fetchSessionPriceHistory(tokenId, startTs, endTs) {
     if (!tokenId || !startTs || !endTs) return [];
-    
-    // 1. Try CLOB prices-history
-    try {
+
+    const fetchClob = async () => {
       const url = `${CLOB_BASE}/prices-history?market=${tokenId}&interval=1d&fidelity=1`;
       const data = await _fetchWithRetry(url, 2);
       if (data && Array.isArray(data.history) && data.history.length > 0) {
         const inSession = [];
-        for (const item of data.history) {
+        for (let i = 0; i < data.history.length; i++) {
+          const item = data.history[i];
           const ts = parseInt(item.t);
           const p = parseFloat(item.p);
           if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
@@ -169,17 +169,16 @@ window.MarketManager = (() => {
           return inSession;
         }
       }
-    } catch (e) {
-      console.warn('[MarketManager] CLOB prices-history fetch failed:', e);
-    }
+      return [];
+    };
 
-    // 2. Try Data API trades
-    try {
+    const fetchDataApi = async () => {
       const url = `https://data-api.polymarket.com/trades?asset_id=${tokenId}&limit=200`;
       const trades = await _fetchWithRetry(url, 2);
       if (Array.isArray(trades) && trades.length > 0) {
         const inSession = [];
-        for (const item of trades) {
+        for (let i = 0; i < trades.length; i++) {
+          const item = trades[i];
           const ts = parseInt(item.timestamp);
           const p = parseFloat(item.price);
           if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
@@ -191,8 +190,24 @@ window.MarketManager = (() => {
           return inSession;
         }
       }
+      return [];
+    };
+
+    try {
+      const [resClob, resData] = await Promise.allSettled([fetchClob(), fetchDataApi()]);
+      const listClob = resClob.status === 'fulfilled' ? resClob.value : [];
+      const listData = resData.status === 'fulfilled' ? resData.value : [];
+
+      if (listClob.length > 0 && listData.length > 0) {
+        const map = new Map();
+        listClob.forEach(([t, p]) => map.set(t, p));
+        listData.forEach(([t, p]) => map.set(t, p));
+        return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+      }
+      if (listClob.length > 0) return listClob;
+      if (listData.length > 0) return listData;
     } catch (e) {
-      console.warn('[MarketManager] Data API trades fetch failed:', e);
+      console.warn('[MarketManager] Parallel history fetch error:', e);
     }
 
     return [];
@@ -272,9 +287,7 @@ window.MarketManager = (() => {
   }
 
   async function _prefetchNextMarket(currentMarket) {
-    const interval = _intervalSec(_marketTf);
     const nextSlug = makeSlug(_marketTf, currentMarket.endTs);
-
     console.log('[MarketManager] Pre-fetching next market:', nextSlug);
 
     for (let i = 0; i < 25; i++) {
@@ -299,7 +312,6 @@ window.MarketManager = (() => {
       let next = _nextMarket;
 
       if (!next) {
-        const interval = _intervalSec(_marketTf);
         const nextTs = _currentMarket ? _currentMarket.endTs : _getWindowTs(_marketTf);
         const nextSlug = makeSlug(_marketTf, nextTs);
 

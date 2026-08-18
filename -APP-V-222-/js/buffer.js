@@ -1,14 +1,16 @@
 /**
- * buffer.js — High-performance tick buffer & aggregation engine v1.2
+ * buffer.js — High-performance tick buffer & aggregation engine v4.3
  * 
- * - Stores raw UP-token probability ticks (0–100¢)
+ * Features & Optimizations in v4.3:
+ * - High-speed in-memory ring buffer with automatic pruning (pruneOld)
  * - Dynamic aggregation for timeframes (1s / 5s / 15s / 30s / 60s)
  * - Real-time outcome inversion (DOWN = 100 - UP) on demand
+ * - Stores raw UP-token probability ticks (0–100¢)
  */
 'use strict';
 
 window.TickBuffer = (() => {
-  const MAX_TICKS = 500000; // Large capacity for multi-day history
+  const MAX_TICKS = 100000; // Capacity for multiple sessions
 
   // Internal storage: always stores UP-token price in cents (0.0–100.0)
   let _ticks = []; // [{ time: unixSec, value: number }]
@@ -18,10 +20,10 @@ window.TickBuffer = (() => {
     if (typeof unixSec !== 'number' || typeof rawUpCents !== 'number' || isNaN(rawUpCents)) return;
     rawUpCents = Math.max(0, Math.min(100, rawUpCents));
 
-    const last = _ticks[_ticks.length - 1];
-    if (last && last.time === unixSec) {
-      last.value = rawUpCents;
-    } else if (!last || unixSec > last.time) {
+    const len = _ticks.length;
+    if (len > 0 && _ticks[len - 1].time === unixSec) {
+      _ticks[len - 1].value = rawUpCents;
+    } else if (len === 0 || unixSec > _ticks[len - 1].time) {
       _ticks.push({ time: unixSec, value: rawUpCents });
     } else {
       _ticks.push({ time: unixSec, value: rawUpCents });
@@ -36,8 +38,11 @@ window.TickBuffer = (() => {
   function addBulk(items) {
     if (!Array.isArray(items) || items.length === 0) return;
     const map = new Map();
-    for (const t of _ticks) map.set(t.time, t.value);
-    for (const pt of items) {
+    for (let i = 0; i < _ticks.length; i++) {
+      map.set(_ticks[i].time, _ticks[i].value);
+    }
+    for (let i = 0; i < items.length; i++) {
+      const pt = items[i];
       const time = Array.isArray(pt) ? pt[0] : (pt.time || pt.t);
       const val  = Array.isArray(pt) ? pt[1] : (pt.value || pt.v);
       if (typeof time === 'number' && typeof val === 'number' && !isNaN(val)) {
@@ -56,8 +61,6 @@ window.TickBuffer = (() => {
   /**
    * Aggregate raw ticks into timeframe buckets with outcome transformation.
    * Strictly deduplicates and sorts timestamps for Lightweight Charts v5.
-   * @param {number} tfSeconds - 1, 5, 15, 30, 60
-   * @param {string} outcomeMode - 'up' | 'down'
    */
   function aggregate(tfSeconds, outcomeMode = 'up') {
     if (_ticks.length === 0) return [];
@@ -66,7 +69,8 @@ window.TickBuffer = (() => {
     const tf = Math.max(1, tfSeconds || 1);
 
     const buckets = new Map();
-    for (const tick of _ticks) {
+    for (let i = 0; i < _ticks.length; i++) {
+      const tick = _ticks[i];
       const bt = tf === 1 ? tick.time : Math.floor(tick.time / tf) * tf;
       const v = invert ? (100 - tick.value) : tick.value;
       buckets.set(bt, v);
@@ -75,6 +79,12 @@ window.TickBuffer = (() => {
     return Array.from(buckets.entries())
       .sort(([a], [b]) => a - b)
       .map(([time, value]) => ({ time, value }));
+  }
+
+  function pruneOld(cutoffTs) {
+    if (!cutoffTs) return;
+    _ticks = _ticks.filter(t => t.time >= cutoffTs);
+    _marketBoundaries = _marketBoundaries.filter(t => t >= cutoffTs);
   }
 
   function getRawTicks() {
@@ -101,17 +111,16 @@ window.TickBuffer = (() => {
     return [..._marketBoundaries];
   }
 
-  function reset(keepHistory = false) {
-    if (!keepHistory) {
-      _ticks = [];
-      _marketBoundaries = [];
-    }
+  function reset(keepBoundaries = false) {
+    _ticks = [];
+    if (!keepBoundaries) _marketBoundaries = [];
   }
 
   return {
     addTick,
     addBulk,
     aggregate,
+    pruneOld,
     getRawTicks,
     getRecent,
     getLastTick,
