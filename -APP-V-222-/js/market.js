@@ -1,12 +1,12 @@
 /**
- * market.js — Polymarket Market Discovery & Active Session Rollover v4.3
+ * market.js — Polymarket Market Discovery & Active Session Rollover v4.5
  * 
- * Features & Optimizations in v4.3:
- * - Parallel ultra-fast session price history hydration (Promise.allSettled on CLOB & Data API)
- * - Multi-tier CORS proxy fallback
- * - Pre-fetching next market slot 25s in advance
- * - Dynamic 5m and 15m session boundary calculation
- * - Watchdog timer and rollover callbacks
+ * Features & Optimizations in v4.5:
+ * - Dual-Token Parallel History Downloader (queries UP and DOWN tokens in parallel)
+ * - Auto-merging & inverting DOWN token trades for maximum curve fidelity
+ * - Strict 2.5s AbortController timeout prevents any hanging requests
+ * - Self-healing retry watchdog
+ * - Multi-tier CORS fallback with local server prioritization
  */
 'use strict';
 
@@ -16,7 +16,6 @@ window.MarketManager = (() => {
 
   const CORS_PROXIES = [
     url => url,
-    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
   ];
 
@@ -51,27 +50,29 @@ window.MarketManager = (() => {
     return makeSlug(tf, _getWindowTs(tf) + _intervalSec(tf));
   }
 
-  // ─── Fetch with multi-tier fallback ────────────────────────────────
-  async function _fetchWithRetry(rawUrl, retries = 3) {
+  // ─── Fetch with strict timeout and fallback ────────────────────────
+  async function _fetchWithRetry(rawUrl, retries = 2, timeoutMs = 2500) {
     for (let i = 0; i < retries; i++) {
-      const isFileProto = (window.location.protocol === 'file:');
-      const proxyIdx = isFileProto ? (i % CORS_PROXIES.length) : (i === 0 ? 0 : (i % CORS_PROXIES.length));
+      const proxyIdx = i === 0 ? 0 : 1;
       const targetUrl = CORS_PROXIES[proxyIdx](rawUrl);
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
         const res = await fetch(targetUrl, {
           headers: { 'Accept': 'application/json' },
-          cache: 'no-cache'
+          cache: 'no-cache',
+          signal: controller.signal
         });
+        clearTimeout(timer);
         if (res.ok) {
           return await res.json();
         }
       } catch (err) {
-        if (i === retries - 1) {
-          console.warn(`[MarketManager] Fetch failed for ${rawUrl}:`, err.message);
-        }
+        clearTimeout(timer);
       }
-      await _sleep(300 * (i + 1));
+      await _sleep(200 * (i + 1));
     }
     return null;
   }
@@ -79,7 +80,7 @@ window.MarketManager = (() => {
   // ─── Fetch Market Metadata ─────────────────────────────────────────
   async function fetchMarketData(slug) {
     const url = `${GAMMA_BASE}/events?slug=${slug}`;
-    const data = await _fetchWithRetry(url, 3);
+    const data = await _fetchWithRetry(url, 2, 3000);
     if (!data) return null;
 
     const event = Array.isArray(data) ? data[0] : data;
@@ -141,73 +142,81 @@ window.MarketManager = (() => {
   }
 
   async function fetchMidpoint(tokenId) {
-    const data = await _fetchWithRetry(`${CLOB_BASE}/midpoint?token_id=${tokenId}`, 2);
+    if (!tokenId) return null;
+    const data = await _fetchWithRetry(`${CLOB_BASE}/midpoint?token_id=${tokenId}`, 2, 2000);
     if (!data) return null;
     const mid = parseFloat(data.mid);
     return isNaN(mid) ? null : mid;
   }
 
-  // ─── Parallel Ultra-Fast Session History Downloader ────────────────
-  async function fetchSessionPriceHistory(tokenId, startTs, endTs) {
-    if (!tokenId || !startTs || !endTs) return [];
+  // ─── Dual-Token Parallel Session History Downloader ───────────────
+  async function fetchSessionPriceHistory(upTokenId, downTokenId, startTs, endTs) {
+    if (!upTokenId || !startTs || !endTs) return [];
 
-    const fetchClob = async () => {
-      const url = `${CLOB_BASE}/prices-history?market=${tokenId}&interval=1d&fidelity=1`;
-      const data = await _fetchWithRetry(url, 2);
+    const fetchTokenClob = async (tok, isInverted) => {
+      if (!tok) return [];
+      const url = `${CLOB_BASE}/prices-history?market=${tok}&interval=1d&fidelity=1`;
+      const data = await _fetchWithRetry(url, 2, 2500);
       if (data && Array.isArray(data.history) && data.history.length > 0) {
-        const inSession = [];
+        const list = [];
         for (let i = 0; i < data.history.length; i++) {
           const item = data.history[i];
           const ts = parseInt(item.t);
           const p = parseFloat(item.p);
           if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
-            inSession.push([ts, Math.round(p * 1000) / 10]);
+            const rawCents = Math.round(p * 1000) / 10;
+            const upCents = isInverted ? (100 - rawCents) : rawCents;
+            list.push([ts, Math.max(0.1, Math.min(99.9, upCents))]);
           }
         }
-        if (inSession.length > 0) {
-          inSession.sort((a, b) => a[0] - b[0]);
-          return inSession;
-        }
+        return list;
       }
       return [];
     };
 
-    const fetchDataApi = async () => {
-      const url = `https://data-api.polymarket.com/trades?asset_id=${tokenId}&limit=200`;
-      const trades = await _fetchWithRetry(url, 2);
+    const fetchTokenTrades = async (tok, isInverted) => {
+      if (!tok) return [];
+      const url = `https://data-api.polymarket.com/trades?asset_id=${tok}&limit=200`;
+      const trades = await _fetchWithRetry(url, 2, 2500);
       if (Array.isArray(trades) && trades.length > 0) {
-        const inSession = [];
+        const list = [];
         for (let i = 0; i < trades.length; i++) {
           const item = trades[i];
           const ts = parseInt(item.timestamp);
           const p = parseFloat(item.price);
           if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
-            inSession.push([ts, Math.round(p * 1000) / 10]);
+            const rawCents = Math.round(p * 1000) / 10;
+            const upCents = isInverted ? (100 - rawCents) : rawCents;
+            list.push([ts, Math.max(0.1, Math.min(99.9, upCents))]);
           }
         }
-        if (inSession.length > 0) {
-          inSession.sort((a, b) => a[0] - b[0]);
-          return inSession;
-        }
+        return list;
       }
       return [];
     };
 
     try {
-      const [resClob, resData] = await Promise.allSettled([fetchClob(), fetchDataApi()]);
-      const listClob = resClob.status === 'fulfilled' ? resClob.value : [];
-      const listData = resData.status === 'fulfilled' ? resData.value : [];
+      const results = await Promise.allSettled([
+        fetchTokenClob(upTokenId, false),
+        fetchTokenClob(downTokenId, true),
+        fetchTokenTrades(upTokenId, false),
+        fetchTokenTrades(downTokenId, true),
+      ]);
 
-      if (listClob.length > 0 && listData.length > 0) {
-        const map = new Map();
-        listClob.forEach(([t, p]) => map.set(t, p));
-        listData.forEach(([t, p]) => map.set(t, p));
+      const map = new Map();
+      for (let r of results) {
+        if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+          for (let [ts, val] of r.value) {
+            map.set(ts, val);
+          }
+        }
+      }
+
+      if (map.size > 0) {
         return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
       }
-      if (listClob.length > 0) return listClob;
-      if (listData.length > 0) return listData;
     } catch (e) {
-      console.warn('[MarketManager] Parallel history fetch error:', e);
+      console.warn('[MarketManager] Dual-token history fetch error:', e);
     }
 
     return [];
@@ -238,7 +247,9 @@ window.MarketManager = (() => {
 
     console.warn('[MarketManager] Searching active markets via Gamma search');
     const arr = await _fetchWithRetry(
-      `${GAMMA_BASE}/events?slug_contains=btc-updown-${tfMinutes}m&active=true&closed=false&limit=10`
+      `${GAMMA_BASE}/events?slug_contains=btc-updown-${tfMinutes}m&active=true&closed=false&limit=10`,
+      2,
+      3000
     );
 
     if (Array.isArray(arr) && arr.length > 0) {

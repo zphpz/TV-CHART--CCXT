@@ -1,21 +1,17 @@
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.3
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.5
  * 
- * Performance Optimizations in v4.3:
+ * Features & Fixes in v4.5:
+ * - Dual-Token History Hydration (merges UP and inverted DOWN token trades for full curve history)
+ * - Self-healing background retry loop for mid-session opens
  * - Zero-allocation point buffer reuse (_pointBuffer) eliminates GC pauses
  * - Cached linear gradients for area under curve
  * - Dirty-flag & frame-rate managed animation loop (60fps on ticks/interaction, 30fps on idle pulse)
- * - In-place tick filtering to avoid array re-allocations on every frame
- * - Monospace text measurement caching
- * 
- * Features:
  * - Dual Chart Modes:
  *   1. ₿ BTC ($) Mode: 1:1 Live Bitcoin TWAP price curve vs Strike / Target Line ($64,746 vs $64,739)
  *   2. ¢ PROB (%) Mode: Polymarket CLOB Option token probability in cents (0–100¢)
  * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
  * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent glass background)
- * - Automatic historical trade backfill on mid-session join (no fake 50¢ flat line or diagonal jumps!)
- * - Real-time auto-advancing line & pulsing head from second 0 to nowSec
  * - Anti-aliased glowing live price line with gradient under-fill
  * - Pulsing live leading dot at the current active second
  * - Blue dashed vertical second & minute grid lines (+01:00, +02:00 ... / 30s, 90s ...)
@@ -53,6 +49,7 @@ window.LiveTradingManager = (() => {
   let _pulsePhase    = 0;
   let _isDirty       = true;
   let _lastFrameTime = 0;
+  let _historyRetryTimers = [];
 
   // Reusable point buffer to eliminate GC allocations
   const _pointBuffer = [];
@@ -105,7 +102,7 @@ window.LiveTradingManager = (() => {
     _setupResize();
     _startAnimationLoop();
 
-    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.3 optimized)');
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.5 self-healing)');
     return true;
   }
 
@@ -121,6 +118,8 @@ window.LiveTradingManager = (() => {
     _btcTicks = [];
     _lastPrice = null;
 
+    _clearHistoryRetryTimers();
+
     _btcOpen = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice) || null;
     _btcCurrent = _btcOpen;
     _btcChange = 0;
@@ -129,6 +128,7 @@ window.LiveTradingManager = (() => {
       _btcTicks.push([_startTs, _btcOpen]);
     }
 
+    // 1. Check local buffer
     if (window.TickBuffer) {
       const bufferTicks = window.TickBuffer.getRawTicks() || [];
       for (let i = 0; i < bufferTicks.length; i++) {
@@ -139,23 +139,40 @@ window.LiveTradingManager = (() => {
       }
     }
 
-    if (_rawTicks.length < 2 && window.MarketManager && market.upTokenId) {
-      try {
-        const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, _startTs, _endTs);
-        if (Array.isArray(hist) && hist.length > 0) {
-          _rawTicks = hist;
-          _lastPrice = hist[hist.length - 1][1];
-          if (window.TickBuffer) {
-            hist.forEach(([t, p]) => window.TickBuffer.addTick(t, p));
-          }
-        }
-      } catch (e) {
-        console.warn('[LiveTradingManager] History fetch error:', e);
-      }
+    // 2. Fetch dual-token history
+    await _tryFetchHistory(market);
+
+    // 3. Self-healing background retries if history is thin (< 2 points)
+    if (_rawTicks.length < 2 && window.MarketManager) {
+      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1500));
+      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3500));
     }
 
     _isDirty = true;
     _render();
+  }
+
+  async function _tryFetchHistory(market) {
+    if (!market || !window.MarketManager || !market.upTokenId) return;
+    try {
+      const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, _startTs, _endTs);
+      if (Array.isArray(hist) && hist.length > 0) {
+        _rawTicks = hist;
+        _lastPrice = hist[hist.length - 1][1];
+        if (window.TickBuffer) {
+          hist.forEach(([t, p]) => window.TickBuffer.addTick(t, p));
+        }
+        _isDirty = true;
+        _render();
+      }
+    } catch (e) {
+      console.warn('[LiveTradingManager] History fetch retry error:', e);
+    }
+  }
+
+  function _clearHistoryRetryTimers() {
+    _historyRetryTimers.forEach(t => clearTimeout(t));
+    _historyRetryTimers = [];
   }
 
   // ─── Real-Time Tick Ingestion ──────────────────────────────────────
@@ -291,7 +308,7 @@ window.LiveTradingManager = (() => {
     if (_canvas.width !== Math.round(w * dpr) || _canvas.height !== Math.round(h * dpr)) {
       _canvas.width = Math.round(w * dpr);
       _canvas.height = Math.round(h * dpr);
-      _cachedGradKey = ''; // reset cached gradient on resize
+      _cachedGradKey = '';
     }
 
     _ctx.save();
@@ -364,7 +381,6 @@ window.LiveTradingManager = (() => {
 
       const getY = price => plotBottom - ((price - yMin) / yRange) * plotH;
 
-      // Draw Horizontal Grid Lines for BTC Price ($)
       _ctx.lineWidth = 1;
       _ctx.font = '10px "JetBrains Mono", monospace';
       _ctx.textAlign = 'left';
@@ -386,7 +402,6 @@ window.LiveTradingManager = (() => {
         _ctx.fillText(`$${p.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, plotRight + 6, y);
       }
 
-      // Draw Target Strike Line (Orange Reference)
       if (_btcOpen) {
         const strikeY = getY(_btcOpen);
         if (strikeY >= plotTop && strikeY <= plotBottom) {
@@ -407,7 +422,6 @@ window.LiveTradingManager = (() => {
         }
       }
 
-      // Reusable point buffer
       _pointBuffer.length = 0;
       if (_btcTicks.length > 0) {
         for (let i = 0; i < _btcTicks.length; i++) {
@@ -439,7 +453,6 @@ window.LiveTradingManager = (() => {
         const isUp = _btcOpen ? (latestPt.val >= _btcOpen) : true;
         const mainColor = isUp ? '#00d4aa' : '#ff4d6d';
 
-        // Area Fill with cached gradient
         const gradKey = `${mainColor}_${plotTop}_${plotBottom}`;
         if (_cachedGradKey !== gradKey) {
           _cachedGrad = _ctx.createLinearGradient(0, plotTop, 0, plotBottom);
@@ -458,7 +471,6 @@ window.LiveTradingManager = (() => {
         _ctx.fillStyle = _cachedGrad;
         _ctx.fill();
 
-        // Glowing Price Line
         _ctx.save();
         _ctx.shadowColor = mainColor;
         _ctx.shadowBlur = 8;
@@ -475,7 +487,6 @@ window.LiveTradingManager = (() => {
         _ctx.stroke();
         _ctx.restore();
 
-        // Pulsing Live Head Dot
         const pulseR = 4 + Math.sin(_pulsePhase) * 1.5;
         _ctx.beginPath();
         _ctx.arc(latestPt.x, latestPt.y, pulseR + 4, 0, Math.PI * 2);
@@ -492,7 +503,6 @@ window.LiveTradingManager = (() => {
         _ctx.fillStyle = '#ffffff';
         _ctx.fill();
 
-        // Floating Live Head Badge
         if (_showHeadBadge && latestPt) {
           const remSecs = Math.max(0, _endTs - effectiveNowSec);
           const remM = Math.floor(remSecs / 60);
@@ -576,7 +586,6 @@ window.LiveTradingManager = (() => {
           _ctx.restore();
         }
 
-        // Current Price Line to Right Scale
         _ctx.beginPath();
         _ctx.strokeStyle = mainColor + '66';
         _ctx.lineWidth = 1;
@@ -586,7 +595,6 @@ window.LiveTradingManager = (() => {
         _ctx.stroke();
         _ctx.setLineDash([]);
 
-        // Right Scale Highlight Badge
         _ctx.fillStyle = mainColor;
         _roundRect(_ctx, plotRight + 2, latestPt.y - 9, RIGHT_SCALE_W - 4, 18, 4, true, false);
         _ctx.fillStyle = '#090d16';
@@ -894,7 +902,6 @@ window.LiveTradingManager = (() => {
   function _startAnimationLoop() {
     function loop(now) {
       const delta = now - _lastFrameTime;
-      // Cap idle pulse redraws at ~30fps (33ms) or redraw immediately if dirty
       if (_isDirty || delta >= 33) {
         _pulsePhase += 0.08;
         _render();
@@ -953,7 +960,7 @@ window.LiveTradingManager = (() => {
         if (_tooltipEl) _tooltipEl.style.display = 'none';
         _isDirty = true;
       }, 3000);
-    }, { passive: true });
+    });
 
     _canvas.addEventListener('click', (e) => {
       const rect = _canvas.getBoundingClientRect();
@@ -979,6 +986,7 @@ window.LiveTradingManager = (() => {
   }
 
   function destroy() {
+    _clearHistoryRetryTimers();
     if (_rafId) cancelAnimationFrame(_rafId);
   }
 

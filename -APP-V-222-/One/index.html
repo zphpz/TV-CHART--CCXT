@@ -1871,7 +1871,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v4.4</span>
+        <span id="app-version">v4.5</span>
       </div>
     </footer>
 
@@ -2904,14 +2904,14 @@ window.BackfillEngine = (() => {
 
 /* ═══ MODULE: js/market.js ═══ */
 /**
- * market.js — Polymarket Market Discovery & Active Session Rollover v4.3
+ * market.js — Polymarket Market Discovery & Active Session Rollover v4.5
  * 
- * Features & Optimizations in v4.3:
- * - Parallel ultra-fast session price history hydration (Promise.allSettled on CLOB & Data API)
- * - Multi-tier CORS proxy fallback
- * - Pre-fetching next market slot 25s in advance
- * - Dynamic 5m and 15m session boundary calculation
- * - Watchdog timer and rollover callbacks
+ * Features & Optimizations in v4.5:
+ * - Dual-Token Parallel History Downloader (queries UP and DOWN tokens in parallel)
+ * - Auto-merging & inverting DOWN token trades for maximum curve fidelity
+ * - Strict 2.5s AbortController timeout prevents any hanging requests
+ * - Self-healing retry watchdog
+ * - Multi-tier CORS fallback with local server prioritization
  */
 'use strict';
 
@@ -2921,7 +2921,6 @@ window.MarketManager = (() => {
 
   const CORS_PROXIES = [
     url => url,
-    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
   ];
 
@@ -2956,27 +2955,29 @@ window.MarketManager = (() => {
     return makeSlug(tf, _getWindowTs(tf) + _intervalSec(tf));
   }
 
-  // ─── Fetch with multi-tier fallback ────────────────────────────────
-  async function _fetchWithRetry(rawUrl, retries = 3) {
+  // ─── Fetch with strict timeout and fallback ────────────────────────
+  async function _fetchWithRetry(rawUrl, retries = 2, timeoutMs = 2500) {
     for (let i = 0; i < retries; i++) {
-      const isFileProto = (window.location.protocol === 'file:');
-      const proxyIdx = isFileProto ? (i % CORS_PROXIES.length) : (i === 0 ? 0 : (i % CORS_PROXIES.length));
+      const proxyIdx = i === 0 ? 0 : 1;
       const targetUrl = CORS_PROXIES[proxyIdx](rawUrl);
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
         const res = await fetch(targetUrl, {
           headers: { 'Accept': 'application/json' },
-          cache: 'no-cache'
+          cache: 'no-cache',
+          signal: controller.signal
         });
+        clearTimeout(timer);
         if (res.ok) {
           return await res.json();
         }
       } catch (err) {
-        if (i === retries - 1) {
-          console.warn(`[MarketManager] Fetch failed for ${rawUrl}:`, err.message);
-        }
+        clearTimeout(timer);
       }
-      await _sleep(300 * (i + 1));
+      await _sleep(200 * (i + 1));
     }
     return null;
   }
@@ -2984,7 +2985,7 @@ window.MarketManager = (() => {
   // ─── Fetch Market Metadata ─────────────────────────────────────────
   async function fetchMarketData(slug) {
     const url = `${GAMMA_BASE}/events?slug=${slug}`;
-    const data = await _fetchWithRetry(url, 3);
+    const data = await _fetchWithRetry(url, 2, 3000);
     if (!data) return null;
 
     const event = Array.isArray(data) ? data[0] : data;
@@ -3046,73 +3047,81 @@ window.MarketManager = (() => {
   }
 
   async function fetchMidpoint(tokenId) {
-    const data = await _fetchWithRetry(`${CLOB_BASE}/midpoint?token_id=${tokenId}`, 2);
+    if (!tokenId) return null;
+    const data = await _fetchWithRetry(`${CLOB_BASE}/midpoint?token_id=${tokenId}`, 2, 2000);
     if (!data) return null;
     const mid = parseFloat(data.mid);
     return isNaN(mid) ? null : mid;
   }
 
-  // ─── Parallel Ultra-Fast Session History Downloader ────────────────
-  async function fetchSessionPriceHistory(tokenId, startTs, endTs) {
-    if (!tokenId || !startTs || !endTs) return [];
+  // ─── Dual-Token Parallel Session History Downloader ───────────────
+  async function fetchSessionPriceHistory(upTokenId, downTokenId, startTs, endTs) {
+    if (!upTokenId || !startTs || !endTs) return [];
 
-    const fetchClob = async () => {
-      const url = `${CLOB_BASE}/prices-history?market=${tokenId}&interval=1d&fidelity=1`;
-      const data = await _fetchWithRetry(url, 2);
+    const fetchTokenClob = async (tok, isInverted) => {
+      if (!tok) return [];
+      const url = `${CLOB_BASE}/prices-history?market=${tok}&interval=1d&fidelity=1`;
+      const data = await _fetchWithRetry(url, 2, 2500);
       if (data && Array.isArray(data.history) && data.history.length > 0) {
-        const inSession = [];
+        const list = [];
         for (let i = 0; i < data.history.length; i++) {
           const item = data.history[i];
           const ts = parseInt(item.t);
           const p = parseFloat(item.p);
           if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
-            inSession.push([ts, Math.round(p * 1000) / 10]);
+            const rawCents = Math.round(p * 1000) / 10;
+            const upCents = isInverted ? (100 - rawCents) : rawCents;
+            list.push([ts, Math.max(0.1, Math.min(99.9, upCents))]);
           }
         }
-        if (inSession.length > 0) {
-          inSession.sort((a, b) => a[0] - b[0]);
-          return inSession;
-        }
+        return list;
       }
       return [];
     };
 
-    const fetchDataApi = async () => {
-      const url = `https://data-api.polymarket.com/trades?asset_id=${tokenId}&limit=200`;
-      const trades = await _fetchWithRetry(url, 2);
+    const fetchTokenTrades = async (tok, isInverted) => {
+      if (!tok) return [];
+      const url = `https://data-api.polymarket.com/trades?asset_id=${tok}&limit=200`;
+      const trades = await _fetchWithRetry(url, 2, 2500);
       if (Array.isArray(trades) && trades.length > 0) {
-        const inSession = [];
+        const list = [];
         for (let i = 0; i < trades.length; i++) {
           const item = trades[i];
           const ts = parseInt(item.timestamp);
           const p = parseFloat(item.price);
           if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
-            inSession.push([ts, Math.round(p * 1000) / 10]);
+            const rawCents = Math.round(p * 1000) / 10;
+            const upCents = isInverted ? (100 - rawCents) : rawCents;
+            list.push([ts, Math.max(0.1, Math.min(99.9, upCents))]);
           }
         }
-        if (inSession.length > 0) {
-          inSession.sort((a, b) => a[0] - b[0]);
-          return inSession;
-        }
+        return list;
       }
       return [];
     };
 
     try {
-      const [resClob, resData] = await Promise.allSettled([fetchClob(), fetchDataApi()]);
-      const listClob = resClob.status === 'fulfilled' ? resClob.value : [];
-      const listData = resData.status === 'fulfilled' ? resData.value : [];
+      const results = await Promise.allSettled([
+        fetchTokenClob(upTokenId, false),
+        fetchTokenClob(downTokenId, true),
+        fetchTokenTrades(upTokenId, false),
+        fetchTokenTrades(downTokenId, true),
+      ]);
 
-      if (listClob.length > 0 && listData.length > 0) {
-        const map = new Map();
-        listClob.forEach(([t, p]) => map.set(t, p));
-        listData.forEach(([t, p]) => map.set(t, p));
+      const map = new Map();
+      for (let r of results) {
+        if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+          for (let [ts, val] of r.value) {
+            map.set(ts, val);
+          }
+        }
+      }
+
+      if (map.size > 0) {
         return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
       }
-      if (listClob.length > 0) return listClob;
-      if (listData.length > 0) return listData;
     } catch (e) {
-      console.warn('[MarketManager] Parallel history fetch error:', e);
+      console.warn('[MarketManager] Dual-token history fetch error:', e);
     }
 
     return [];
@@ -3143,7 +3152,9 @@ window.MarketManager = (() => {
 
     console.warn('[MarketManager] Searching active markets via Gamma search');
     const arr = await _fetchWithRetry(
-      `${GAMMA_BASE}/events?slug_contains=btc-updown-${tfMinutes}m&active=true&closed=false&limit=10`
+      `${GAMMA_BASE}/events?slug_contains=btc-updown-${tfMinutes}m&active=true&closed=false&limit=10`,
+      2,
+      3000
     );
 
     if (Array.isArray(arr) && arr.length > 0) {
@@ -3962,23 +3973,19 @@ window.PolyRTDS = (() => {
 
 /* ═══ MODULE: js/live_trading.js ═══ */
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.3
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.5
  * 
- * Performance Optimizations in v4.3:
+ * Features & Fixes in v4.5:
+ * - Dual-Token History Hydration (merges UP and inverted DOWN token trades for full curve history)
+ * - Self-healing background retry loop for mid-session opens
  * - Zero-allocation point buffer reuse (_pointBuffer) eliminates GC pauses
  * - Cached linear gradients for area under curve
  * - Dirty-flag & frame-rate managed animation loop (60fps on ticks/interaction, 30fps on idle pulse)
- * - In-place tick filtering to avoid array re-allocations on every frame
- * - Monospace text measurement caching
- * 
- * Features:
  * - Dual Chart Modes:
  *   1. ₿ BTC ($) Mode: 1:1 Live Bitcoin TWAP price curve vs Strike / Target Line ($64,746 vs $64,739)
  *   2. ¢ PROB (%) Mode: Polymarket CLOB Option token probability in cents (0–100¢)
  * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
  * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent glass background)
- * - Automatic historical trade backfill on mid-session join (no fake 50¢ flat line or diagonal jumps!)
- * - Real-time auto-advancing line & pulsing head from second 0 to nowSec
  * - Anti-aliased glowing live price line with gradient under-fill
  * - Pulsing live leading dot at the current active second
  * - Blue dashed vertical second & minute grid lines (+01:00, +02:00 ... / 30s, 90s ...)
@@ -4016,6 +4023,7 @@ window.LiveTradingManager = (() => {
   let _pulsePhase    = 0;
   let _isDirty       = true;
   let _lastFrameTime = 0;
+  let _historyRetryTimers = [];
 
   // Reusable point buffer to eliminate GC allocations
   const _pointBuffer = [];
@@ -4068,7 +4076,7 @@ window.LiveTradingManager = (() => {
     _setupResize();
     _startAnimationLoop();
 
-    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.3 optimized)');
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.5 self-healing)');
     return true;
   }
 
@@ -4084,6 +4092,8 @@ window.LiveTradingManager = (() => {
     _btcTicks = [];
     _lastPrice = null;
 
+    _clearHistoryRetryTimers();
+
     _btcOpen = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice) || null;
     _btcCurrent = _btcOpen;
     _btcChange = 0;
@@ -4092,6 +4102,7 @@ window.LiveTradingManager = (() => {
       _btcTicks.push([_startTs, _btcOpen]);
     }
 
+    // 1. Check local buffer
     if (window.TickBuffer) {
       const bufferTicks = window.TickBuffer.getRawTicks() || [];
       for (let i = 0; i < bufferTicks.length; i++) {
@@ -4102,23 +4113,40 @@ window.LiveTradingManager = (() => {
       }
     }
 
-    if (_rawTicks.length < 2 && window.MarketManager && market.upTokenId) {
-      try {
-        const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, _startTs, _endTs);
-        if (Array.isArray(hist) && hist.length > 0) {
-          _rawTicks = hist;
-          _lastPrice = hist[hist.length - 1][1];
-          if (window.TickBuffer) {
-            hist.forEach(([t, p]) => window.TickBuffer.addTick(t, p));
-          }
-        }
-      } catch (e) {
-        console.warn('[LiveTradingManager] History fetch error:', e);
-      }
+    // 2. Fetch dual-token history
+    await _tryFetchHistory(market);
+
+    // 3. Self-healing background retries if history is thin (< 2 points)
+    if (_rawTicks.length < 2 && window.MarketManager) {
+      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1500));
+      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3500));
     }
 
     _isDirty = true;
     _render();
+  }
+
+  async function _tryFetchHistory(market) {
+    if (!market || !window.MarketManager || !market.upTokenId) return;
+    try {
+      const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, _startTs, _endTs);
+      if (Array.isArray(hist) && hist.length > 0) {
+        _rawTicks = hist;
+        _lastPrice = hist[hist.length - 1][1];
+        if (window.TickBuffer) {
+          hist.forEach(([t, p]) => window.TickBuffer.addTick(t, p));
+        }
+        _isDirty = true;
+        _render();
+      }
+    } catch (e) {
+      console.warn('[LiveTradingManager] History fetch retry error:', e);
+    }
+  }
+
+  function _clearHistoryRetryTimers() {
+    _historyRetryTimers.forEach(t => clearTimeout(t));
+    _historyRetryTimers = [];
   }
 
   // ─── Real-Time Tick Ingestion ──────────────────────────────────────
@@ -4254,7 +4282,7 @@ window.LiveTradingManager = (() => {
     if (_canvas.width !== Math.round(w * dpr) || _canvas.height !== Math.round(h * dpr)) {
       _canvas.width = Math.round(w * dpr);
       _canvas.height = Math.round(h * dpr);
-      _cachedGradKey = ''; // reset cached gradient on resize
+      _cachedGradKey = '';
     }
 
     _ctx.save();
@@ -4327,7 +4355,6 @@ window.LiveTradingManager = (() => {
 
       const getY = price => plotBottom - ((price - yMin) / yRange) * plotH;
 
-      // Draw Horizontal Grid Lines for BTC Price ($)
       _ctx.lineWidth = 1;
       _ctx.font = '10px "JetBrains Mono", monospace';
       _ctx.textAlign = 'left';
@@ -4349,7 +4376,6 @@ window.LiveTradingManager = (() => {
         _ctx.fillText(`$${p.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, plotRight + 6, y);
       }
 
-      // Draw Target Strike Line (Orange Reference)
       if (_btcOpen) {
         const strikeY = getY(_btcOpen);
         if (strikeY >= plotTop && strikeY <= plotBottom) {
@@ -4370,7 +4396,6 @@ window.LiveTradingManager = (() => {
         }
       }
 
-      // Reusable point buffer
       _pointBuffer.length = 0;
       if (_btcTicks.length > 0) {
         for (let i = 0; i < _btcTicks.length; i++) {
@@ -4402,7 +4427,6 @@ window.LiveTradingManager = (() => {
         const isUp = _btcOpen ? (latestPt.val >= _btcOpen) : true;
         const mainColor = isUp ? '#00d4aa' : '#ff4d6d';
 
-        // Area Fill with cached gradient
         const gradKey = `${mainColor}_${plotTop}_${plotBottom}`;
         if (_cachedGradKey !== gradKey) {
           _cachedGrad = _ctx.createLinearGradient(0, plotTop, 0, plotBottom);
@@ -4421,7 +4445,6 @@ window.LiveTradingManager = (() => {
         _ctx.fillStyle = _cachedGrad;
         _ctx.fill();
 
-        // Glowing Price Line
         _ctx.save();
         _ctx.shadowColor = mainColor;
         _ctx.shadowBlur = 8;
@@ -4438,7 +4461,6 @@ window.LiveTradingManager = (() => {
         _ctx.stroke();
         _ctx.restore();
 
-        // Pulsing Live Head Dot
         const pulseR = 4 + Math.sin(_pulsePhase) * 1.5;
         _ctx.beginPath();
         _ctx.arc(latestPt.x, latestPt.y, pulseR + 4, 0, Math.PI * 2);
@@ -4455,7 +4477,6 @@ window.LiveTradingManager = (() => {
         _ctx.fillStyle = '#ffffff';
         _ctx.fill();
 
-        // Floating Live Head Badge
         if (_showHeadBadge && latestPt) {
           const remSecs = Math.max(0, _endTs - effectiveNowSec);
           const remM = Math.floor(remSecs / 60);
@@ -4539,7 +4560,6 @@ window.LiveTradingManager = (() => {
           _ctx.restore();
         }
 
-        // Current Price Line to Right Scale
         _ctx.beginPath();
         _ctx.strokeStyle = mainColor + '66';
         _ctx.lineWidth = 1;
@@ -4549,7 +4569,6 @@ window.LiveTradingManager = (() => {
         _ctx.stroke();
         _ctx.setLineDash([]);
 
-        // Right Scale Highlight Badge
         _ctx.fillStyle = mainColor;
         _roundRect(_ctx, plotRight + 2, latestPt.y - 9, RIGHT_SCALE_W - 4, 18, 4, true, false);
         _ctx.fillStyle = '#090d16';
@@ -4857,7 +4876,6 @@ window.LiveTradingManager = (() => {
   function _startAnimationLoop() {
     function loop(now) {
       const delta = now - _lastFrameTime;
-      // Cap idle pulse redraws at ~30fps (33ms) or redraw immediately if dirty
       if (_isDirty || delta >= 33) {
         _pulsePhase += 0.08;
         _render();
@@ -4916,7 +4934,7 @@ window.LiveTradingManager = (() => {
         if (_tooltipEl) _tooltipEl.style.display = 'none';
         _isDirty = true;
       }, 3000);
-    }, { passive: true });
+    });
 
     _canvas.addEventListener('click', (e) => {
       const rect = _canvas.getBoundingClientRect();
@@ -4942,6 +4960,7 @@ window.LiveTradingManager = (() => {
   }
 
   function destroy() {
+    _clearHistoryRetryTimers();
     if (_rafId) cancelAnimationFrame(_rafId);
   }
 
@@ -6214,9 +6233,11 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v4.4
+ * app.js — Main Application Coordinator v4.5
  * 
- * Features & Fixes in v4.4:
+ * Features & Fixes in v4.5:
+ * - Dual-Token History Hydration & Multi-Token Parallel Discovery
+ * - Strict timeout protection & self-healing auto-retries on mid-session opens
  * - Dual-token WebSocket subscription (tracks both UP and DOWN orderbook trades)
  * - Clean market rollover price initialization (never carries over frozen prices from expired markets)
  * - Automatic background midpoint watchdog polling (prevents price stagnation on quiet books)
@@ -6224,7 +6245,6 @@ window.HistoryPanel = (() => {
  * - Eliminated DOM layout thrashing (removed forced synchronous reflow offsetWidth)
  * - Smart background throttling for inactive chart tabs (reduces CPU to ~0.5%)
  * - Auto-pruning memory manager prevents multi-hour leaks
- * - Parallel REST history hydration on session start
  * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent background)
  * - 1-second continuous live ticker loop ensures price line advances immediately from second 0
  * - 1:1 Polymarket TWAP 60s live stream parity & accurate Target Price
@@ -6323,7 +6343,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.4...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.5...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -6383,18 +6403,21 @@ window.App = (() => {
         TickBuffer.pruneOld(nowSec - 86400);
       }
 
-      // Midpoint Watchdog: if price hasn't updated from WS in > 4s, refresh from CLOB
+      // Midpoint Watchdog: if price hasn't updated from WS in > 3s, refresh from CLOB
       const cur = MarketManager.getCurrentMarket();
-      if (cur && cur.upTokenId && PriceEngine.getLastUpdateMs() && (Date.now() - PriceEngine.getLastUpdateMs() > 4000)) {
-        try {
-          const mid = await MarketManager.fetchMidpoint(cur.upTokenId);
-          if (mid !== null) {
-            PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
-            _emitPrice();
-          }
-        } catch {}
+      if (cur && cur.upTokenId) {
+        const lastUp = PriceEngine.getLastUpdateMs();
+        if (!lastUp || (Date.now() - lastUp > 3000)) {
+          try {
+            const mid = await MarketManager.fetchMidpoint(cur.upTokenId);
+            if (mid !== null) {
+              PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+              _emitPrice();
+            }
+          } catch {}
+        }
       }
-    }, 4000);
+    }, 3000);
 
     setStatus('connecting', 'CONNECTING');
     await loadMarket(_currentTfMinutes);
@@ -6667,7 +6690,6 @@ window.App = (() => {
     MarketManager.setCurrentMarket(market);
     _updateMarketUI(market);
 
-    // Initial price seed from market data
     const initialProb = market.initialProb || 0.50;
     PriceEngine.updateLastTrade(initialProb);
 
@@ -6677,9 +6699,9 @@ window.App = (() => {
     }
 
     // 2. Fetch session price history in parallel
-    setLoadingSub('Fetching session price history in parallel...');
+    setLoadingSub('Fetching session price history...');
     try {
-      const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.startTs, market.endTs);
+      const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, market.startTs, market.endTs);
       if (Array.isArray(hist) && hist.length > 0) {
         hist.forEach(([t, p]) => {
           TickBuffer.addTick(t, p);

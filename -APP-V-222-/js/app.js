@@ -1,7 +1,9 @@
 /**
- * app.js — Main Application Coordinator v4.4
+ * app.js — Main Application Coordinator v4.5
  * 
- * Features & Fixes in v4.4:
+ * Features & Fixes in v4.5:
+ * - Dual-Token History Hydration & Multi-Token Parallel Discovery
+ * - Strict timeout protection & self-healing auto-retries on mid-session opens
  * - Dual-token WebSocket subscription (tracks both UP and DOWN orderbook trades)
  * - Clean market rollover price initialization (never carries over frozen prices from expired markets)
  * - Automatic background midpoint watchdog polling (prevents price stagnation on quiet books)
@@ -9,7 +11,6 @@
  * - Eliminated DOM layout thrashing (removed forced synchronous reflow offsetWidth)
  * - Smart background throttling for inactive chart tabs (reduces CPU to ~0.5%)
  * - Auto-pruning memory manager prevents multi-hour leaks
- * - Parallel REST history hydration on session start
  * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent background)
  * - 1-second continuous live ticker loop ensures price line advances immediately from second 0
  * - 1:1 Polymarket TWAP 60s live stream parity & accurate Target Price
@@ -108,7 +109,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.4...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.5...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -168,18 +169,21 @@ window.App = (() => {
         TickBuffer.pruneOld(nowSec - 86400);
       }
 
-      // Midpoint Watchdog: if price hasn't updated from WS in > 4s, refresh from CLOB
+      // Midpoint Watchdog: if price hasn't updated from WS in > 3s, refresh from CLOB
       const cur = MarketManager.getCurrentMarket();
-      if (cur && cur.upTokenId && PriceEngine.getLastUpdateMs() && (Date.now() - PriceEngine.getLastUpdateMs() > 4000)) {
-        try {
-          const mid = await MarketManager.fetchMidpoint(cur.upTokenId);
-          if (mid !== null) {
-            PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
-            _emitPrice();
-          }
-        } catch {}
+      if (cur && cur.upTokenId) {
+        const lastUp = PriceEngine.getLastUpdateMs();
+        if (!lastUp || (Date.now() - lastUp > 3000)) {
+          try {
+            const mid = await MarketManager.fetchMidpoint(cur.upTokenId);
+            if (mid !== null) {
+              PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+              _emitPrice();
+            }
+          } catch {}
+        }
       }
-    }, 4000);
+    }, 3000);
 
     setStatus('connecting', 'CONNECTING');
     await loadMarket(_currentTfMinutes);
@@ -452,7 +456,6 @@ window.App = (() => {
     MarketManager.setCurrentMarket(market);
     _updateMarketUI(market);
 
-    // Initial price seed from market data
     const initialProb = market.initialProb || 0.50;
     PriceEngine.updateLastTrade(initialProb);
 
@@ -462,9 +465,9 @@ window.App = (() => {
     }
 
     // 2. Fetch session price history in parallel
-    setLoadingSub('Fetching session price history in parallel...');
+    setLoadingSub('Fetching session price history...');
     try {
-      const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.startTs, market.endTs);
+      const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, market.startTs, market.endTs);
       if (Array.isArray(hist) && hist.length > 0) {
         hist.forEach(([t, p]) => {
           TickBuffer.addTick(t, p);
