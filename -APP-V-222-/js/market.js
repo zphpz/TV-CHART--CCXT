@@ -1,23 +1,18 @@
 /**
- * market.js — Polymarket Market Discovery & Active Session Rollover v4.5
+ * market.js — Polymarket Market Discovery & Active Session Rollover v4.7
  * 
- * Features & Optimizations in v4.5:
- * - Dual-Token Parallel History Downloader (queries UP and DOWN tokens in parallel)
- * - Auto-merging & inverting DOWN token trades for maximum curve fidelity
- * - Strict 2.5s AbortController timeout prevents any hanging requests
- * - Self-healing retry watchdog
- * - Multi-tier CORS fallback with local server prioritization
+ * Features & Fixes in v4.7:
+ * - Pure Official CLOB Parallel History Hydration (eliminated noisy unverified Data API trades)
+ * - True session-start anchor (anchors startTs to first historical tick, eliminating horizontal mid-session shelf)
+ * - Dual-Token UP + Inverted DOWN CLOB merging with timestamp deduplication
+ * - Strict 2.5s AbortController timeout & zero third-party proxies
+ * - Self-healing background retry loop for mid-session opens
  */
 'use strict';
 
 window.MarketManager = (() => {
   const GAMMA_BASE = 'https://gamma-api.polymarket.com';
   const CLOB_BASE  = 'https://clob.polymarket.com';
-
-  const CORS_PROXIES = [
-    url => url,
-    url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-  ];
 
   let _currentMarket = null;
   let _nextMarket    = null;
@@ -50,17 +45,14 @@ window.MarketManager = (() => {
     return makeSlug(tf, _getWindowTs(tf) + _intervalSec(tf));
   }
 
-  // ─── Fetch with strict timeout and fallback ────────────────────────
+  // ─── Fetch with strict timeout ─────────────────────────────────────
   async function _fetchWithRetry(rawUrl, retries = 2, timeoutMs = 2500) {
     for (let i = 0; i < retries; i++) {
-      const proxyIdx = i === 0 ? 0 : 1;
-      const targetUrl = CORS_PROXIES[proxyIdx](rawUrl);
-
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        const res = await fetch(targetUrl, {
+        const res = await fetch(rawUrl, {
           headers: { 'Accept': 'application/json' },
           cache: 'no-cache',
           signal: controller.signal
@@ -149,7 +141,7 @@ window.MarketManager = (() => {
     return isNaN(mid) ? null : mid;
   }
 
-  // ─── Dual-Token Parallel Session History Downloader ───────────────
+  // ─── Dual-Token Pure CLOB Session History Downloader ──────────────
   async function fetchSessionPriceHistory(upTokenId, downTokenId, startTs, endTs) {
     if (!upTokenId || !startTs || !endTs) return [];
 
@@ -174,49 +166,36 @@ window.MarketManager = (() => {
       return [];
     };
 
-    const fetchTokenTrades = async (tok, isInverted) => {
-      if (!tok) return [];
-      const url = `https://data-api.polymarket.com/trades?asset_id=${tok}&limit=200`;
-      const trades = await _fetchWithRetry(url, 2, 2500);
-      if (Array.isArray(trades) && trades.length > 0) {
-        const list = [];
-        for (let i = 0; i < trades.length; i++) {
-          const item = trades[i];
-          const ts = parseInt(item.timestamp);
-          const p = parseFloat(item.price);
-          if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
-            const rawCents = Math.round(p * 1000) / 10;
-            const upCents = isInverted ? (100 - rawCents) : rawCents;
-            list.push([ts, Math.max(0.1, Math.min(99.9, upCents))]);
-          }
-        }
-        return list;
-      }
-      return [];
-    };
-
     try {
       const results = await Promise.allSettled([
         fetchTokenClob(upTokenId, false),
         fetchTokenClob(downTokenId, true),
-        fetchTokenTrades(upTokenId, false),
-        fetchTokenTrades(downTokenId, true),
       ]);
 
       const map = new Map();
       for (let r of results) {
         if (r.status === 'fulfilled' && Array.isArray(r.value)) {
           for (let [ts, val] of r.value) {
-            map.set(ts, val);
+            if (!map.has(ts)) {
+              map.set(ts, val);
+            } else {
+              const existing = map.get(ts);
+              map.set(ts, Math.round(((existing + val) / 2) * 10) / 10);
+            }
           }
         }
       }
 
       if (map.size > 0) {
-        return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+        const sorted = Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+        // Anchor the first point cleanly to startTs
+        if (sorted[0][0] > startTs) {
+          sorted.unshift([startTs, sorted[0][1]]);
+        }
+        return sorted;
       }
     } catch (e) {
-      console.warn('[MarketManager] Dual-token history fetch error:', e);
+      console.warn('[MarketManager] Pure CLOB history fetch error:', e);
     }
 
     return [];

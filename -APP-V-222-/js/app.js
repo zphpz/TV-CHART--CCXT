@@ -1,9 +1,10 @@
 /**
- * app.js — Main Application Coordinator v4.6
+ * app.js — Main Application Coordinator v4.7
  * 
- * Features & Fixes in v4.6:
+ * Features & Fixes in v4.7:
+ * - Pure Official CLOB Dual-Token History Engine (Zero Sawtooth / Anti-Noise)
+ * - True Session-Start Anchor & Self-Healing Hydration on Mid-Session Joins
  * - 100% Direct Polymarket REST APIs with Zero Third-Party Proxies & Strict 2.5s Timeout
- * - Dual-Token History Hydration & Multi-Token Parallel Discovery
  * - Dual-token WebSocket subscription (tracks both UP and DOWN orderbook trades)
  * - Clean market rollover price initialization (never carries over frozen prices from expired markets)
  * - Automatic background midpoint watchdog polling (prevents price stagnation on quiet books)
@@ -109,7 +110,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.6...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.7...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -465,10 +466,12 @@ window.App = (() => {
     }
 
     // 2. Fetch session price history in parallel
-    setLoadingSub('Fetching session price history...');
+    setLoadingSub('Fetching pure CLOB session history...');
     try {
       const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, market.startTs, market.endTs);
       if (Array.isArray(hist) && hist.length > 0) {
+        TickBuffer.reset(false);
+        _currentSessionTicks = [];
         hist.forEach(([t, p]) => {
           TickBuffer.addTick(t, p);
           _currentSessionTicks.push([t, p]);

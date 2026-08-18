@@ -128,24 +128,13 @@ window.LiveTradingManager = (() => {
       _btcTicks.push([_startTs, _btcOpen]);
     }
 
-    // 1. Check local buffer
-    if (window.TickBuffer) {
-      const bufferTicks = window.TickBuffer.getRawTicks() || [];
-      for (let i = 0; i < bufferTicks.length; i++) {
-        const t = bufferTicks[i];
-        if (t.time >= _startTs && t.time <= _endTs && typeof t.value === 'number') {
-          _rawTicks.push([t.time, t.value]);
-        }
-      }
-    }
-
-    // 2. Fetch dual-token history
+    // 1. Fetch pure CLOB history immediately
     await _tryFetchHistory(market);
 
-    // 3. Self-healing background retries if history is thin (< 2 points)
+    // 2. Self-healing background retries if history is thin (< 2 points)
     if (_rawTicks.length < 2 && window.MarketManager) {
-      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1500));
-      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3500));
+      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1200));
+      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3000));
     }
 
     _isDirty = true;
@@ -157,10 +146,14 @@ window.LiveTradingManager = (() => {
     try {
       const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, _startTs, _endTs);
       if (Array.isArray(hist) && hist.length > 0) {
-        _rawTicks = hist;
+        _rawTicks = hist.slice();
         _lastPrice = hist[hist.length - 1][1];
         if (window.TickBuffer) {
+          window.TickBuffer.reset(false);
           hist.forEach(([t, p]) => window.TickBuffer.addTick(t, p));
+        }
+        if (window.PriceEngine) {
+          PriceEngine.updateLastTrade(_lastPrice / 100);
         }
         _isDirty = true;
         _render();

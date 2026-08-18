@@ -1871,7 +1871,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v4.6</span>
+        <span id="app-version">v4.7</span>
       </div>
     </footer>
 
@@ -2900,25 +2900,20 @@ window.BackfillEngine = (() => {
 
 /* ═══ MODULE: js/market.js ═══ */
 /**
- * market.js — Polymarket Market Discovery & Active Session Rollover v4.5
+ * market.js — Polymarket Market Discovery & Active Session Rollover v4.7
  * 
- * Features & Optimizations in v4.5:
- * - Dual-Token Parallel History Downloader (queries UP and DOWN tokens in parallel)
- * - Auto-merging & inverting DOWN token trades for maximum curve fidelity
- * - Strict 2.5s AbortController timeout prevents any hanging requests
- * - Self-healing retry watchdog
- * - Multi-tier CORS fallback with local server prioritization
+ * Features & Fixes in v4.7:
+ * - Pure Official CLOB Parallel History Hydration (eliminated noisy unverified Data API trades)
+ * - True session-start anchor (anchors startTs to first historical tick, eliminating horizontal mid-session shelf)
+ * - Dual-Token UP + Inverted DOWN CLOB merging with timestamp deduplication
+ * - Strict 2.5s AbortController timeout & zero third-party proxies
+ * - Self-healing background retry loop for mid-session opens
  */
 'use strict';
 
 window.MarketManager = (() => {
   const GAMMA_BASE = 'https://gamma-api.polymarket.com';
   const CLOB_BASE  = 'https://clob.polymarket.com';
-
-  const CORS_PROXIES = [
-    url => url,
-    url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-  ];
 
   let _currentMarket = null;
   let _nextMarket    = null;
@@ -2951,17 +2946,14 @@ window.MarketManager = (() => {
     return makeSlug(tf, _getWindowTs(tf) + _intervalSec(tf));
   }
 
-  // ─── Fetch with strict timeout and fallback ────────────────────────
+  // ─── Fetch with strict timeout ─────────────────────────────────────
   async function _fetchWithRetry(rawUrl, retries = 2, timeoutMs = 2500) {
     for (let i = 0; i < retries; i++) {
-      const proxyIdx = i === 0 ? 0 : 1;
-      const targetUrl = CORS_PROXIES[proxyIdx](rawUrl);
-
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        const res = await fetch(targetUrl, {
+        const res = await fetch(rawUrl, {
           headers: { 'Accept': 'application/json' },
           cache: 'no-cache',
           signal: controller.signal
@@ -3050,7 +3042,7 @@ window.MarketManager = (() => {
     return isNaN(mid) ? null : mid;
   }
 
-  // ─── Dual-Token Parallel Session History Downloader ───────────────
+  // ─── Dual-Token Pure CLOB Session History Downloader ──────────────
   async function fetchSessionPriceHistory(upTokenId, downTokenId, startTs, endTs) {
     if (!upTokenId || !startTs || !endTs) return [];
 
@@ -3075,49 +3067,36 @@ window.MarketManager = (() => {
       return [];
     };
 
-    const fetchTokenTrades = async (tok, isInverted) => {
-      if (!tok) return [];
-      const url = `https://data-api.polymarket.com/trades?asset_id=${tok}&limit=200`;
-      const trades = await _fetchWithRetry(url, 2, 2500);
-      if (Array.isArray(trades) && trades.length > 0) {
-        const list = [];
-        for (let i = 0; i < trades.length; i++) {
-          const item = trades[i];
-          const ts = parseInt(item.timestamp);
-          const p = parseFloat(item.price);
-          if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
-            const rawCents = Math.round(p * 1000) / 10;
-            const upCents = isInverted ? (100 - rawCents) : rawCents;
-            list.push([ts, Math.max(0.1, Math.min(99.9, upCents))]);
-          }
-        }
-        return list;
-      }
-      return [];
-    };
-
     try {
       const results = await Promise.allSettled([
         fetchTokenClob(upTokenId, false),
         fetchTokenClob(downTokenId, true),
-        fetchTokenTrades(upTokenId, false),
-        fetchTokenTrades(downTokenId, true),
       ]);
 
       const map = new Map();
       for (let r of results) {
         if (r.status === 'fulfilled' && Array.isArray(r.value)) {
           for (let [ts, val] of r.value) {
-            map.set(ts, val);
+            if (!map.has(ts)) {
+              map.set(ts, val);
+            } else {
+              const existing = map.get(ts);
+              map.set(ts, Math.round(((existing + val) / 2) * 10) / 10);
+            }
           }
         }
       }
 
       if (map.size > 0) {
-        return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+        const sorted = Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+        // Anchor the first point cleanly to startTs
+        if (sorted[0][0] > startTs) {
+          sorted.unshift([startTs, sorted[0][1]]);
+        }
+        return sorted;
       }
     } catch (e) {
-      console.warn('[MarketManager] Dual-token history fetch error:', e);
+      console.warn('[MarketManager] Pure CLOB history fetch error:', e);
     }
 
     return [];
@@ -4094,24 +4073,13 @@ window.LiveTradingManager = (() => {
       _btcTicks.push([_startTs, _btcOpen]);
     }
 
-    // 1. Check local buffer
-    if (window.TickBuffer) {
-      const bufferTicks = window.TickBuffer.getRawTicks() || [];
-      for (let i = 0; i < bufferTicks.length; i++) {
-        const t = bufferTicks[i];
-        if (t.time >= _startTs && t.time <= _endTs && typeof t.value === 'number') {
-          _rawTicks.push([t.time, t.value]);
-        }
-      }
-    }
-
-    // 2. Fetch dual-token history
+    // 1. Fetch pure CLOB history immediately
     await _tryFetchHistory(market);
 
-    // 3. Self-healing background retries if history is thin (< 2 points)
+    // 2. Self-healing background retries if history is thin (< 2 points)
     if (_rawTicks.length < 2 && window.MarketManager) {
-      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1500));
-      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3500));
+      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1200));
+      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3000));
     }
 
     _isDirty = true;
@@ -4123,10 +4091,14 @@ window.LiveTradingManager = (() => {
     try {
       const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, _startTs, _endTs);
       if (Array.isArray(hist) && hist.length > 0) {
-        _rawTicks = hist;
+        _rawTicks = hist.slice();
         _lastPrice = hist[hist.length - 1][1];
         if (window.TickBuffer) {
+          window.TickBuffer.reset(false);
           hist.forEach(([t, p]) => window.TickBuffer.addTick(t, p));
+        }
+        if (window.PriceEngine) {
+          PriceEngine.updateLastTrade(_lastPrice / 100);
         }
         _isDirty = true;
         _render();
@@ -6225,11 +6197,12 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v4.6
+ * app.js — Main Application Coordinator v4.7
  * 
- * Features & Fixes in v4.6:
+ * Features & Fixes in v4.7:
+ * - Pure Official CLOB Dual-Token History Engine (Zero Sawtooth / Anti-Noise)
+ * - True Session-Start Anchor & Self-Healing Hydration on Mid-Session Joins
  * - 100% Direct Polymarket REST APIs with Zero Third-Party Proxies & Strict 2.5s Timeout
- * - Dual-Token History Hydration & Multi-Token Parallel Discovery
  * - Dual-token WebSocket subscription (tracks both UP and DOWN orderbook trades)
  * - Clean market rollover price initialization (never carries over frozen prices from expired markets)
  * - Automatic background midpoint watchdog polling (prevents price stagnation on quiet books)
@@ -6335,7 +6308,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.6...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.7...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -6691,10 +6664,12 @@ window.App = (() => {
     }
 
     // 2. Fetch session price history in parallel
-    setLoadingSub('Fetching session price history...');
+    setLoadingSub('Fetching pure CLOB session history...');
     try {
       const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, market.startTs, market.endTs);
       if (Array.isArray(hist) && hist.length > 0) {
+        TickBuffer.reset(false);
+        _currentSessionTicks = [];
         hist.forEach(([t, p]) => {
           TickBuffer.addTick(t, p);
           _currentSessionTicks.push([t, p]);
