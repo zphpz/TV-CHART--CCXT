@@ -78,29 +78,25 @@ window.PolyRTDS = (() => {
       }
     }
 
-    // Priority Tier 2: Public CORS Proxies (for pure file:/// execution)
+    // Priority Tier 2: Direct API fetch with strict timeout
     const preddyUrl = `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`;
-    const proxyUrls = [
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(preddyUrl)}`,
-      `https://corsproxy.io/?${encodeURIComponent(preddyUrl)}`
-    ];
-
-    for (const proxy of proxyUrls) {
-      try {
-        const resp = await fetch(proxy);
-        if (resp.ok) {
-          const data = await resp.json();
-          const openPrice = typeof data.openPrice === 'number' ? data.openPrice : parseFloat(data.openPrice);
-          if (!isNaN(openPrice) && openPrice > 0) {
-            _targetBtcPrice = openPrice;
-            _cacheStrike(winStartSec, openPrice);
-            _emitPriceUpdate();
-            _isFetchingTarget = false;
-            return;
-          }
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
+      const resp = await fetch(preddyUrl, { signal: controller.signal });
+      clearTimeout(timer);
+      if (resp.ok) {
+        const data = await resp.json();
+        const openPrice = typeof data.openPrice === 'number' ? data.openPrice : parseFloat(data.openPrice);
+        if (!isNaN(openPrice) && openPrice > 0) {
+          _targetBtcPrice = openPrice;
+          _cacheStrike(winStartSec, openPrice);
+          _emitPriceUpdate();
+          _isFetchingTarget = false;
+          return;
         }
-      } catch (e) {}
-    }
+      }
+    } catch (e) {}
 
     _isFetchingTarget = false;
   }

@@ -24,8 +24,11 @@ window.BackfillEngine = (() => {
 
   async function _fetchJSON(url, retries = 2) {
     for (let i = 0; i < retries; i++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000);
       try {
-        const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        const resp = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: controller.signal });
+        clearTimeout(timer);
         if (resp.ok) return await resp.json();
         if (resp.status === 404) return null;
         if (resp.status === 429) {
@@ -33,15 +36,8 @@ window.BackfillEngine = (() => {
           continue;
         }
       } catch (e) {
-        // Fallback to CORS proxy if running from file:///
-        if (window.location.protocol === 'file:') {
-          try {
-            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-            const pResp = await fetch(proxyUrl);
-            if (pResp.ok) return await pResp.json();
-          } catch {}
-        }
-        if (i < retries - 1) await _sleep(600);
+        clearTimeout(timer);
+        if (i < retries - 1) await _sleep(400);
       }
     }
     return null;

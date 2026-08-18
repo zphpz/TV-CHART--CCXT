@@ -1,9 +1,9 @@
 /**
- * app.js — Main Application Coordinator v4.5
+ * app.js — Main Application Coordinator v4.6
  * 
- * Features & Fixes in v4.5:
+ * Features & Fixes in v4.6:
+ * - 100% Direct Polymarket REST APIs with Zero Third-Party Proxies & Strict 2.5s Timeout
  * - Dual-Token History Hydration & Multi-Token Parallel Discovery
- * - Strict timeout protection & self-healing auto-retries on mid-session opens
  * - Dual-token WebSocket subscription (tracks both UP and DOWN orderbook trades)
  * - Clean market rollover price initialization (never carries over frozen prices from expired markets)
  * - Automatic background midpoint watchdog polling (prevents price stagnation on quiet books)
@@ -109,7 +109,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.5...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.6...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
