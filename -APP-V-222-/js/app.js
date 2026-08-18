@@ -1,21 +1,23 @@
 /**
- * app.js — Main Application Coordinator v4.9
+ * app.js — Main Application Coordinator v5.0
  * 
- * Features & Fixes in v4.9:
- * - Clean asynchronous loadMarket handoff & initialized emission gate (fixes refresh flat line)
+ * Features & Fixes in v5.0:
+ * - 0.1¢ One-decimal Token Price Precision across all UI components and charts
+ * - Eliminated Blind Spot Gap: WebSocket subscribes immediately prior to history hydration
+ * - Zero-clamping fixes in ws.js & market.js (preserves full 0-100¢ range)
+ * - Safe 0.00 price handling in PriceEngine (never drops zero trades)
+ * - Out-of-order tick auto-sorting in LiveTradingManager prevents dropped frames
+ * - In-flight market slug race condition guards
+ * - Clean timer cleanup preventing background memory/interval leaks
  * - Step-Curve Financial Zero-Order Hold Rendering for Option Probabilities
  * - Pure Official CLOB Dual-Token History Engine (Zero Sawtooth / Anti-Noise)
  * - True Session-Start Anchor & Self-Healing Hydration on Mid-Session Joins
  * - 100% Direct Polymarket REST APIs with Zero Third-Party Proxies & Strict 2.5s Timeout
  * - Dual-token WebSocket subscription (tracks both UP and DOWN orderbook trades)
- * - Clean market rollover price initialization (never carries over frozen prices from expired markets)
- * - Automatic background midpoint watchdog polling (prevents price stagnation on quiet books)
+ * - Clean market rollover price initialization
  * - Dual Graph Modes: ₿ BTC ($) live curve vs ¢ PROB (%) option token curve
- * - Eliminated DOM layout thrashing (removed forced synchronous reflow offsetWidth)
- * - Smart background throttling for inactive chart tabs (reduces CPU to ~0.5%)
- * - Auto-pruning memory manager prevents multi-hour leaks
+ * - Eliminated DOM layout thrashing & Auto-pruning memory manager
  * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent background)
- * - 1-second continuous live ticker loop ensures price line advances immediately from second 0
  * - 1:1 Polymarket TWAP 60s live stream parity & accurate Target Price
  */
 'use strict';
@@ -112,7 +114,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.9...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.0...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -160,12 +162,14 @@ window.App = (() => {
     _startTimer();
     
     // Continuous 1-second price emission ticker
-    setInterval(() => {
+    if (window._emitPriceInterval) clearInterval(window._emitPriceInterval);
+    window._emitPriceInterval = setInterval(() => {
       _emitPrice();
     }, 1000);
 
     // Periodic Midpoint Watchdog & Memory Pruning
-    setInterval(async () => {
+    if (window._watchdogInterval) clearInterval(window._watchdogInterval);
+    window._watchdogInterval = setInterval(async () => {
       _flushLiveTicksToDB();
       const nowSec = Math.floor(Date.now() / 1000);
       if (window.TickBuffer) {
@@ -469,7 +473,14 @@ window.App = (() => {
       _updateBtcHeroMetrics(0, _liveBtcCurrent, _liveBtcOpen);
     }
 
-    // 1. Fetch pure CLOB session price history
+    // 1. Immediately subscribe to Dual-Token WebSocket (UP & DOWN) to eliminate blind spot gap
+    setLoadingSub('Connecting to live CLOB Dual-Token WebSocket...');
+    PolyWS.subscribe(market.upTokenId, market.downTokenId);
+    if (!PolyWS.isConnected()) {
+      PolyWS.connect();
+    }
+
+    // 2. Fetch pure CLOB session price history in parallel
     setLoadingSub('Fetching pure CLOB session history...');
     let hist = [];
     try {
@@ -494,16 +505,9 @@ window.App = (() => {
       PriceEngine.updateLastTrade(initialProb);
     }
 
-    // 2. Initialize stationary Live Trading chart with direct history handoff
+    // 3. Initialize stationary Live Trading chart with direct history handoff
     if (window.LiveTradingManager) {
       await LiveTradingManager.setMarket(market, hist);
-    }
-
-    // 3. Connect Dual-Token WebSocket (UP & DOWN)
-    setLoadingSub('Connecting to live CLOB Dual-Token WebSocket...');
-    PolyWS.subscribe(market.upTokenId, market.downTokenId);
-    if (!PolyWS.isConnected()) {
-      PolyWS.connect();
     }
 
     MarketManager.scheduleRollover(market, _onMarketSwitch);

@@ -159,7 +159,7 @@ window.PolyWS = (() => {
           if (!isNaN(rawP) && handlers.onLastTrade) {
             handlers.onLastTrade({
               ...msg,
-              price: Math.max(0.01, Math.min(0.99, Math.round((1 - rawP) * 1000) / 1000)),
+              price: Math.max(0, Math.min(1, Math.round((1 - rawP) * 1000) / 1000)),
               side: msg.side === 'BUY' ? 'SELL' : 'BUY'
             });
           }
@@ -193,13 +193,13 @@ window.PolyWS = (() => {
       const downBid = parseFloat(item.best_bid);
       const downAsk = parseFloat(item.best_ask);
       if (!isNaN(downBid) && !isNaN(downAsk)) {
-        res.best_bid = Math.max(0.01, Math.min(0.99, 1 - downAsk));
-        res.best_ask = Math.max(0.01, Math.min(0.99, 1 - downBid));
+        res.best_bid = Math.max(0, Math.min(1, 1 - downAsk));
+        res.best_ask = Math.max(0, Math.min(1, 1 - downBid));
       }
     } else if (item.price !== undefined) {
       const downP = parseFloat(item.price);
       if (!isNaN(downP)) {
-        res.price = Math.max(0.01, Math.min(0.99, 1 - downP));
+        res.price = Math.max(0, Math.min(1, 1 - downP));
         res.side = item.side === 'BUY' ? 'SELL' : 'BUY';
       }
     }
@@ -211,8 +211,8 @@ window.PolyWS = (() => {
     const downBid = parseFloat(msg.best_bid);
     const downAsk = parseFloat(msg.best_ask);
     if (!isNaN(downBid) && !isNaN(downAsk)) {
-      res.best_bid = Math.max(0.01, Math.min(0.99, 1 - downAsk));
-      res.best_ask = Math.max(0.01, Math.min(0.99, 1 - downBid));
+      res.best_bid = Math.max(0, Math.min(1, 1 - downAsk));
+      res.best_ask = Math.max(0, Math.min(1, 1 - downBid));
     }
     return res;
   }

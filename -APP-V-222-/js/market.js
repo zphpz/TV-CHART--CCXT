@@ -158,7 +158,7 @@ window.MarketManager = (() => {
           if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
             const rawCents = Math.round(p * 1000) / 10;
             const upCents = isInverted ? (100 - rawCents) : rawCents;
-            list.push([ts, Math.max(0.1, Math.min(99.9, upCents))]);
+            list.push([ts, Math.max(0, Math.min(100, Math.round(upCents * 10) / 10))]);
           }
         }
         return list;

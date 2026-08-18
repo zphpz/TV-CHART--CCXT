@@ -1871,7 +1871,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v4.9</span>
+        <span id="app-version">v5.0</span>
       </div>
     </footer>
 
@@ -1952,14 +1952,14 @@ window.PriceEngine = (() => {
   function updateBidAsk(bid, ask) {
     const b = parseFloat(bid);
     const a = parseFloat(ask);
-    if (!isNaN(b) && b > 0) _bid = b;
-    if (!isNaN(a) && a > 0) _ask = a;
+    if (!isNaN(b) && b >= 0) _bid = b;
+    if (!isNaN(a) && a >= 0) _ask = a;
     _lastUpdateMs = Date.now();
   }
 
   function updateLastTrade(price) {
     const p = parseFloat(price);
-    if (!isNaN(p) && p > 0) {
+    if (!isNaN(p) && p >= 0) {
       _last = p;
       _lastUpdateMs = Date.now();
     }
@@ -3059,7 +3059,7 @@ window.MarketManager = (() => {
           if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
             const rawCents = Math.round(p * 1000) / 10;
             const upCents = isInverted ? (100 - rawCents) : rawCents;
-            list.push([ts, Math.max(0.1, Math.min(99.9, upCents))]);
+            list.push([ts, Math.max(0, Math.min(100, Math.round(upCents * 10) / 10))]);
           }
         }
         return list;
@@ -3441,7 +3441,7 @@ window.PolyWS = (() => {
           if (!isNaN(rawP) && handlers.onLastTrade) {
             handlers.onLastTrade({
               ...msg,
-              price: Math.max(0.01, Math.min(0.99, Math.round((1 - rawP) * 1000) / 1000)),
+              price: Math.max(0, Math.min(1, Math.round((1 - rawP) * 1000) / 1000)),
               side: msg.side === 'BUY' ? 'SELL' : 'BUY'
             });
           }
@@ -3475,13 +3475,13 @@ window.PolyWS = (() => {
       const downBid = parseFloat(item.best_bid);
       const downAsk = parseFloat(item.best_ask);
       if (!isNaN(downBid) && !isNaN(downAsk)) {
-        res.best_bid = Math.max(0.01, Math.min(0.99, 1 - downAsk));
-        res.best_ask = Math.max(0.01, Math.min(0.99, 1 - downBid));
+        res.best_bid = Math.max(0, Math.min(1, 1 - downAsk));
+        res.best_ask = Math.max(0, Math.min(1, 1 - downBid));
       }
     } else if (item.price !== undefined) {
       const downP = parseFloat(item.price);
       if (!isNaN(downP)) {
-        res.price = Math.max(0.01, Math.min(0.99, 1 - downP));
+        res.price = Math.max(0, Math.min(1, 1 - downP));
         res.side = item.side === 'BUY' ? 'SELL' : 'BUY';
       }
     }
@@ -3493,8 +3493,8 @@ window.PolyWS = (() => {
     const downBid = parseFloat(msg.best_bid);
     const downAsk = parseFloat(msg.best_ask);
     if (!isNaN(downBid) && !isNaN(downAsk)) {
-      res.best_bid = Math.max(0.01, Math.min(0.99, 1 - downAsk));
-      res.best_ask = Math.max(0.01, Math.min(0.99, 1 - downBid));
+      res.best_bid = Math.max(0, Math.min(1, 1 - downAsk));
+      res.best_ask = Math.max(0, Math.min(1, 1 - downBid));
     }
     return res;
   }
@@ -4082,8 +4082,10 @@ window.LiveTradingManager = (() => {
 
   async function _tryFetchHistory(market) {
     if (!market || !window.MarketManager || !market.upTokenId) return;
+    const targetSlug = market.slug;
     try {
       const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, _startTs, _endTs);
+      if (_currentMarket?.slug !== targetSlug) return;
       if (Array.isArray(hist) && hist.length > 0) {
         _rawTicks = hist.slice();
         _lastPrice = hist[hist.length - 1][1];
@@ -4116,6 +4118,8 @@ window.LiveTradingManager = (() => {
       else return;
     }
 
+    rawUpCents = Math.max(0, Math.min(100, Math.round(rawUpCents * 10) / 10));
+
     if (!_startTs || !_endTs) {
       _startTs = Math.floor(unixSec / 300) * 300;
       _endTs = _startTs + 300;
@@ -4135,6 +4139,22 @@ window.LiveTradingManager = (() => {
         last[1] = rawUpCents;
       } else if (unixSec > last[0]) {
         _rawTicks.push([unixSec, rawUpCents]);
+      } else {
+        let inserted = false;
+        for (let i = _rawTicks.length - 1; i >= 0; i--) {
+          if (_rawTicks[i][0] === unixSec) {
+            _rawTicks[i][1] = rawUpCents;
+            inserted = true;
+            break;
+          } else if (_rawTicks[i][0] < unixSec) {
+            _rawTicks.splice(i + 1, 0, [unixSec, rawUpCents]);
+            inserted = true;
+            break;
+          }
+        }
+        if (!inserted) {
+          _rawTicks.unshift([unixSec, rawUpCents]);
+        }
       }
     }
     _isDirty = true;
@@ -4169,6 +4189,22 @@ window.LiveTradingManager = (() => {
         last[1] = btcPrice;
       } else if (unixSec > last[0]) {
         _btcTicks.push([unixSec, btcPrice]);
+      } else {
+        let inserted = false;
+        for (let i = _btcTicks.length - 1; i >= 0; i--) {
+          if (_btcTicks[i][0] === unixSec) {
+            _btcTicks[i][1] = btcPrice;
+            inserted = true;
+            break;
+          } else if (_btcTicks[i][0] < unixSec) {
+            _btcTicks.splice(i + 1, 0, [unixSec, btcPrice]);
+            inserted = true;
+            break;
+          }
+        }
+        if (!inserted) {
+          _btcTicks.unshift([unixSec, btcPrice]);
+        }
       }
     }
     _isDirty = true;
@@ -6196,23 +6232,25 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v4.9
+ * app.js — Main Application Coordinator v5.0
  * 
- * Features & Fixes in v4.9:
- * - Clean asynchronous loadMarket handoff & initialized emission gate (fixes refresh flat line)
+ * Features & Fixes in v5.0:
+ * - 0.1¢ One-decimal Token Price Precision across all UI components and charts
+ * - Eliminated Blind Spot Gap: WebSocket subscribes immediately prior to history hydration
+ * - Zero-clamping fixes in ws.js & market.js (preserves full 0-100¢ range)
+ * - Safe 0.00 price handling in PriceEngine (never drops zero trades)
+ * - Out-of-order tick auto-sorting in LiveTradingManager prevents dropped frames
+ * - In-flight market slug race condition guards
+ * - Clean timer cleanup preventing background memory/interval leaks
  * - Step-Curve Financial Zero-Order Hold Rendering for Option Probabilities
  * - Pure Official CLOB Dual-Token History Engine (Zero Sawtooth / Anti-Noise)
  * - True Session-Start Anchor & Self-Healing Hydration on Mid-Session Joins
  * - 100% Direct Polymarket REST APIs with Zero Third-Party Proxies & Strict 2.5s Timeout
  * - Dual-token WebSocket subscription (tracks both UP and DOWN orderbook trades)
- * - Clean market rollover price initialization (never carries over frozen prices from expired markets)
- * - Automatic background midpoint watchdog polling (prevents price stagnation on quiet books)
+ * - Clean market rollover price initialization
  * - Dual Graph Modes: ₿ BTC ($) live curve vs ¢ PROB (%) option token curve
- * - Eliminated DOM layout thrashing (removed forced synchronous reflow offsetWidth)
- * - Smart background throttling for inactive chart tabs (reduces CPU to ~0.5%)
- * - Auto-pruning memory manager prevents multi-hour leaks
+ * - Eliminated DOM layout thrashing & Auto-pruning memory manager
  * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent background)
- * - 1-second continuous live ticker loop ensures price line advances immediately from second 0
  * - 1:1 Polymarket TWAP 60s live stream parity & accurate Target Price
  */
 'use strict';
@@ -6309,7 +6347,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.9...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.0...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -6357,12 +6395,14 @@ window.App = (() => {
     _startTimer();
     
     // Continuous 1-second price emission ticker
-    setInterval(() => {
+    if (window._emitPriceInterval) clearInterval(window._emitPriceInterval);
+    window._emitPriceInterval = setInterval(() => {
       _emitPrice();
     }, 1000);
 
     // Periodic Midpoint Watchdog & Memory Pruning
-    setInterval(async () => {
+    if (window._watchdogInterval) clearInterval(window._watchdogInterval);
+    window._watchdogInterval = setInterval(async () => {
       _flushLiveTicksToDB();
       const nowSec = Math.floor(Date.now() / 1000);
       if (window.TickBuffer) {
@@ -6666,7 +6706,14 @@ window.App = (() => {
       _updateBtcHeroMetrics(0, _liveBtcCurrent, _liveBtcOpen);
     }
 
-    // 1. Fetch pure CLOB session price history
+    // 1. Immediately subscribe to Dual-Token WebSocket (UP & DOWN) to eliminate blind spot gap
+    setLoadingSub('Connecting to live CLOB Dual-Token WebSocket...');
+    PolyWS.subscribe(market.upTokenId, market.downTokenId);
+    if (!PolyWS.isConnected()) {
+      PolyWS.connect();
+    }
+
+    // 2. Fetch pure CLOB session price history in parallel
     setLoadingSub('Fetching pure CLOB session history...');
     let hist = [];
     try {
@@ -6691,16 +6738,9 @@ window.App = (() => {
       PriceEngine.updateLastTrade(initialProb);
     }
 
-    // 2. Initialize stationary Live Trading chart with direct history handoff
+    // 3. Initialize stationary Live Trading chart with direct history handoff
     if (window.LiveTradingManager) {
       await LiveTradingManager.setMarket(market, hist);
-    }
-
-    // 3. Connect Dual-Token WebSocket (UP & DOWN)
-    setLoadingSub('Connecting to live CLOB Dual-Token WebSocket...');
-    PolyWS.subscribe(market.upTokenId, market.downTokenId);
-    if (!PolyWS.isConnected()) {
-      PolyWS.connect();
     }
 
     MarketManager.scheduleRollover(market, _onMarketSwitch);

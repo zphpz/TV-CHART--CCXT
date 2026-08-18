@@ -137,8 +137,10 @@ window.LiveTradingManager = (() => {
 
   async function _tryFetchHistory(market) {
     if (!market || !window.MarketManager || !market.upTokenId) return;
+    const targetSlug = market.slug;
     try {
       const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, _startTs, _endTs);
+      if (_currentMarket?.slug !== targetSlug) return;
       if (Array.isArray(hist) && hist.length > 0) {
         _rawTicks = hist.slice();
         _lastPrice = hist[hist.length - 1][1];
@@ -171,6 +173,8 @@ window.LiveTradingManager = (() => {
       else return;
     }
 
+    rawUpCents = Math.max(0, Math.min(100, Math.round(rawUpCents * 10) / 10));
+
     if (!_startTs || !_endTs) {
       _startTs = Math.floor(unixSec / 300) * 300;
       _endTs = _startTs + 300;
@@ -190,6 +194,22 @@ window.LiveTradingManager = (() => {
         last[1] = rawUpCents;
       } else if (unixSec > last[0]) {
         _rawTicks.push([unixSec, rawUpCents]);
+      } else {
+        let inserted = false;
+        for (let i = _rawTicks.length - 1; i >= 0; i--) {
+          if (_rawTicks[i][0] === unixSec) {
+            _rawTicks[i][1] = rawUpCents;
+            inserted = true;
+            break;
+          } else if (_rawTicks[i][0] < unixSec) {
+            _rawTicks.splice(i + 1, 0, [unixSec, rawUpCents]);
+            inserted = true;
+            break;
+          }
+        }
+        if (!inserted) {
+          _rawTicks.unshift([unixSec, rawUpCents]);
+        }
       }
     }
     _isDirty = true;
@@ -224,6 +244,22 @@ window.LiveTradingManager = (() => {
         last[1] = btcPrice;
       } else if (unixSec > last[0]) {
         _btcTicks.push([unixSec, btcPrice]);
+      } else {
+        let inserted = false;
+        for (let i = _btcTicks.length - 1; i >= 0; i--) {
+          if (_btcTicks[i][0] === unixSec) {
+            _btcTicks[i][1] = btcPrice;
+            inserted = true;
+            break;
+          } else if (_btcTicks[i][0] < unixSec) {
+            _btcTicks.splice(i + 1, 0, [unixSec, btcPrice]);
+            inserted = true;
+            break;
+          }
+        }
+        if (!inserted) {
+          _btcTicks.unshift([unixSec, btcPrice]);
+        }
       }
     }
     _isDirty = true;

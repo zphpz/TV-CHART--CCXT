@@ -55,14 +55,14 @@ window.PriceEngine = (() => {
   function updateBidAsk(bid, ask) {
     const b = parseFloat(bid);
     const a = parseFloat(ask);
-    if (!isNaN(b) && b > 0) _bid = b;
-    if (!isNaN(a) && a > 0) _ask = a;
+    if (!isNaN(b) && b >= 0) _bid = b;
+    if (!isNaN(a) && a >= 0) _ask = a;
     _lastUpdateMs = Date.now();
   }
 
   function updateLastTrade(price) {
     const p = parseFloat(price);
-    if (!isNaN(p) && p > 0) {
+    if (!isNaN(p) && p >= 0) {
       _last = p;
       _lastUpdateMs = Date.now();
     }
