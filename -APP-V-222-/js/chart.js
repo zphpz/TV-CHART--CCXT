@@ -83,7 +83,7 @@ window.ChartManager = (() => {
         },
       },
       localization: {
-        priceFormatter: (p) => p.toFixed(1) + '¢',
+        priceFormatter: (p) => Math.round(p) + '¢',
       },
       handleScale: {
         mouseWheel: true,
@@ -121,8 +121,8 @@ window.ChartManager = (() => {
 
       priceFormat: {
         type: 'custom',
-        formatter: (v) => v.toFixed(1) + '¢',
-        minMove: 0.1,
+        formatter: (v) => Math.round(v) + '¢',
+        minMove: 1,
       },
     });
 
@@ -199,7 +199,7 @@ window.ChartManager = (() => {
       }
 
       const val = seriesData.value;
-      const formattedPrice = val.toFixed(1) + '¢';
+      const formattedPrice = Math.round(val) + '¢';
 
       let timeStr = '';
       if (param.time) {

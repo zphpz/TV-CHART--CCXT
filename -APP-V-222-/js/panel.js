@@ -270,10 +270,10 @@ window.HistoryPanel = (() => {
         winnerBadge = '<span class="badge-winner-down">🏆 DOWN WON</span>';
       }
 
-      const openFmt = s.open !== null && s.open !== undefined ? s.open.toFixed(1) + '¢' : '--';
-      const highFmt = s.high !== null && s.high !== undefined ? s.high.toFixed(1) + '¢' : '--';
-      const lowFmt = s.low !== null && s.low !== undefined ? s.low.toFixed(1) + '¢' : '--';
-      const closeFmt = s.close !== null && s.close !== undefined ? s.close.toFixed(1) + '¢' : '--';
+      const openFmt = s.open !== null && s.open !== undefined ? Math.round(s.open) + '¢' : '--';
+      const highFmt = s.high !== null && s.high !== undefined ? Math.round(s.high) + '¢' : '--';
+      const lowFmt = s.low !== null && s.low !== undefined ? Math.round(s.low) + '¢' : '--';
+      const closeFmt = s.close !== null && s.close !== undefined ? Math.round(s.close) + '¢' : '--';
       const tickCount = Array.isArray(s.ticks) ? s.ticks.length : 0;
       const volFmt = s.volume ? '$' + Math.round(s.volume).toLocaleString() : '--';
 

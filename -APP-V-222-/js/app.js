@@ -1,14 +1,14 @@
 /**
- * app.js — Main Application Coordinator v5.6
+ * app.js — Main Application Coordinator v5.7
  * 
- * Features & Fixes in v5.6:
+ * Features & Fixes in v5.7:
+ * - Clean Integer Cent Price Display (48¢, 50¢, 51¢, 99¢ matching official Polymarket UI without 0.5 fractions)
  * - F5-Proof Live Stream Cache (preserves high-frequency second-by-second live resolution across page reloads)
  * - Clean Multi-Page Market Pagination (eliminates asset_id spurious trades and sawtooth spikes)
  * - Anti-Cloudflare Cache Busting (_t=nonce): eliminates stale cached history from CDN
  * - High-Density History Merge: Merges Dual-Token CLOB prices-history with Data API individual trades
  * - True Pre-Start Opening Anchor: Captures pre-round baseline price and preserves early price steps
- * - Real Executed Trade Prices (41.3¢, 41.2¢, 42.1¢) prioritized over mathematical midpoint
- * - 0.1¢ One-decimal Token Price Precision across all UI components and charts
+ * - Real Executed Trade Prices prioritized over mathematical midpoint
  * - Eliminated Blind Spot Gap: WebSocket subscribes immediately prior to history hydration
  * - Zero-clamping fixes in ws.js & market.js (preserves full 0-100¢ range)
  * - Safe 0.00 price handling in PriceEngine (never drops zero trades)
@@ -118,7 +118,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.6...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.7...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -376,7 +376,7 @@ window.App = (() => {
       lastCents = rawLast !== null ? rawLast * 100 : null;
     }
 
-    const fmt = v => v !== null ? v.toFixed(1) + '¢' : '--.-¢';
+    const fmt = v => v !== null ? Math.round(v) + '¢' : '--¢';
     const prevCurrent = el.priceCurrent ? el.priceCurrent.textContent : '';
     const newCurrent  = fmt(effCents);
 
@@ -392,9 +392,9 @@ window.App = (() => {
     if (el.priceAsk)     el.priceAsk.textContent     = fmt(askCents);
     if (el.priceMid)     el.priceMid.textContent     = fmt(midCents);
     if (el.priceLast)    el.priceLast.textContent    = fmt(lastCents);
-    if (el.priceSpread)  el.priceSpread.textContent  = displaySpread !== null ? displaySpread.toFixed(1) + '¢' : '--.-¢';
+    if (el.priceSpread)  el.priceSpread.textContent  = displaySpread !== null ? Math.round(displaySpread) + '¢' : '--¢';
 
-    if (el.priceCurrent && newCurrent !== prevCurrent && prevCurrent !== '--.-¢') {
+    if (el.priceCurrent && newCurrent !== prevCurrent && prevCurrent !== '--¢') {
       const prev = parseFloat(prevCurrent);
       const cur  = parseFloat(newCurrent);
       if (!isNaN(prev) && !isNaN(cur) && cur !== prev) {

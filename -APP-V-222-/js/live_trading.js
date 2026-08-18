@@ -716,7 +716,7 @@ window.LiveTradingManager = (() => {
 
         if (p % 20 === 0 || p === 50) {
           _ctx.fillStyle = is50 ? '#38bdf8' : '#64748b';
-          _ctx.fillText(`${p.toFixed(1)}¢`, plotRight + 6, y);
+          _ctx.fillText(`${Math.round(p)}¢`, plotRight + 6, y);
         }
       }
 
@@ -813,7 +813,7 @@ window.LiveTradingManager = (() => {
           const remS = remSecs % 60;
           const remStr = `${String(remM).padStart(2, '0')}:${String(remS).padStart(2, '0')}`;
           
-          const priceStr = `${latestPt.val.toFixed(1)}¢`;
+          const priceStr = `${Math.round(latestPt.val)}¢`;
           const timerStr = `⏱ ${remStr}`;
 
           _ctx.save();
@@ -897,7 +897,7 @@ window.LiveTradingManager = (() => {
         _ctx.font = 'bold 11px "JetBrains Mono", monospace';
         _ctx.textAlign = 'left';
         _ctx.textBaseline = 'middle';
-        _ctx.fillText(`${latestPt.val.toFixed(1)}¢`, plotRight + 6, latestPt.y);
+        _ctx.fillText(`${Math.round(latestPt.val)}¢`, plotRight + 6, latestPt.y);
       }
     }
 
