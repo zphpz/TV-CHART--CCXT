@@ -1,7 +1,9 @@
 /**
- * app.js — Main Application Coordinator v5.2
+ * app.js — Main Application Coordinator v5.3
  * 
- * Features & Fixes in v5.2:
+ * Features & Fixes in v5.3:
+ * - Anti-Cloudflare Cache Busting (_t=nonce): eliminates stale cached history from CDN
+ * - High-Density History Merge: Merges Dual-Token CLOB prices-history with Data API individual trades
  * - True Pre-Start Opening Anchor: Captures pre-round baseline price and preserves early price steps
  * - Real Executed Trade Prices (41.3¢, 41.2¢, 42.1¢) prioritized over mathematical midpoint
  * - 0.1¢ One-decimal Token Price Precision across all UI components and charts
@@ -12,7 +14,6 @@
  * - In-flight market slug race condition guards
  * - Clean timer cleanup preventing background memory/interval leaks
  * - Step-Curve Financial Zero-Order Hold Rendering for Option Probabilities
- * - Pure Official CLOB Dual-Token History Engine (Zero Sawtooth / Anti-Noise)
  * - 100% Direct Polymarket REST APIs with Zero Third-Party Proxies & Strict 2.5s Timeout
  * - Dual-token WebSocket subscription (tracks both UP and DOWN orderbook trades)
  * - Clean market rollover price initialization
@@ -115,7 +116,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.2...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.3...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -482,11 +483,11 @@ window.App = (() => {
       PolyWS.connect();
     }
 
-    // 2. Fetch pure CLOB session price history in parallel
-    setLoadingSub('Fetching pure CLOB session history...');
+    // 2. Fetch rich CLOB + Trades session price history in parallel
+    setLoadingSub('Fetching rich CLOB + Trades session history...');
     let hist = [];
     try {
-      hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, market.startTs, market.endTs);
+      hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, market.startTs, market.endTs, market.conditionId);
     } catch (e) {}
 
     // Seed PriceEngine and TickBuffer with history

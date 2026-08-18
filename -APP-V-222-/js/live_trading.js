@@ -139,7 +139,7 @@ window.LiveTradingManager = (() => {
     if (!market || !window.MarketManager || !market.upTokenId) return;
     const targetSlug = market.slug;
     try {
-      const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, _startTs, _endTs);
+      const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, _startTs, _endTs, market.conditionId);
       if (_currentMarket?.slug !== targetSlug) return;
       if (Array.isArray(hist) && hist.length > 0) {
         _rawTicks = hist.slice();

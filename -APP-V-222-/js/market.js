@@ -141,13 +141,16 @@ window.MarketManager = (() => {
     return isNaN(mid) ? null : mid;
   }
 
-  // ─── Dual-Token Pure CLOB Session History Downloader ──────────────
-  async function fetchSessionPriceHistory(upTokenId, downTokenId, startTs, endTs) {
+  // ─── Dual-Token Pure CLOB + Trades Session History Downloader ──────
+  async function fetchSessionPriceHistory(upTokenId, downTokenId, startTs, endTs, conditionId) {
     if (!upTokenId || !startTs || !endTs) return [];
 
+    const nowNonce = Date.now();
+
+    // 1. Fetch CLOB prices-history for UP/DOWN with cache buster
     const fetchTokenClob = async (tok, isInverted) => {
       if (!tok) return { inSession: [], preStart: null };
-      const url = `${CLOB_BASE}/prices-history?market=${tok}&interval=1d&fidelity=1`;
+      const url = `${CLOB_BASE}/prices-history?market=${tok}&interval=1d&fidelity=1&_t=${nowNonce}`;
       const data = await _fetchWithRetry(url, 2, 2500);
       if (data && Array.isArray(data.history) && data.history.length > 0) {
         const inSession = [];
@@ -173,35 +176,71 @@ window.MarketManager = (() => {
       return { inSession: [], preStart: null };
     };
 
+    // 2. Fetch Data API trades for conditionId with cache buster
+    const fetchConditionTrades = async (cond) => {
+      if (!cond) return [];
+      const url = `https://data-api.polymarket.com/trades?market=${cond}&limit=500&_t=${nowNonce}`;
+      const data = await _fetchWithRetry(url, 2, 2500);
+      if (Array.isArray(data) && data.length > 0) {
+        const list = [];
+        for (let i = 0; i < data.length; i++) {
+          const tr = data[i];
+          const ts = parseInt(tr.timestamp);
+          let p = parseFloat(tr.price);
+          if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
+            const outcome = String(tr.outcome || '').toLowerCase();
+            if (outcome === 'down' || tr.outcomeIndex === 1) {
+              p = 1.0 - p;
+            }
+            const upCents = Math.max(0, Math.min(100, Math.round(p * 1000) / 10));
+            list.push([ts, upCents]);
+          }
+        }
+        return list;
+      }
+      return [];
+    };
+
     try {
       const results = await Promise.allSettled([
         fetchTokenClob(upTokenId, false),
         fetchTokenClob(downTokenId, true),
+        fetchConditionTrades(conditionId),
       ]);
 
       const map = new Map();
       let openingAnchorPrice = null;
 
-      for (let r of results) {
-        if (r.status === 'fulfilled' && r.value) {
-          const { inSession, preStart } = r.value;
-          if (preStart !== null && openingAnchorPrice === null) {
-            openingAnchorPrice = preStart;
+      // Ingest UP CLOB
+      if (results[0].status === 'fulfilled' && results[0].value) {
+        const { inSession, preStart } = results[0].value;
+        if (preStart !== null) openingAnchorPrice = preStart;
+        for (let [ts, val] of inSession) map.set(ts, val);
+      }
+
+      // Ingest DOWN CLOB
+      if (results[1].status === 'fulfilled' && results[1].value) {
+        const { inSession, preStart } = results[1].value;
+        if (preStart !== null && openingAnchorPrice === null) openingAnchorPrice = preStart;
+        for (let [ts, val] of inSession) {
+          if (!map.has(ts)) map.set(ts, val);
+          else {
+            const existing = map.get(ts);
+            map.set(ts, Math.round(((existing + val) / 2) * 10) / 10);
           }
-          for (let [ts, val] of inSession) {
-            if (!map.has(ts)) {
-              map.set(ts, val);
-            } else {
-              const existing = map.get(ts);
-              map.set(ts, Math.round(((existing + val) / 2) * 10) / 10);
-            }
-          }
+        }
+      }
+
+      // Ingest Data API trades
+      if (results[2].status === 'fulfilled' && Array.isArray(results[2].value)) {
+        for (let [ts, val] of results[2].value) {
+          map.set(ts, val);
         }
       }
 
       const sorted = Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
 
-      // True opening anchor at startTs (preserves pre-round baseline vs inside-round moves)
+      // True opening anchor at startTs
       if (openingAnchorPrice !== null) {
         sorted.unshift([startTs, openingAnchorPrice]);
       } else if (sorted.length > 0 && sorted[0][0] > startTs) {
@@ -212,7 +251,7 @@ window.MarketManager = (() => {
         return sorted;
       }
     } catch (e) {
-      console.warn('[MarketManager] Pure CLOB history fetch error:', e);
+      console.warn('[MarketManager] Session history fetch error:', e);
     }
 
     return [];
