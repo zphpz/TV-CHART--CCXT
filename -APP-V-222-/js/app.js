@@ -1,7 +1,9 @@
 /**
- * app.js — Main Application Coordinator v3.8
+ * app.js — Main Application Coordinator v3.9
  * 
- * Fixes in v3.8:
+ * Features & Fixes in v3.9:
+ * - Centered panel & toolbar layout
+ * - Floating live head badge (Price & Countdown Timer) toggle control
  * - 1-second continuous live ticker loop ensures price line advances immediately from second 0
  * - Instant curve rendering on market rollover without waiting for trades or requiring page refresh
  * - 1:1 Polymarket TWAP 60s live stream parity & accurate Target Price
@@ -43,6 +45,8 @@ window.App = (() => {
     liveBtcDelta:      $('live-btc-delta'),
     liveBtcCurrent:    $('live-btc-current'),
     liveBtcStrike:     $('live-btc-strike'),
+
+    chkHeadTag:        $('chk-head-tag'),
 
     marketSlug:        $('market-slug-display'),
     marketWindow:      $('market-window-display'),
@@ -97,10 +101,13 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v3.8...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v3.9...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
+      if (el.chkHeadTag) {
+        el.chkHeadTag.checked = LiveTradingManager.getShowHeadBadge();
+      }
     }
 
     const chartOk = ChartManager.init(el.chartContainer);
@@ -742,6 +749,13 @@ window.App = (() => {
 
     el.btnOutcomeUp?.addEventListener('click', () => switchOutcome('up'));
     el.btnOutcomeDown?.addEventListener('click', () => switchOutcome('down'));
+
+    el.chkHeadTag?.addEventListener('change', (e) => {
+      if (window.LiveTradingManager) {
+        LiveTradingManager.setShowHeadBadge(e.target.checked);
+        showToast(e.target.checked ? '🏷️ Live Head Badge: ON' : '🏷️ Live Head Badge: OFF', 'info', 1500);
+      }
+    });
 
     const tfBtns = {
       'btn-tf-1s':  1,

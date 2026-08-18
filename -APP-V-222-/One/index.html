@@ -240,14 +240,56 @@ html, body {
 #price-bar {
   display: flex;
   align-items: center;
+  justify-content: center;
   height: var(--pricebar-h);
   padding: 0 16px;
-  gap: 12px;
+  gap: 14px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   overflow-x: auto;
-  justify-content: flex-start;
+}
+
+/* Compact Toggle Switch for Head Badge */
+.toggle-switch-compact {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 18px;
+  cursor: pointer;
+}
+.toggle-switch-compact input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-slider-compact {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--bg-card, #121824);
+  border: 1px solid var(--border, #1e293b);
+  border-radius: 18px;
+  transition: all var(--tr-fast);
+}
+.toggle-slider-compact:before {
+  position: absolute;
+  content: "";
+  height: 12px;
+  width: 12px;
+  left: 2px;
+  bottom: 2px;
+  background: var(--text-secondary, #94a3b8);
+  border-radius: 50%;
+  transition: all var(--tr-fast);
+}
+.toggle-switch-compact input:checked + .toggle-slider-compact {
+  background: rgba(0, 212, 170, 0.2);
+  border-color: var(--accent-teal, #00d4aa);
+}
+.toggle-switch-compact input:checked + .toggle-slider-compact:before {
+  transform: translateX(14px);
+  background: var(--accent-teal, #00d4aa);
+  box-shadow: 0 0 8px var(--accent-teal, #00d4aa);
 }
 
 .price-hero-item {
@@ -374,12 +416,11 @@ html, body {
 
 /* Outcome Switcher (UP / DOWN) */
 #outcome-switcher {
-  margin-left: auto;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   gap: 3px;
-  padding-left: 10px;
+  padding-left: 4px;
   flex-shrink: 0;
 }
 
@@ -1504,7 +1545,20 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         </div>
       </div>
 
-      <!-- 4. Far Right: UP / DOWN outcome buttons -->
+      <div class="price-divider"></div>
+
+      <!-- 4. Floating Head Badge on Chart Toggle -->
+      <div class="price-hero-item" id="tag-toggle-wrap">
+        <span class="price-hero-label">LIVE BADGE</span>
+        <label class="toggle-switch-compact" title="Отображать крупную плашку с ценой и оставшимся временем на конце линии графика">
+          <input type="checkbox" id="chk-head-tag" checked />
+          <span class="toggle-slider-compact"></span>
+        </label>
+      </div>
+
+      <div class="price-divider"></div>
+
+      <!-- 5. Outcome buttons -->
       <div id="outcome-switcher">
         <span class="price-hero-label">OUTCOME</span>
         <div id="outcome-buttons">
@@ -1776,7 +1830,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v3.8</span>
+        <span id="app-version">v3.9</span>
       </div>
     </footer>
 
@@ -3749,18 +3803,19 @@ window.PolyRTDS = (() => {
 
 /* ═══ MODULE: js/live_trading.js ═══ */
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v3.8
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v3.9
  * 
  * Features:
  * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
- * - Real-time auto-advancing line & pulsing head from second 0 to nowSec (zero delay on rollover!)
+ * - Large prominent floating live head badge with current price & remaining countdown timer
+ * - Toggleable on/off via header control & persisted in localStorage
+ * - Real-time auto-advancing line & pulsing head from second 0 to nowSec
  * - Anti-aliased glowing live price line with gradient under-fill
  * - Pulsing live leading dot at the current active second
  * - Blue dashed vertical second & minute grid lines (+01:00, +02:00 ... / 30s, 90s ...)
  * - 0–100¢ right price scale & horizontal reference grid (50¢ anchor)
  * - Interactive hover crosshair with exact price & elapsed second tooltip
  * - Single-line top header HUD with slug link, ⏳ LIVE session badge & TWAP BTC price stream
- * - Immediate historical pre-fill and live step-hold projection
  */
 'use strict';
 
@@ -3777,6 +3832,7 @@ window.LiveTradingManager = (() => {
   let _outcomeMode   = 'up';    // 'up' | 'down'
   let _rawTicks      = [];      // Array of [unixSec, rawUpCents]
   let _lastPrice     = 50.0;
+  let _showHeadBadge = localStorage.getItem('pm_show_head_tag') !== 'false';
 
   let _btcOpen       = null;
   let _btcCurrent    = null;
@@ -3831,7 +3887,7 @@ window.LiveTradingManager = (() => {
     _setupResize();
     _startAnimationLoop();
 
-    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v3.8)');
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v3.9)');
     return true;
   }
 
@@ -3888,7 +3944,6 @@ window.LiveTradingManager = (() => {
   function pushTick(unixSec, rawUpCents) {
     if (typeof unixSec !== 'number' || isNaN(unixSec)) return;
     
-    // If rawUpCents not provided, use last price
     if (typeof rawUpCents !== 'number' || isNaN(rawUpCents)) {
       rawUpCents = _lastPrice;
     }
@@ -3915,6 +3970,16 @@ window.LiveTradingManager = (() => {
   function setOutcomeMode(mode) {
     _outcomeMode = mode;
     _render();
+  }
+
+  function setShowHeadBadge(enabled) {
+    _showHeadBadge = !!enabled;
+    localStorage.setItem('pm_show_head_tag', _showHeadBadge ? 'true' : 'false');
+    _render();
+  }
+
+  function getShowHeadBadge() {
+    return _showHeadBadge;
   }
 
   function updateBtcPrice(btcOpen, btcClose, btcChange) {
@@ -4018,7 +4083,7 @@ window.LiveTradingManager = (() => {
       sessionTicks.unshift([_startTs, sessionTicks[0][1]]);
     }
 
-    // Extend line forward to current live second (so line is NEVER zero-length!)
+    // Extend line forward to current live second
     const lastTick = sessionTicks[sessionTicks.length - 1];
     if (effectiveNowSec > lastTick[0]) {
       sessionTicks.push([effectiveNowSec, lastTick[1]]);
@@ -4074,7 +4139,7 @@ window.LiveTradingManager = (() => {
         _ctx.stroke();
         _ctx.restore();
 
-        // Draw Pulsing Live Head Dot at the current active second
+        // Draw Pulsing Live Head Dot at current active second
         const pulseR = 4 + Math.sin(_pulsePhase) * 1.5;
         _ctx.beginPath();
         _ctx.arc(latestPt.x, latestPt.y, pulseR + 4, 0, Math.PI * 2);
@@ -4090,6 +4155,88 @@ window.LiveTradingManager = (() => {
         _ctx.arc(latestPt.x, latestPt.y, 2, 0, Math.PI * 2);
         _ctx.fillStyle = '#ffffff';
         _ctx.fill();
+
+        // Draw Large Prominent Floating Live Head Badge with Price & Remaining Timer
+        if (_showHeadBadge && latestPt) {
+          const remSecs = Math.max(0, _endTs - effectiveNowSec);
+          const remM = Math.floor(remSecs / 60);
+          const remS = remSecs % 60;
+          const remStr = `${String(remM).padStart(2, '0')}:${String(remS).padStart(2, '0')}`;
+          
+          const priceStr = `${latestPt.val.toFixed(1)}¢`;
+          const timerStr = `⏱ ${remStr}`;
+
+          _ctx.save();
+          _ctx.font = 'bold 14px "JetBrains Mono", monospace';
+          const priceW = _ctx.measureText(priceStr).width;
+          _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+          const timerW = _ctx.measureText(timerStr).width;
+          const gapW = 10;
+          const padX = 12;
+          const badgeW = Math.round(padX * 2 + priceW + gapW + timerW);
+          const badgeH = 28;
+
+          // Position badge centered above latestPt
+          let badgeX = Math.round(latestPt.x - badgeW / 2);
+          // Clamp horizontally inside plot area
+          badgeX = Math.max(plotLeft + 4, Math.min(plotRight - badgeW - 4, badgeX));
+
+          let badgeY = Math.round(latestPt.y - badgeH - 12);
+          let arrowBelow = true;
+          if (badgeY < plotTop + 4) {
+            badgeY = Math.round(latestPt.y + 14);
+            arrowBelow = false;
+          }
+
+          // Draw Pointer Arrow Caret
+          _ctx.beginPath();
+          if (arrowBelow) {
+            _ctx.moveTo(latestPt.x - 5, badgeY + badgeH);
+            _ctx.lineTo(latestPt.x, latestPt.y - 4);
+            _ctx.lineTo(latestPt.x + 5, badgeY + badgeH);
+          } else {
+            _ctx.moveTo(latestPt.x - 5, badgeY);
+            _ctx.lineTo(latestPt.x, latestPt.y + 4);
+            _ctx.lineTo(latestPt.x + 5, badgeY);
+          }
+          _ctx.closePath();
+          _ctx.fillStyle = '#090d16';
+          _ctx.fill();
+          _ctx.strokeStyle = mainColor;
+          _ctx.lineWidth = 1.4;
+          _ctx.stroke();
+
+          // Draw Badge Card Body with Glow
+          _ctx.shadowColor = mainColor + '99';
+          _ctx.shadowBlur = 12;
+          _ctx.fillStyle = 'rgba(9, 13, 22, 0.95)';
+          _ctx.strokeStyle = mainColor;
+          _ctx.lineWidth = 1.6;
+          _roundRect(_ctx, badgeX, badgeY, badgeW, badgeH, 6, true, true);
+          _ctx.restore();
+
+          // Draw Text inside Badge
+          _ctx.save();
+          _ctx.textBaseline = 'middle';
+          const midY = badgeY + badgeH / 2;
+
+          // Price text (large & colored)
+          _ctx.textAlign = 'left';
+          _ctx.font = 'bold 14px "JetBrains Mono", monospace';
+          _ctx.fillStyle = mainColor;
+          _ctx.fillText(priceStr, badgeX + padX, midY);
+
+          // Divider dot
+          _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+          _ctx.fillStyle = '#475569';
+          _ctx.fillText('·', badgeX + padX + priceW + 3, midY);
+
+          // Countdown Timer text
+          _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+          _ctx.fillStyle = remSecs <= 30 ? '#ff4d6d' : '#ffffff';
+          _ctx.fillText(timerStr, badgeX + padX + priceW + gapW, midY);
+          _ctx.restore();
+        }
 
         // Current Price Line to Right Scale
         _ctx.beginPath();
@@ -4308,6 +4455,8 @@ window.LiveTradingManager = (() => {
     setMarket,
     pushTick,
     setOutcomeMode,
+    setShowHeadBadge,
+    getShowHeadBadge,
     updateBtcPrice,
     resize,
     destroy,
@@ -5566,9 +5715,11 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v3.8
+ * app.js — Main Application Coordinator v3.9
  * 
- * Fixes in v3.8:
+ * Features & Fixes in v3.9:
+ * - Centered panel & toolbar layout
+ * - Floating live head badge (Price & Countdown Timer) toggle control
  * - 1-second continuous live ticker loop ensures price line advances immediately from second 0
  * - Instant curve rendering on market rollover without waiting for trades or requiring page refresh
  * - 1:1 Polymarket TWAP 60s live stream parity & accurate Target Price
@@ -5610,6 +5761,8 @@ window.App = (() => {
     liveBtcDelta:      $('live-btc-delta'),
     liveBtcCurrent:    $('live-btc-current'),
     liveBtcStrike:     $('live-btc-strike'),
+
+    chkHeadTag:        $('chk-head-tag'),
 
     marketSlug:        $('market-slug-display'),
     marketWindow:      $('market-window-display'),
@@ -5664,10 +5817,13 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v3.8...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v3.9...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
+      if (el.chkHeadTag) {
+        el.chkHeadTag.checked = LiveTradingManager.getShowHeadBadge();
+      }
     }
 
     const chartOk = ChartManager.init(el.chartContainer);
@@ -6309,6 +6465,13 @@ window.App = (() => {
 
     el.btnOutcomeUp?.addEventListener('click', () => switchOutcome('up'));
     el.btnOutcomeDown?.addEventListener('click', () => switchOutcome('down'));
+
+    el.chkHeadTag?.addEventListener('change', (e) => {
+      if (window.LiveTradingManager) {
+        LiveTradingManager.setShowHeadBadge(e.target.checked);
+        showToast(e.target.checked ? '🏷️ Live Head Badge: ON' : '🏷️ Live Head Badge: OFF', 'info', 1500);
+      }
+    });
 
     const tfBtns = {
       'btn-tf-1s':  1,

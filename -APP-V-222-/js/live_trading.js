@@ -1,16 +1,17 @@
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v3.8
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v3.9
  * 
  * Features:
  * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
- * - Real-time auto-advancing line & pulsing head from second 0 to nowSec (zero delay on rollover!)
+ * - Large prominent floating live head badge with current price & remaining countdown timer
+ * - Toggleable on/off via header control & persisted in localStorage
+ * - Real-time auto-advancing line & pulsing head from second 0 to nowSec
  * - Anti-aliased glowing live price line with gradient under-fill
  * - Pulsing live leading dot at the current active second
  * - Blue dashed vertical second & minute grid lines (+01:00, +02:00 ... / 30s, 90s ...)
  * - 0–100¢ right price scale & horizontal reference grid (50¢ anchor)
  * - Interactive hover crosshair with exact price & elapsed second tooltip
  * - Single-line top header HUD with slug link, ⏳ LIVE session badge & TWAP BTC price stream
- * - Immediate historical pre-fill and live step-hold projection
  */
 'use strict';
 
@@ -27,6 +28,7 @@ window.LiveTradingManager = (() => {
   let _outcomeMode   = 'up';    // 'up' | 'down'
   let _rawTicks      = [];      // Array of [unixSec, rawUpCents]
   let _lastPrice     = 50.0;
+  let _showHeadBadge = localStorage.getItem('pm_show_head_tag') !== 'false';
 
   let _btcOpen       = null;
   let _btcCurrent    = null;
@@ -81,7 +83,7 @@ window.LiveTradingManager = (() => {
     _setupResize();
     _startAnimationLoop();
 
-    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v3.8)');
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v3.9)');
     return true;
   }
 
@@ -138,7 +140,6 @@ window.LiveTradingManager = (() => {
   function pushTick(unixSec, rawUpCents) {
     if (typeof unixSec !== 'number' || isNaN(unixSec)) return;
     
-    // If rawUpCents not provided, use last price
     if (typeof rawUpCents !== 'number' || isNaN(rawUpCents)) {
       rawUpCents = _lastPrice;
     }
@@ -165,6 +166,16 @@ window.LiveTradingManager = (() => {
   function setOutcomeMode(mode) {
     _outcomeMode = mode;
     _render();
+  }
+
+  function setShowHeadBadge(enabled) {
+    _showHeadBadge = !!enabled;
+    localStorage.setItem('pm_show_head_tag', _showHeadBadge ? 'true' : 'false');
+    _render();
+  }
+
+  function getShowHeadBadge() {
+    return _showHeadBadge;
   }
 
   function updateBtcPrice(btcOpen, btcClose, btcChange) {
@@ -268,7 +279,7 @@ window.LiveTradingManager = (() => {
       sessionTicks.unshift([_startTs, sessionTicks[0][1]]);
     }
 
-    // Extend line forward to current live second (so line is NEVER zero-length!)
+    // Extend line forward to current live second
     const lastTick = sessionTicks[sessionTicks.length - 1];
     if (effectiveNowSec > lastTick[0]) {
       sessionTicks.push([effectiveNowSec, lastTick[1]]);
@@ -324,7 +335,7 @@ window.LiveTradingManager = (() => {
         _ctx.stroke();
         _ctx.restore();
 
-        // Draw Pulsing Live Head Dot at the current active second
+        // Draw Pulsing Live Head Dot at current active second
         const pulseR = 4 + Math.sin(_pulsePhase) * 1.5;
         _ctx.beginPath();
         _ctx.arc(latestPt.x, latestPt.y, pulseR + 4, 0, Math.PI * 2);
@@ -340,6 +351,88 @@ window.LiveTradingManager = (() => {
         _ctx.arc(latestPt.x, latestPt.y, 2, 0, Math.PI * 2);
         _ctx.fillStyle = '#ffffff';
         _ctx.fill();
+
+        // Draw Large Prominent Floating Live Head Badge with Price & Remaining Timer
+        if (_showHeadBadge && latestPt) {
+          const remSecs = Math.max(0, _endTs - effectiveNowSec);
+          const remM = Math.floor(remSecs / 60);
+          const remS = remSecs % 60;
+          const remStr = `${String(remM).padStart(2, '0')}:${String(remS).padStart(2, '0')}`;
+          
+          const priceStr = `${latestPt.val.toFixed(1)}¢`;
+          const timerStr = `⏱ ${remStr}`;
+
+          _ctx.save();
+          _ctx.font = 'bold 14px "JetBrains Mono", monospace';
+          const priceW = _ctx.measureText(priceStr).width;
+          _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+          const timerW = _ctx.measureText(timerStr).width;
+          const gapW = 10;
+          const padX = 12;
+          const badgeW = Math.round(padX * 2 + priceW + gapW + timerW);
+          const badgeH = 28;
+
+          // Position badge centered above latestPt
+          let badgeX = Math.round(latestPt.x - badgeW / 2);
+          // Clamp horizontally inside plot area
+          badgeX = Math.max(plotLeft + 4, Math.min(plotRight - badgeW - 4, badgeX));
+
+          let badgeY = Math.round(latestPt.y - badgeH - 12);
+          let arrowBelow = true;
+          if (badgeY < plotTop + 4) {
+            badgeY = Math.round(latestPt.y + 14);
+            arrowBelow = false;
+          }
+
+          // Draw Pointer Arrow Caret
+          _ctx.beginPath();
+          if (arrowBelow) {
+            _ctx.moveTo(latestPt.x - 5, badgeY + badgeH);
+            _ctx.lineTo(latestPt.x, latestPt.y - 4);
+            _ctx.lineTo(latestPt.x + 5, badgeY + badgeH);
+          } else {
+            _ctx.moveTo(latestPt.x - 5, badgeY);
+            _ctx.lineTo(latestPt.x, latestPt.y + 4);
+            _ctx.lineTo(latestPt.x + 5, badgeY);
+          }
+          _ctx.closePath();
+          _ctx.fillStyle = '#090d16';
+          _ctx.fill();
+          _ctx.strokeStyle = mainColor;
+          _ctx.lineWidth = 1.4;
+          _ctx.stroke();
+
+          // Draw Badge Card Body with Glow
+          _ctx.shadowColor = mainColor + '99';
+          _ctx.shadowBlur = 12;
+          _ctx.fillStyle = 'rgba(9, 13, 22, 0.95)';
+          _ctx.strokeStyle = mainColor;
+          _ctx.lineWidth = 1.6;
+          _roundRect(_ctx, badgeX, badgeY, badgeW, badgeH, 6, true, true);
+          _ctx.restore();
+
+          // Draw Text inside Badge
+          _ctx.save();
+          _ctx.textBaseline = 'middle';
+          const midY = badgeY + badgeH / 2;
+
+          // Price text (large & colored)
+          _ctx.textAlign = 'left';
+          _ctx.font = 'bold 14px "JetBrains Mono", monospace';
+          _ctx.fillStyle = mainColor;
+          _ctx.fillText(priceStr, badgeX + padX, midY);
+
+          // Divider dot
+          _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+          _ctx.fillStyle = '#475569';
+          _ctx.fillText('·', badgeX + padX + priceW + 3, midY);
+
+          // Countdown Timer text
+          _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+          _ctx.fillStyle = remSecs <= 30 ? '#ff4d6d' : '#ffffff';
+          _ctx.fillText(timerStr, badgeX + padX + priceW + gapW, midY);
+          _ctx.restore();
+        }
 
         // Current Price Line to Right Scale
         _ctx.beginPath();
@@ -558,6 +651,8 @@ window.LiveTradingManager = (() => {
     setMarket,
     pushTick,
     setOutcomeMode,
+    setShowHeadBadge,
+    getShowHeadBadge,
     updateBtcPrice,
     resize,
     destroy,
