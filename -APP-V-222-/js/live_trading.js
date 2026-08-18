@@ -1,8 +1,9 @@
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v3.9
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.0
  * 
  * Features:
  * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
+ * - Automatic historical trade backfill on mid-session join (no fake 50¢ flat line or diagonal jumps!)
  * - Large prominent floating live head badge with current price & remaining countdown timer
  * - Toggleable on/off via header control & persisted in localStorage
  * - Real-time auto-advancing line & pulsing head from second 0 to nowSec
@@ -27,7 +28,7 @@ window.LiveTradingManager = (() => {
   let _durationSecs  = 300;     // 300 for 5M, 900 for 15M
   let _outcomeMode   = 'up';    // 'up' | 'down'
   let _rawTicks      = [];      // Array of [unixSec, rawUpCents]
-  let _lastPrice     = 50.0;
+  let _lastPrice     = null;
   let _showHeadBadge = localStorage.getItem('pm_show_head_tag') !== 'false';
 
   let _btcOpen       = null;
@@ -83,12 +84,12 @@ window.LiveTradingManager = (() => {
     _setupResize();
     _startAnimationLoop();
 
-    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v3.9)');
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.0)');
     return true;
   }
 
   // ─── Market Initialization & History Population ────────────────────
-  function setMarket(market) {
+  async function setMarket(market) {
     if (!market) return;
     _currentMarket = market;
     _startTs = market.startTs || Math.floor(Date.now() / 1000);
@@ -96,8 +97,13 @@ window.LiveTradingManager = (() => {
     _durationSecs = Math.max(60, _endTs - _startTs);
 
     _rawTicks = [];
+    _lastPrice = null;
 
-    // Pre-populate with any ticks already recorded for this session in TickBuffer
+    _btcOpen = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice) || null;
+    _btcCurrent = _btcOpen;
+    _btcChange = 0;
+
+    // 1. Check if we already have ticks in local buffer
     if (window.TickBuffer) {
       const bufferTicks = window.TickBuffer.getRawTicks() || [];
       for (const t of bufferTicks) {
@@ -107,31 +113,21 @@ window.LiveTradingManager = (() => {
       }
     }
 
-    const nowSec = Math.floor(Date.now() / 1000);
-    const eff = window.PriceEngine ? window.PriceEngine.effectivePrice() : 0.5;
-    const curCents = (eff !== null && !isNaN(eff)) ? eff * 100 : 50.0;
-    _lastPrice = curCents;
-
-    // Anchor from second 0 and extend to current second
-    if (_rawTicks.length === 0) {
-      _rawTicks.push([_startTs, curCents]);
-      if (nowSec > _startTs) {
-        const clampedNow = Math.min(_endTs, nowSec);
-        _rawTicks.push([clampedNow, curCents]);
-      }
-    } else {
-      if (_rawTicks[0][0] > _startTs) {
-        _rawTicks.unshift([_startTs, _rawTicks[0][1]]);
-      }
-      const lastT = _rawTicks[_rawTicks.length - 1][0];
-      if (nowSec > lastT && nowSec <= _endTs) {
-        _rawTicks.push([nowSec, _rawTicks[_rawTicks.length - 1][1]]);
+    // 2. Fetch real official session price history from Polymarket APIs
+    if (_rawTicks.length < 2 && window.MarketManager && market.upTokenId) {
+      try {
+        const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, _startTs, _endTs);
+        if (Array.isArray(hist) && hist.length > 0) {
+          _rawTicks = hist;
+          _lastPrice = hist[hist.length - 1][1];
+          if (window.TickBuffer) {
+            hist.forEach(([t, p]) => window.TickBuffer.addTick(t, p));
+          }
+        }
+      } catch (e) {
+        console.warn('[LiveTradingManager] History fetch error:', e);
       }
     }
-
-    _btcOpen = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice) || null;
-    _btcCurrent = _btcOpen;
-    _btcChange = 0;
 
     _render();
   }
@@ -139,9 +135,10 @@ window.LiveTradingManager = (() => {
   // ─── Real-Time Tick Ingestion ──────────────────────────────────────
   function pushTick(unixSec, rawUpCents) {
     if (typeof unixSec !== 'number' || isNaN(unixSec)) return;
-    
+
     if (typeof rawUpCents !== 'number' || isNaN(rawUpCents)) {
-      rawUpCents = _lastPrice;
+      if (_lastPrice !== null) rawUpCents = _lastPrice;
+      else return;
     }
 
     if (!_startTs || !_endTs) {
@@ -152,14 +149,31 @@ window.LiveTradingManager = (() => {
 
     _lastPrice = rawUpCents;
 
+    // If starting fresh, anchor from _startTs with the ACTUAL real price (no 50¢ dummy jumps!)
     if (_rawTicks.length === 0) {
       _rawTicks.push([_startTs, rawUpCents]);
-    }
-
-    if (_rawTicks.length > 0 && _rawTicks[_rawTicks.length - 1][0] === unixSec) {
-      _rawTicks[_rawTicks.length - 1][1] = rawUpCents;
+      if (unixSec > _startTs) {
+        _rawTicks.push([unixSec, rawUpCents]);
+      }
     } else {
-      _rawTicks.push([unixSec, rawUpCents]);
+      if (_rawTicks[_rawTicks.length - 1][0] === unixSec) {
+        _rawTicks[_rawTicks.length - 1][1] = rawUpCents;
+      } else {
+        _rawTicks.push([unixSec, rawUpCents]);
+      }
+    }
+  }
+
+  function setHistoricalTicks(ticks) {
+    if (Array.isArray(ticks) && ticks.length > 0) {
+      _rawTicks = ticks.filter(([ts]) => ts >= _startTs && ts <= _endTs);
+      if (_rawTicks.length > 0) {
+        _lastPrice = _rawTicks[_rawTicks.length - 1][1];
+        if (_rawTicks[0][0] > _startTs) {
+          _rawTicks.unshift([_startTs, _rawTicks[0][1]]);
+        }
+      }
+      _render();
     }
   }
 
@@ -272,17 +286,21 @@ window.LiveTradingManager = (() => {
     // Filter raw ticks in the active session window
     let sessionTicks = _rawTicks.filter(([ts]) => ts >= _startTs && ts <= _endTs);
 
-    // If empty or missing start, anchor at _startTs
-    if (sessionTicks.length === 0) {
+    if (sessionTicks.length > 0) {
+      // Ensure start anchor
+      if (sessionTicks[0][0] > _startTs) {
+        sessionTicks.unshift([_startTs, sessionTicks[0][1]]);
+      }
+      // Extend line forward to current live second
+      const lastTick = sessionTicks[sessionTicks.length - 1];
+      if (effectiveNowSec > lastTick[0]) {
+        sessionTicks.push([effectiveNowSec, lastTick[1]]);
+      }
+    } else if (_lastPrice !== null) {
       sessionTicks.push([_startTs, _lastPrice]);
-    } else if (sessionTicks[0][0] > _startTs) {
-      sessionTicks.unshift([_startTs, sessionTicks[0][1]]);
-    }
-
-    // Extend line forward to current live second
-    const lastTick = sessionTicks[sessionTicks.length - 1];
-    if (effectiveNowSec > lastTick[0]) {
-      sessionTicks.push([effectiveNowSec, lastTick[1]]);
+      if (effectiveNowSec > _startTs) {
+        sessionTicks.push([effectiveNowSec, _lastPrice]);
+      }
     }
 
     if (sessionTicks.length > 0 && _durationSecs > 0) {
@@ -374,7 +392,6 @@ window.LiveTradingManager = (() => {
 
           // Position badge centered above latestPt
           let badgeX = Math.round(latestPt.x - badgeW / 2);
-          // Clamp horizontally inside plot area
           badgeX = Math.max(plotLeft + 4, Math.min(plotRight - badgeW - 4, badgeX));
 
           let badgeY = Math.round(latestPt.y - badgeH - 12);
@@ -650,6 +667,7 @@ window.LiveTradingManager = (() => {
     init,
     setMarket,
     pushTick,
+    setHistoricalTicks,
     setOutcomeMode,
     setShowHeadBadge,
     getShowHeadBadge,

@@ -1,12 +1,12 @@
 /**
- * market.js — Polymarket market discovery & rollover scheduler v1.5
+ * market.js — Polymarket Market Discovery & Active Session Rollover v4.0
  * 
- * Responsibilities:
- * - Compute current rolling market slug from timestamp
- * - Fetch market metadata from Gamma API (with direct & CORS-proxy fallback)
- * - Accurately parse clobTokenIds / outcomes (Up vs Down)
- * - Schedule seamless rollover at market boundary (pre-fetch + switch)
- * - Guard against stale or expired markets
+ * Features:
+ * - Direct REST discovery with multi-tier CORS proxy fallback
+ * - Pre-fetching next market slot 25s in advance
+ * - Dynamic 5m and 15m session boundary calculation
+ * - Active session price history downloader (CLOB & Data API)
+ * - Watchdog timer and rollover callbacks
  */
 'use strict';
 
@@ -14,138 +14,122 @@ window.MarketManager = (() => {
   const GAMMA_BASE = 'https://gamma-api.polymarket.com';
   const CLOB_BASE  = 'https://clob.polymarket.com';
 
-  let _currentMarket = null; // { slug, upTokenId, downTokenId, startTs, endTs, conditionId }
-  let _nextMarket    = null; // prefetched next market
+  const CORS_PROXIES = [
+    url => url,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  ];
+
+  let _currentMarket = null;
+  let _nextMarket    = null;
+  let _marketTf      = 5;       // 5 or 15 minutes
   let _rolloverTimer = null;
   let _prefetchTimer = null;
-  let _onSwitchCb    = null;
-  let _marketTf      = 5;    // 5 or 15 minutes
   let _isRollingOver = false;
+  let _onSwitchCb    = null;
 
-  // ─── Slug Calculations ──────────────────────────────────────────────
   function _intervalSec(tfMinutes) {
-    return tfMinutes * 60; // 300 or 900
+    return tfMinutes * 60;
   }
 
-  function _getWindowTs(tfMinutes, now) {
+  function _getWindowTs(tfMinutes, unixSec) {
+    const now = unixSec || Math.floor(Date.now() / 1000);
     const interval = _intervalSec(tfMinutes);
-    const nowSec = Math.floor((now || Date.now()) / 1000);
-    return Math.floor(nowSec / interval) * interval;
+    return Math.floor(now / interval) * interval;
   }
 
-  function makeSlug(tfMinutes, windowTs) {
-    return `btc-updown-${tfMinutes}m-${windowTs}`;
+  function makeSlug(tfMinutes, windowStartTs) {
+    return `btc-updown-${tfMinutes}m-${windowStartTs}`;
   }
 
   function getCurrentSlug(tfMinutes) {
-    return makeSlug(tfMinutes, _getWindowTs(tfMinutes));
+    return makeSlug(tfMinutes || _marketTf, _getWindowTs(tfMinutes || _marketTf));
   }
 
   function getNextSlug(tfMinutes) {
-    const cur = _getWindowTs(tfMinutes);
-    return makeSlug(tfMinutes, cur + _intervalSec(tfMinutes));
+    const tf = tfMinutes || _marketTf;
+    return makeSlug(tf, _getWindowTs(tf) + _intervalSec(tf));
   }
 
-  // ─── Gamma API Fetch with CORS Fallback ─────────────────────────────
-  async function _fetchWithRetry(url, retries = 3, delayMs = 600) {
-    let lastErr;
+  // ─── Fetch with multi-tier fallback ────────────────────────────────
+  async function _fetchWithRetry(rawUrl, retries = 3) {
     for (let i = 0; i < retries; i++) {
+      const isFileProto = (window.location.protocol === 'file:');
+      const proxyIdx = isFileProto ? (i % CORS_PROXIES.length) : (i === 0 ? 0 : (i % CORS_PROXIES.length));
+      const targetUrl = CORS_PROXIES[proxyIdx](rawUrl);
+
       try {
-        const resp = await fetch(url, {
+        const res = await fetch(targetUrl, {
           headers: { 'Accept': 'application/json' },
+          cache: 'no-cache'
         });
-        if (resp.ok) {
-          return await resp.json();
+        if (res.ok) {
+          return await res.json();
         }
-        if (resp.status === 404) return null;
-        if (resp.status === 429) {
-          await _sleep(delayMs * Math.pow(1.5, i));
-          continue;
+      } catch (err) {
+        if (i === retries - 1) {
+          console.warn(`[MarketManager] Fetch failed for ${rawUrl}:`, err.message);
         }
-        throw new Error(`HTTP ${resp.status}`);
-      } catch (e) {
-        lastErr = e;
-        // If file:/// or network failure, try public CORS proxies
-        if (window.location.protocol === 'file:' || i === retries - 1) {
-          try {
-            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-            const pResp = await fetch(proxyUrl);
-            if (pResp.ok) return await pResp.json();
-          } catch {}
-        }
-        if (i < retries - 1) await _sleep(delayMs * Math.pow(1.5, i));
       }
+      await _sleep(400 * (i + 1));
     }
-    console.warn('[MarketManager] fetchWithRetry failed:', url, lastErr);
     return null;
   }
 
-  function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-  /**
-   * Fetch market metadata from Gamma API.
-   * Returns { slug, upTokenId, downTokenId, startTs, endTs, conditionId } or null
-   */
+  // ─── Fetch Market Metadata ─────────────────────────────────────────
   async function fetchMarketData(slug) {
-    // 1. Try /events/slug/{slug}
-    let data = await _fetchWithRetry(`${GAMMA_BASE}/events/slug/${slug}`);
-
-    // 2. Fallback: try /events?slug={slug}
-    if (!data) {
-      const arr = await _fetchWithRetry(`${GAMMA_BASE}/events?slug=${encodeURIComponent(slug)}&limit=1`);
-      if (Array.isArray(arr) && arr.length > 0) data = arr[0];
-      else if (arr && arr.id) data = arr;
-    }
-
+    const url = `${GAMMA_BASE}/events?slug=${slug}`;
+    const data = await _fetchWithRetry(url, 3);
     if (!data) return null;
 
-    const markets = data.markets || [];
-    if (markets.length === 0) return null;
-    const market = markets[0];
+    const event = Array.isArray(data) ? data[0] : data;
+    if (!event || !event.markets || event.markets.length === 0) return null;
 
-    // Parse JSON string token IDs and outcomes
-    let tokenIds, outcomes;
-    try {
-      tokenIds = typeof market.clobTokenIds === 'string'
-        ? JSON.parse(market.clobTokenIds)
-        : market.clobTokenIds;
-      outcomes = typeof market.outcomes === 'string'
-        ? JSON.parse(market.outcomes)
-        : market.outcomes;
-    } catch (e) {
-      console.error('[MarketManager] Failed to parse tokenIds/outcomes:', e);
-      return null;
+    const market = event.markets[0];
+    let upTokenId = null;
+    let downTokenId = null;
+
+    if (market.clobTokenIds) {
+      let ids = market.clobTokenIds;
+      if (typeof ids === 'string') {
+        try { ids = JSON.parse(ids); } catch {}
+      }
+      if (Array.isArray(ids) && ids.length >= 2) {
+        upTokenId = String(ids[0]);
+        downTokenId = String(ids[1]);
+      }
     }
 
-    if (!Array.isArray(tokenIds) || tokenIds.length < 2) return null;
+    if (!upTokenId && market.tokens) {
+      const upTok = market.tokens.find(t => (t.outcome || '').toUpperCase() === 'UP' || (t.outcome || '').toUpperCase() === 'YES');
+      const downTok = market.tokens.find(t => (t.outcome || '').toUpperCase() === 'DOWN' || (t.outcome || '').toUpperCase() === 'NO');
+      if (upTok) upTokenId = String(upTok.token_id || upTok.tokenId);
+      if (downTok) downTokenId = String(downTok.token_id || downTok.tokenId);
+    }
 
-    // Map "Up" outcome to correct token index
-    const upIdx = Array.isArray(outcomes)
-      ? outcomes.findIndex(o => /^up$/i.test(String(o).trim()) || /^yes$/i.test(String(o).trim()))
-      : 0;
+    const interval = (slug.includes('-15m-') ? 15 : 5) * 60;
+    const match = slug.match(/(\d+)$/);
+    const startTs = match ? parseInt(match[1], 10) : _parseTs(event.startDate || market.startDate);
+    const endTs = startTs ? startTs + interval : _parseTs(event.endDate || market.endDate);
 
-    const upTokenId   = tokenIds[upIdx !== -1 ? upIdx : 0];
-    const downTokenId = tokenIds[upIdx !== -1 ? (upIdx === 0 ? 1 : 0) : 1];
-
-    if (!upTokenId) return null;
-
-    // Derive startTs from slug timestamp
-    let startTs = null;
-    const slugMatch = slug.match(/(\d+)$/);
-    if (slugMatch) startTs = parseInt(slugMatch[1], 10);
-
-    const tfSec = slug.includes('-15m-') ? 900 : 300;
-    const endTs = startTs ? (startTs + tfSec) : _parseTs(data.endDate || market.endDate || null);
+    let initialProb = 0.50;
+    try {
+      let outP = market.outcomePrices;
+      if (typeof outP === 'string') outP = JSON.parse(outP);
+      if (Array.isArray(outP) && outP[0]) initialProb = parseFloat(outP[0]) || 0.50;
+    } catch {}
 
     return {
       slug,
+      conditionId: market.conditionId,
+      question: market.question || event.title,
       upTokenId,
       downTokenId,
       startTs,
       endTs,
-      conditionId: market.conditionId || null,
-      question: market.question || data.title || '',
-      eventMetadata: data.eventMetadata || market.eventMetadata || null,
+      initialProb,
+      eventMetadata: event.eventMetadata || market.eventMetadata || null,
+      raw: market,
     };
   }
 
@@ -161,6 +145,57 @@ window.MarketManager = (() => {
     if (!data) return null;
     const mid = parseFloat(data.mid);
     return isNaN(mid) ? null : mid;
+  }
+
+  // ─── Active Session History Downloader ──────────────────────────────
+  async function fetchSessionPriceHistory(tokenId, startTs, endTs) {
+    if (!tokenId || !startTs || !endTs) return [];
+    
+    // 1. Try CLOB prices-history
+    try {
+      const url = `${CLOB_BASE}/prices-history?market=${tokenId}&interval=1d&fidelity=1`;
+      const data = await _fetchWithRetry(url, 2);
+      if (data && Array.isArray(data.history) && data.history.length > 0) {
+        const inSession = [];
+        for (const item of data.history) {
+          const ts = parseInt(item.t);
+          const p = parseFloat(item.p);
+          if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
+            inSession.push([ts, Math.round(p * 1000) / 10]);
+          }
+        }
+        if (inSession.length > 0) {
+          inSession.sort((a, b) => a[0] - b[0]);
+          return inSession;
+        }
+      }
+    } catch (e) {
+      console.warn('[MarketManager] CLOB prices-history fetch failed:', e);
+    }
+
+    // 2. Try Data API trades
+    try {
+      const url = `https://data-api.polymarket.com/trades?asset_id=${tokenId}&limit=200`;
+      const trades = await _fetchWithRetry(url, 2);
+      if (Array.isArray(trades) && trades.length > 0) {
+        const inSession = [];
+        for (const item of trades) {
+          const ts = parseInt(item.timestamp);
+          const p = parseFloat(item.price);
+          if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
+            inSession.push([ts, Math.round(p * 1000) / 10]);
+          }
+        }
+        if (inSession.length > 0) {
+          inSession.sort((a, b) => a[0] - b[0]);
+          return inSession;
+        }
+      }
+    } catch (e) {
+      console.warn('[MarketManager] Data API trades fetch failed:', e);
+    }
+
+    return [];
   }
 
   // ─── Market Initialization & Active Search ─────────────────────────
@@ -319,12 +354,15 @@ window.MarketManager = (() => {
     _doRollover();
   }
 
+  function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
   return {
     makeSlug,
     getCurrentSlug,
     getNextSlug,
     fetchMarketData,
     fetchMidpoint,
+    fetchSessionPriceHistory,
     loadCurrentMarket,
     scheduleRollover,
     setCurrentMarket,

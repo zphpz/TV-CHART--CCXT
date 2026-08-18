@@ -113,33 +113,48 @@ class AppHTTPHandler(SimpleHTTPRequestHandler):
         # 2. Polymarket Crypto Proxy endpoint
         if parsed.path.startswith("/api/crypto/"):
             target_url = f"https://polymarket.com{self.path}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                "Accept": "application/json",
-                "Origin": "https://polymarket.com",
-                "Referer": "https://polymarket.com/crypto/5m"
-            }
-            try:
-                r = requests.get(target_url, headers=headers, timeout=4)
-                self.send_response(r.status_code)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(r.content)
-            except Exception as e:
-                self.send_response(502)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            self._proxy_get(target_url)
             return
 
-        # 3. Static files
+        # 3. Polymarket CLOB Proxy endpoint
+        if parsed.path.startswith("/api/clob/"):
+            target_url = f"https://clob.polymarket.com{self.path.replace('/api/clob', '')}"
+            self._proxy_get(target_url)
+            return
+
+        # 4. Polymarket Data API Proxy endpoint
+        if parsed.path.startswith("/api/data/"):
+            target_url = f"https://data-api.polymarket.com{self.path.replace('/api/data', '')}"
+            self._proxy_get(target_url)
+            return
+
+        # 5. Static files
         return super().do_GET()
+
+    def _proxy_get(self, target_url):
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Origin": "https://polymarket.com",
+            "Referer": "https://polymarket.com/crypto/5m"
+        }
+        try:
+            r = requests.get(target_url, headers=headers, timeout=5)
+            self.send_response(r.status_code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(r.content)
+        except Exception as e:
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
 def run_server():
     server = HTTPServer(("0.0.0.0", PORT), AppHTTPHandler)
     local_ip = get_local_ip()
     print("=" * 65)
-    print("🚀 POLYMARKET BTC 1:1 TWAP LIVE CHART SERVER (v3.9)")
+    print("🚀 POLYMARKET BTC 1:1 TWAP LIVE CHART SERVER (v4.0)")
     print(f"💻 На ПК:       http://localhost:{PORT}")
     print(f"📱 На телефоне:  http://{local_ip}:{PORT}")
     print(f"📁 Папка:       {ROOT_DIR}")

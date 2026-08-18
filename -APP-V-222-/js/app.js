@@ -1,7 +1,8 @@
 /**
- * app.js — Main Application Coordinator v3.9
+ * app.js — Main Application Coordinator v4.0
  * 
- * Features & Fixes in v3.9:
+ * Features & Fixes in v4.0:
+ * - Real API session price history downloader on mid-session load (no fake 50¢ flat lines!)
  * - Centered panel & toolbar layout
  * - Floating live head badge (Price & Countdown Timer) toggle control
  * - 1-second continuous live ticker loop ensures price line advances immediately from second 0
@@ -101,7 +102,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v3.9...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.0...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -412,30 +413,28 @@ window.App = (() => {
     console.log('[App] Market loaded:', market);
     MarketManager.setCurrentMarket(market);
     _updateMarketUI(market);
+
+    // 1. Initialize stationary Live Trading chart
     if (window.LiveTradingManager) {
-      LiveTradingManager.setMarket(market);
+      await LiveTradingManager.setMarket(market);
     }
 
-    // Initial anchor
-    const nowSec = Math.floor(Date.now() / 1000);
-    const initialRawPrice = PriceEngine.effectivePrice();
-    const initialRawCents = initialRawPrice * 100;
-    TickBuffer.addTick(market.startTs || nowSec, initialRawCents);
-    TickBuffer.addTick(nowSec, initialRawCents);
-    _currentSessionTicks.push([market.startTs || nowSec, initialRawCents]);
-    _currentSessionTicks.push([nowSec, initialRawCents]);
+    // 2. Fetch session price history for multi-session chart
+    setLoadingSub('Fetching session price history...');
+    try {
+      const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.startTs, market.endTs);
+      if (Array.isArray(hist) && hist.length > 0) {
+        hist.forEach(([t, p]) => {
+          TickBuffer.addTick(t, p);
+          _currentSessionTicks.push([t, p]);
+        });
+        const lastP = hist[hist.length - 1][1];
+        PriceEngine.updateLastTrade(lastP / 100);
+        ChartManager.setData(TickBuffer.aggregate(_currentTfSeconds, _outcomeMode));
+      }
+    } catch (e) {}
 
-    const displayCents = _outcomeMode === 'down' ? (100 - initialRawCents) : initialRawCents;
-    ChartManager.setData([
-      { time: market.startTs || nowSec, value: displayCents },
-      { time: nowSec, value: displayCents }
-    ]);
-    if (window.LiveTradingManager) {
-      LiveTradingManager.pushTick(market.startTs || nowSec, initialRawCents);
-      LiveTradingManager.pushTick(nowSec, initialRawCents);
-    }
-    _updatePriceUI();
-
+    // 3. Connect WebSocket
     setLoadingSub('Connecting to live CLOB WebSocket...');
     PolyWS.subscribe(market.upTokenId);
     if (!PolyWS.isConnected()) {
@@ -444,12 +443,12 @@ window.App = (() => {
 
     MarketManager.scheduleRollover(market, _onMarketSwitch);
 
-    // Fetch official target strike
+    // 4. Fetch official target strike
     if (window.PolyRTDS) {
       PolyRTDS.checkAndRefreshWindow();
     }
 
-    // Background fetch midpoint
+    // 5. Background fetch midpoint
     MarketManager.fetchMidpoint(market.upTokenId).then(mid => {
       if (mid !== null) {
         PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
@@ -457,6 +456,7 @@ window.App = (() => {
       }
     }).catch(() => {});
 
+    _updatePriceUI();
     hideLoading();
     _isInitialized = true;
   }
@@ -555,7 +555,7 @@ window.App = (() => {
         console.warn('[App] Error adding chart boundary:', e);
       }
 
-      // Reset and carry over current last price
+      // Carry over current last price
       const lastKnownPrice = PriceEngine.effectivePrice();
       PriceEngine.reset();
       PriceEngine.updateLastTrade(lastKnownPrice);
@@ -566,7 +566,7 @@ window.App = (() => {
 
       // Seed new session in LiveTradingManager immediately
       if (window.LiveTradingManager) {
-        LiveTradingManager.setMarket(newMarket);
+        await LiveTradingManager.setMarket(newMarket);
         LiveTradingManager.pushTick(newMarket.startTs || nowSec, initialRawCents);
         LiveTradingManager.pushTick(nowSec, initialRawCents);
       }
