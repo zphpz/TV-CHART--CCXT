@@ -146,24 +146,31 @@ window.MarketManager = (() => {
     if (!upTokenId || !startTs || !endTs) return [];
 
     const fetchTokenClob = async (tok, isInverted) => {
-      if (!tok) return [];
+      if (!tok) return { inSession: [], preStart: null };
       const url = `${CLOB_BASE}/prices-history?market=${tok}&interval=1d&fidelity=1`;
       const data = await _fetchWithRetry(url, 2, 2500);
       if (data && Array.isArray(data.history) && data.history.length > 0) {
-        const list = [];
+        const inSession = [];
+        let preStart = null;
         for (let i = 0; i < data.history.length; i++) {
           const item = data.history[i];
           const ts = parseInt(item.t);
           const p = parseFloat(item.p);
-          if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
+          if (!isNaN(ts) && !isNaN(p)) {
             const rawCents = Math.round(p * 1000) / 10;
             const upCents = isInverted ? (100 - rawCents) : rawCents;
-            list.push([ts, Math.max(0, Math.min(100, Math.round(upCents * 10) / 10))]);
+            const clamped = Math.max(0, Math.min(100, Math.round(upCents * 10) / 10));
+
+            if (ts <= startTs) {
+              preStart = clamped;
+            } else if (ts <= endTs) {
+              inSession.push([ts, clamped]);
+            }
           }
         }
-        return list;
+        return { inSession, preStart };
       }
-      return [];
+      return { inSession: [], preStart: null };
     };
 
     try {
@@ -173,9 +180,15 @@ window.MarketManager = (() => {
       ]);
 
       const map = new Map();
+      let openingAnchorPrice = null;
+
       for (let r of results) {
-        if (r.status === 'fulfilled' && Array.isArray(r.value)) {
-          for (let [ts, val] of r.value) {
+        if (r.status === 'fulfilled' && r.value) {
+          const { inSession, preStart } = r.value;
+          if (preStart !== null && openingAnchorPrice === null) {
+            openingAnchorPrice = preStart;
+          }
+          for (let [ts, val] of inSession) {
             if (!map.has(ts)) {
               map.set(ts, val);
             } else {
@@ -186,12 +199,16 @@ window.MarketManager = (() => {
         }
       }
 
-      if (map.size > 0) {
-        const sorted = Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
-        // Anchor the first point cleanly to startTs
-        if (sorted[0][0] > startTs) {
-          sorted.unshift([startTs, sorted[0][1]]);
-        }
+      const sorted = Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+
+      // True opening anchor at startTs (preserves pre-round baseline vs inside-round moves)
+      if (openingAnchorPrice !== null) {
+        sorted.unshift([startTs, openingAnchorPrice]);
+      } else if (sorted.length > 0 && sorted[0][0] > startTs) {
+        sorted.unshift([startTs, 50.0]);
+      }
+
+      if (sorted.length > 0) {
         return sorted;
       }
     } catch (e) {
