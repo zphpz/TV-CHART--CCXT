@@ -292,6 +292,36 @@ html, body {
   box-shadow: 0 0 8px var(--accent-teal, #00d4aa);
 }
 
+/* Chart Mode Buttons (BTC vs PROB) */
+#chart-mode-buttons {
+  display: flex;
+  gap: 3px;
+  background: var(--bg-primary, #080b0f);
+  border: 1px solid var(--border, #1e293b);
+  border-radius: 6px;
+  padding: 2px;
+}
+.mode-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary, #94a3b8);
+  font-family: 'Inter', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+  letter-spacing: 0.03em;
+}
+.mode-btn:hover { color: #ffffff; background: var(--bg-hover); }
+.mode-btn.active {
+  background: linear-gradient(135deg, var(--accent-teal, #00d4aa), var(--accent-blue, #38bdf8));
+  color: #080b0f;
+  font-weight: 800;
+  box-shadow: 0 0 8px rgba(0, 212, 170, 0.3);
+}
+
 .price-hero-item {
   display: flex;
   flex-direction: column;
@@ -1558,7 +1588,18 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 
       <div class="price-divider"></div>
 
-      <!-- 5. Outcome buttons -->
+      <!-- 5. Chart Mode (BTC $ vs PROB %) -->
+      <div class="price-hero-item" id="chart-mode-wrap">
+        <span class="price-hero-label">GRAPH</span>
+        <div id="chart-mode-buttons">
+          <button class="mode-btn active" id="btn-mode-btc" title="Отображать живой график цены BTC ($) как на Polymarket">₿ BTC ($)</button>
+          <button class="mode-btn" id="btn-mode-token" title="Отображать график вероятности в центах (0–100¢)">¢ PROB</button>
+        </div>
+      </div>
+
+      <div class="price-divider"></div>
+
+      <!-- 6. Outcome buttons -->
       <div id="outcome-switcher">
         <span class="price-hero-label">OUTCOME</span>
         <div id="outcome-buttons">
@@ -1830,7 +1871,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v4.1</span>
+        <span id="app-version">v4.2</span>
       </div>
     </footer>
 
@@ -3841,18 +3882,20 @@ window.PolyRTDS = (() => {
 
 /* ═══ MODULE: js/live_trading.js ═══ */
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.1
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.2
  * 
  * Features:
+ * - Dual Chart Modes:
+ *   1. ₿ BTC ($) Mode: 1:1 Live Bitcoin TWAP price curve vs Strike / Target Line ($64,746 vs $64,739)
+ *   2. ¢ PROB (%) Mode: Polymarket CLOB Option token probability in cents (0–100¢)
  * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
  * - Large prominent floating live head badge (20px font, 10px offset, semi-transparent glass background)
  * - Automatic historical trade backfill on mid-session join (no fake 50¢ flat line or diagonal jumps!)
- * - Toggleable on/off via header control & persisted in localStorage
  * - Real-time auto-advancing line & pulsing head from second 0 to nowSec
  * - Anti-aliased glowing live price line with gradient under-fill
  * - Pulsing live leading dot at the current active second
  * - Blue dashed vertical second & minute grid lines (+01:00, +02:00 ... / 30s, 90s ...)
- * - 0–100¢ right price scale & horizontal reference grid (50¢ anchor)
+ * - Dynamic price scale & horizontal reference grid (Strike line / 50¢ anchor)
  * - Interactive hover crosshair with exact price & elapsed second tooltip
  * - Single-line top header HUD with slug link, ⏳ LIVE session badge & TWAP BTC price stream
  */
@@ -3868,8 +3911,11 @@ window.LiveTradingManager = (() => {
   let _startTs       = 0;
   let _endTs         = 0;
   let _durationSecs  = 300;     // 300 for 5M, 900 for 15M
+  let _chartMode     = localStorage.getItem('pm_chart_mode') || 'btc'; // 'btc' | 'token'
   let _outcomeMode   = 'up';    // 'up' | 'down'
-  let _rawTicks      = [];      // Array of [unixSec, rawUpCents]
+  
+  let _rawTicks      = [];      // Array of [unixSec, rawUpCents] (0–100)
+  let _btcTicks      = [];      // Array of [unixSec, btcPriceUsd]
   let _lastPrice     = null;
   let _showHeadBadge = localStorage.getItem('pm_show_head_tag') !== 'false';
 
@@ -3883,7 +3929,7 @@ window.LiveTradingManager = (() => {
   let _pulsePhase    = 0;
 
   const TOP_HUD_H    = 26;
-  const RIGHT_SCALE_W= 52;
+  const RIGHT_SCALE_W= 68;
   const BOTTOM_AXIS_H= 22;
 
   function init(container) {
@@ -3926,7 +3972,7 @@ window.LiveTradingManager = (() => {
     _setupResize();
     _startAnimationLoop();
 
-    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.1)');
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.2)');
     return true;
   }
 
@@ -3939,11 +3985,17 @@ window.LiveTradingManager = (() => {
     _durationSecs = Math.max(60, _endTs - _startTs);
 
     _rawTicks = [];
+    _btcTicks = [];
     _lastPrice = null;
 
     _btcOpen = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice) || null;
     _btcCurrent = _btcOpen;
     _btcChange = 0;
+
+    // Seed start anchor for BTC if available
+    if (_btcOpen) {
+      _btcTicks.push([_startTs, _btcOpen]);
+    }
 
     // 1. Check if we already have ticks in local buffer
     if (window.TickBuffer) {
@@ -4005,6 +4057,38 @@ window.LiveTradingManager = (() => {
     }
   }
 
+  function pushBtcTick(unixSec, btcPrice, strikePrice) {
+    if (typeof unixSec !== 'number' || typeof btcPrice !== 'number' || isNaN(btcPrice) || btcPrice <= 0) return;
+
+    if (strikePrice && (!_btcOpen || isNaN(_btcOpen))) {
+      _btcOpen = strikePrice;
+    }
+
+    _btcCurrent = btcPrice;
+    if (_btcOpen && _btcOpen > 0) {
+      _btcChange = Math.round(((_btcCurrent - _btcOpen) / _btcOpen) * 10000) / 100;
+    }
+
+    if (!_startTs || !_endTs) {
+      _startTs = Math.floor(unixSec / 300) * 300;
+      _endTs = _startTs + 300;
+      _durationSecs = 300;
+    }
+
+    if (_btcTicks.length === 0) {
+      _btcTicks.push([_startTs, _btcOpen || btcPrice]);
+      if (unixSec > _startTs) {
+        _btcTicks.push([unixSec, btcPrice]);
+      }
+    } else {
+      if (_btcTicks[_btcTicks.length - 1][0] === unixSec) {
+        _btcTicks[_btcTicks.length - 1][1] = btcPrice;
+      } else {
+        _btcTicks.push([unixSec, btcPrice]);
+      }
+    }
+  }
+
   function setHistoricalTicks(ticks) {
     if (Array.isArray(ticks) && ticks.length > 0) {
       _rawTicks = ticks.filter(([ts]) => ts >= _startTs && ts <= _endTs);
@@ -4016,6 +4100,16 @@ window.LiveTradingManager = (() => {
       }
       _render();
     }
+  }
+
+  function setChartMode(mode) {
+    _chartMode = mode;
+    localStorage.setItem('pm_chart_mode', mode);
+    _render();
+  }
+
+  function getChartMode() {
+    return _chartMode;
   }
 
   function setOutcomeMode(mode) {
@@ -4034,9 +4128,14 @@ window.LiveTradingManager = (() => {
   }
 
   function updateBtcPrice(btcOpen, btcClose, btcChange) {
-    if (btcOpen !== undefined && btcOpen !== null) _btcOpen = btcOpen;
-    if (btcClose !== undefined && btcClose !== null) _btcCurrent = btcClose;
-    if (btcChange !== undefined && btcChange !== null) _btcChange = btcChange;
+    if (btcOpen !== undefined && btcOpen !== null && !isNaN(btcOpen)) _btcOpen = btcOpen;
+    if (btcClose !== undefined && btcClose !== null && !isNaN(btcClose)) _btcCurrent = btcClose;
+    if (btcChange !== undefined && btcChange !== null && !isNaN(btcChange)) _btcChange = btcChange;
+
+    if (_btcCurrent && _startTs) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      pushBtcTick(nowSec, _btcCurrent, _btcOpen);
+    }
   }
 
   // ─── Core Rendering Engine ─────────────────────────────────────────
@@ -4065,32 +4164,11 @@ window.LiveTradingManager = (() => {
     const plotW      = Math.max(10, plotRight - plotLeft);
     const plotH      = Math.max(10, plotBottom - plotTop);
 
-    // 1. Background Grid & Horizontal Price Lines (0¢ ... 50¢ ... 100¢)
-    _ctx.lineWidth = 1;
-    _ctx.font = '10px "JetBrains Mono", monospace';
-    _ctx.textBaseline = 'middle';
-
-    const priceLevels = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
-    for (const p of priceLevels) {
-      const y = plotBottom - (p / 100) * plotH;
-      const is50 = (p === 50);
-      const isBoundary = (p === 0 || p === 100);
-
-      _ctx.beginPath();
-      _ctx.strokeStyle = is50 ? 'rgba(56, 189, 248, 0.45)' : (isBoundary ? 'rgba(255,255,255,0.1)' : 'rgba(255, 255, 255, 0.04)');
-      _ctx.setLineDash(is50 ? [4, 4] : []);
-      _ctx.moveTo(plotLeft, y);
-      _ctx.lineTo(plotRight, y);
-      _ctx.stroke();
-
-      if (p % 20 === 0 || p === 50) {
-        _ctx.fillStyle = is50 ? '#38bdf8' : '#64748b';
-        _ctx.fillText(`${p.toFixed(1)}¢`, plotRight + 6, y);
-      }
-    }
-
-    // 2. Vertical Blue Dashed Second Subdivision Lines
+    const nowSec = Math.floor(Date.now() / 1000);
+    const effectiveNowSec = (_startTs && _endTs) ? Math.min(_endTs, Math.max(_startTs, nowSec)) : nowSec;
     const is5m = _durationSecs <= 300;
+
+    // ─── 1. Vertical Blue Dashed Second Subdivision Lines ───────────
     const stepSecs = is5m ? 30 : 60;
     const majorStepSecs = is5m ? 60 : 180;
 
@@ -4119,234 +4197,472 @@ window.LiveTradingManager = (() => {
       _ctx.fillText(isMajor ? fullTag : timeTag, x, h - 4);
     }
 
-    // 3. Dynamic Real-Time Price Movement Curve & Area Fill
     _ctx.setLineDash([]);
-    const nowSec = Math.floor(Date.now() / 1000);
-    const effectiveNowSec = (_startTs && _endTs) ? Math.min(_endTs, Math.max(_startTs, nowSec)) : nowSec;
 
-    // Filter raw ticks in the active session window
-    let sessionTicks = _rawTicks.filter(([ts]) => ts >= _startTs && ts <= _endTs);
+    // ─── MODE A: BTC PRICE ($) MODE (Polymarket 1:1 Live Chart) ──────
+    if (_chartMode === 'btc') {
+      let btcSessionTicks = _btcTicks.filter(([ts]) => ts >= _startTs && ts <= _endTs);
 
-    if (sessionTicks.length > 0) {
-      if (sessionTicks[0][0] > _startTs) {
-        sessionTicks.unshift([_startTs, sessionTicks[0][1]]);
-      }
-      const lastTick = sessionTicks[sessionTicks.length - 1];
-      if (effectiveNowSec > lastTick[0]) {
-        sessionTicks.push([effectiveNowSec, lastTick[1]]);
-      }
-    } else if (_lastPrice !== null) {
-      sessionTicks.push([_startTs, _lastPrice]);
-      if (effectiveNowSec > _startTs) {
-        sessionTicks.push([effectiveNowSec, _lastPrice]);
-      }
-    }
-
-    if (sessionTicks.length > 0 && _durationSecs > 0) {
-      const points = [];
-      for (const [ts, upCents] of sessionTicks) {
-        const val = _outcomeMode === 'down' ? (100 - upCents) : upCents;
-        const x = plotLeft + ((ts - _startTs) / _durationSecs) * plotW;
-        const y = plotBottom - (Math.min(100, Math.max(0, val)) / 100) * plotH;
-        points.push({ x, y, val, ts });
-      }
-
-      if (points.length >= 1) {
-        if (points.length === 1) {
-          const extraX = Math.max(points[0].x + 1, plotLeft + ((effectiveNowSec - _startTs) / _durationSecs) * plotW);
-          points.push({ x: extraX, y: points[0].y, val: points[0].val, ts: effectiveNowSec });
+      if (btcSessionTicks.length > 0) {
+        if (btcSessionTicks[0][0] > _startTs) {
+          btcSessionTicks.unshift([_startTs, _btcOpen || btcSessionTicks[0][1]]);
         }
-
-        const latestPt = points[points.length - 1];
-        const mainColor = latestPt.val > 52 ? '#00d4aa' : (latestPt.val < 48 ? '#ff4d6d' : '#38bdf8');
-
-        // Draw Area Fill Under Curve
-        const grad = _ctx.createLinearGradient(0, plotTop, 0, plotBottom);
-        grad.addColorStop(0, mainColor + '33');
-        grad.addColorStop(1, mainColor + '00');
-
-        _ctx.beginPath();
-        _ctx.moveTo(points[0].x, plotBottom);
-        for (let i = 0; i < points.length; i++) {
-          _ctx.lineTo(points[i].x, points[i].y);
+        const lastT = btcSessionTicks[btcSessionTicks.length - 1];
+        if (effectiveNowSec > lastT[0]) {
+          btcSessionTicks.push([effectiveNowSec, lastT[1]]);
         }
-        _ctx.lineTo(latestPt.x, plotBottom);
-        _ctx.closePath();
-        _ctx.fillStyle = grad;
-        _ctx.fill();
-
-        // Draw Glowing Price Line
-        _ctx.save();
-        _ctx.shadowColor = mainColor;
-        _ctx.shadowBlur = 8;
-        _ctx.strokeStyle = mainColor;
-        _ctx.lineWidth = 2.5;
-        _ctx.lineJoin = 'round';
-        _ctx.lineCap = 'round';
-
-        _ctx.beginPath();
-        _ctx.moveTo(points[0].x, points[0].y);
-        for (let i = 1; i < points.length; i++) {
-          _ctx.lineTo(points[i].x, points[i].y);
+      } else if (_btcCurrent !== null) {
+        btcSessionTicks.push([_startTs, _btcOpen || _btcCurrent]);
+        if (effectiveNowSec > _startTs) {
+          btcSessionTicks.push([effectiveNowSec, _btcCurrent]);
         }
-        _ctx.stroke();
-        _ctx.restore();
-
-        // Draw Pulsing Live Head Dot at current active second
-        const pulseR = 4 + Math.sin(_pulsePhase) * 1.5;
-        _ctx.beginPath();
-        _ctx.arc(latestPt.x, latestPt.y, pulseR + 4, 0, Math.PI * 2);
-        _ctx.fillStyle = mainColor + '44';
-        _ctx.fill();
-
-        _ctx.beginPath();
-        _ctx.arc(latestPt.x, latestPt.y, pulseR, 0, Math.PI * 2);
-        _ctx.fillStyle = mainColor;
-        _ctx.fill();
-
-        _ctx.beginPath();
-        _ctx.arc(latestPt.x, latestPt.y, 2, 0, Math.PI * 2);
-        _ctx.fillStyle = '#ffffff';
-        _ctx.fill();
-
-        // ─── Draw Large Prominent Floating Live Head Badge ────────────────
-        if (_showHeadBadge && latestPt) {
-          const remSecs = Math.max(0, _endTs - effectiveNowSec);
-          const remM = Math.floor(remSecs / 60);
-          const remS = remSecs % 60;
-          const remStr = `${String(remM).padStart(2, '0')}:${String(remS).padStart(2, '0')}`;
-          
-          const priceStr = `${latestPt.val.toFixed(1)}¢`;
-          const timerStr = `⏱ ${remStr}`;
-
-          _ctx.save();
-          // Large Hero Font
-          _ctx.font = 'bold 18px "JetBrains Mono", monospace';
-          const priceW = _ctx.measureText(priceStr).width;
-          _ctx.font = 'bold 15px "JetBrains Mono", monospace';
-          const timerW = _ctx.measureText(timerStr).width;
-          const gapW = 12;
-          const padX = 14;
-          const badgeW = Math.round(padX * 2 + priceW + gapW + timerW);
-          const badgeH = 34;
-          const DOT_OFFSET = 10; // Requested 10px offset
-
-          // Position badge centered above latestPt
-          let badgeX = Math.round(latestPt.x - badgeW / 2);
-          badgeX = Math.max(plotLeft + 4, Math.min(plotRight - badgeW - 4, badgeX));
-
-          let badgeY = Math.round(latestPt.y - badgeH - DOT_OFFSET);
-          let arrowBelow = true;
-          if (badgeY < plotTop + 4) {
-            badgeY = Math.round(latestPt.y + DOT_OFFSET + 4);
-            arrowBelow = false;
-          }
-
-          // Semi-transparent background
-          const bgSemiTransparent = 'rgba(8, 14, 24, 0.72)';
-
-          // Draw Pointer Arrow Caret
-          _ctx.beginPath();
-          if (arrowBelow) {
-            _ctx.moveTo(latestPt.x - 6, badgeY + badgeH);
-            _ctx.lineTo(latestPt.x, latestPt.y - 4);
-            _ctx.lineTo(latestPt.x + 6, badgeY + badgeH);
-          } else {
-            _ctx.moveTo(latestPt.x - 6, badgeY);
-            _ctx.lineTo(latestPt.x, latestPt.y + 4);
-            _ctx.lineTo(latestPt.x + 6, badgeY);
-          }
-          _ctx.closePath();
-          _ctx.fillStyle = bgSemiTransparent;
-          _ctx.fill();
-          _ctx.strokeStyle = mainColor + 'cc';
-          _ctx.lineWidth = 1.4;
-          _ctx.stroke();
-
-          // Draw Badge Card Body with Glow & Semi-transparent background
-          _ctx.shadowColor = mainColor + '88';
-          _ctx.shadowBlur = 10;
-          _ctx.fillStyle = bgSemiTransparent;
-          _ctx.strokeStyle = mainColor + 'ee';
-          _ctx.lineWidth = 1.6;
-          _roundRect(_ctx, badgeX, badgeY, badgeW, badgeH, 8, true, true);
-          _ctx.restore();
-
-          // Draw Text inside Badge
-          _ctx.save();
-          _ctx.textBaseline = 'middle';
-          const midY = badgeY + badgeH / 2;
-
-          // Large Price Text
-          _ctx.textAlign = 'left';
-          _ctx.font = 'bold 18px "JetBrains Mono", monospace';
-          _ctx.fillStyle = mainColor;
-          _ctx.fillText(priceStr, badgeX + padX, midY);
-
-          // Divider dot
-          _ctx.font = 'bold 15px "JetBrains Mono", monospace';
-          _ctx.fillStyle = '#64748b';
-          _ctx.fillText('·', badgeX + padX + priceW + 4, midY);
-
-          // Countdown Timer text
-          _ctx.font = 'bold 15px "JetBrains Mono", monospace';
-          _ctx.fillStyle = remSecs <= 30 ? '#ff4d6d' : '#ffffff';
-          _ctx.fillText(timerStr, badgeX + padX + priceW + gapW, midY);
-          _ctx.restore();
-        }
-
-        // Current Price Line to Right Scale
-        _ctx.beginPath();
-        _ctx.strokeStyle = mainColor + '66';
-        _ctx.lineWidth = 1;
-        _ctx.setLineDash([3, 3]);
-        _ctx.moveTo(latestPt.x, latestPt.y);
-        _ctx.lineTo(plotRight, latestPt.y);
-        _ctx.stroke();
-        _ctx.setLineDash([]);
-
-        // Right Scale Highlight Badge
-        _ctx.fillStyle = mainColor;
-        _roundRect(_ctx, plotRight + 2, latestPt.y - 9, RIGHT_SCALE_W - 4, 18, 4, true, false);
-        _ctx.fillStyle = '#090d16';
-        _ctx.font = 'bold 11px "JetBrains Mono", monospace';
-        _ctx.textAlign = 'left';
-        _ctx.textBaseline = 'middle';
-        _ctx.fillText(`${latestPt.val.toFixed(1)}¢`, plotRight + 6, latestPt.y);
       }
-    }
 
-    // 4. Hover Crosshair & Tooltip
-    if (_hoverX !== null && _hoverY !== null && _hoverX >= plotLeft && _hoverX <= plotRight && _hoverY >= plotTop && _hoverY <= plotBottom) {
-      _ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      // Calculate Y-scale bounds
+      let minP = _btcOpen || (_btcCurrent || 64000);
+      let maxP = _btcOpen || (_btcCurrent || 64000);
+
+      for (const [, p] of btcSessionTicks) {
+        if (p < minP) minP = p;
+        if (p > maxP) maxP = p;
+      }
+      if (_btcCurrent) {
+        if (_btcCurrent < minP) minP = _btcCurrent;
+        if (_btcCurrent > maxP) maxP = _btcCurrent;
+      }
+
+      const diff = Math.max(10, (maxP - minP) * 1.35);
+      const centerP = _btcOpen || ((minP + maxP) / 2);
+      const yMin = Math.min(minP - 3, centerP - diff / 2);
+      const yMax = Math.max(maxP + 3, centerP + diff / 2);
+      const yRange = Math.max(5, yMax - yMin);
+
+      const getY = price => plotBottom - ((price - yMin) / yRange) * plotH;
+
+      // Draw Horizontal Grid Lines for BTC Price ($)
       _ctx.lineWidth = 1;
-      _ctx.setLineDash([3, 3]);
+      _ctx.font = '10px "JetBrains Mono", monospace';
+      _ctx.textAlign = 'left';
+      _ctx.textBaseline = 'middle';
 
-      _ctx.beginPath();
-      _ctx.moveTo(_hoverX, plotTop);
-      _ctx.lineTo(_hoverX, plotBottom);
-      _ctx.moveTo(plotLeft, _hoverY);
-      _ctx.lineTo(plotRight, _hoverY);
-      _ctx.stroke();
-      _ctx.setLineDash([]);
+      const gridStep = yRange > 60 ? 10 : (yRange > 25 ? 5 : 2);
+      const firstGrid = Math.ceil(yMin / gridStep) * gridStep;
+      for (let p = firstGrid; p <= yMax; p += gridStep) {
+        const y = getY(p);
+        if (y < plotTop || y > plotBottom) continue;
 
-      const hoverSec = Math.round(((_hoverX - plotLeft) / plotW) * _durationSecs);
-      const hoverPrice = (1 - ((_hoverY - plotTop) / plotH)) * 100;
-      const m = Math.floor(hoverSec / 60);
-      const s = hoverSec % 60;
-      const timeTag = `+${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')} (${hoverSec}s)`;
+        _ctx.beginPath();
+        _ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+        _ctx.moveTo(plotLeft, y);
+        _ctx.lineTo(plotRight, y);
+        _ctx.stroke();
 
-      if (_tooltipEl) {
-        _tooltipEl.style.display = 'block';
-        _tooltipEl.style.left = `${Math.min(w - 140, _hoverX + 12)}px`;
-        _tooltipEl.style.top = `${Math.min(h - 40, _hoverY - 28)}px`;
-        _tooltipEl.innerHTML = `<span style="color:#38bdf8; font-weight:bold;">${hoverPrice.toFixed(1)}¢</span> · <span style="color:#94a3b8;">${timeTag}</span>`;
+        _ctx.fillStyle = '#64748b';
+        _ctx.fillText(`$${p.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, plotRight + 6, y);
       }
-    } else if (_tooltipEl) {
-      _tooltipEl.style.display = 'none';
+
+      // Draw Target Strike Line (Orange / Cyan Dashed Reference)
+      if (_btcOpen) {
+        const strikeY = getY(_btcOpen);
+        if (strikeY >= plotTop && strikeY <= plotBottom) {
+          _ctx.beginPath();
+          _ctx.strokeStyle = 'rgba(245, 158, 11, 0.75)';
+          _ctx.lineWidth = 1.4;
+          _ctx.setLineDash([5, 4]);
+          _ctx.moveTo(plotLeft, strikeY);
+          _ctx.lineTo(plotRight, strikeY);
+          _ctx.stroke();
+          _ctx.setLineDash([]);
+
+          _ctx.fillStyle = '#f59e0b';
+          _ctx.font = 'bold 10px "JetBrains Mono", monospace';
+          _roundRect(_ctx, plotRight + 2, strikeY - 8, RIGHT_SCALE_W - 4, 16, 3, true, false);
+          _ctx.fillStyle = '#090d16';
+          _ctx.fillText(`$${_btcOpen.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`, plotRight + 4, strikeY);
+        }
+      }
+
+      // Build Curve Points
+      if (btcSessionTicks.length > 0) {
+        const points = [];
+        for (const [ts, p] of btcSessionTicks) {
+          const x = plotLeft + ((ts - _startTs) / _durationSecs) * plotW;
+          const y = getY(p);
+          points.push({ x, y, val: p, ts });
+        }
+
+        if (points.length >= 1) {
+          if (points.length === 1) {
+            const extraX = Math.max(points[0].x + 1, plotLeft + ((effectiveNowSec - _startTs) / _durationSecs) * plotW);
+            points.push({ x: extraX, y: points[0].y, val: points[0].val, ts: effectiveNowSec });
+          }
+
+          const latestPt = points[points.length - 1];
+          const isUp = _btcOpen ? (latestPt.val >= _btcOpen) : true;
+          const mainColor = isUp ? '#00d4aa' : '#ff4d6d';
+
+          // Draw Area Fill Under Curve
+          const grad = _ctx.createLinearGradient(0, plotTop, 0, plotBottom);
+          grad.addColorStop(0, mainColor + '33');
+          grad.addColorStop(1, mainColor + '00');
+
+          _ctx.beginPath();
+          _ctx.moveTo(points[0].x, plotBottom);
+          for (let i = 0; i < points.length; i++) {
+            _ctx.lineTo(points[i].x, points[i].y);
+          }
+          _ctx.lineTo(latestPt.x, plotBottom);
+          _ctx.closePath();
+          _ctx.fillStyle = grad;
+          _ctx.fill();
+
+          // Draw Glowing Price Line
+          _ctx.save();
+          _ctx.shadowColor = mainColor;
+          _ctx.shadowBlur = 8;
+          _ctx.strokeStyle = mainColor;
+          _ctx.lineWidth = 2.5;
+          _ctx.lineJoin = 'round';
+          _ctx.lineCap = 'round';
+
+          _ctx.beginPath();
+          _ctx.moveTo(points[0].x, points[0].y);
+          for (let i = 1; i < points.length; i++) {
+            _ctx.lineTo(points[i].x, points[i].y);
+          }
+          _ctx.stroke();
+          _ctx.restore();
+
+          // Draw Pulsing Live Head Dot
+          const pulseR = 4 + Math.sin(_pulsePhase) * 1.5;
+          _ctx.beginPath();
+          _ctx.arc(latestPt.x, latestPt.y, pulseR + 4, 0, Math.PI * 2);
+          _ctx.fillStyle = mainColor + '44';
+          _ctx.fill();
+
+          _ctx.beginPath();
+          _ctx.arc(latestPt.x, latestPt.y, pulseR, 0, Math.PI * 2);
+          _ctx.fillStyle = mainColor;
+          _ctx.fill();
+
+          _ctx.beginPath();
+          _ctx.arc(latestPt.x, latestPt.y, 2, 0, Math.PI * 2);
+          _ctx.fillStyle = '#ffffff';
+          _ctx.fill();
+
+          // ─── Floating Live Head Badge in BTC Mode ─────────────────
+          if (_showHeadBadge && latestPt) {
+            const remSecs = Math.max(0, _endTs - effectiveNowSec);
+            const remM = Math.floor(remSecs / 60);
+            const remS = remSecs % 60;
+            const remStr = `${String(remM).padStart(2, '0')}:${String(remS).padStart(2, '0')}`;
+            
+            const deltaVal = _btcOpen ? (latestPt.val - _btcOpen) : 0;
+            const sign = deltaVal >= 0 ? '+$' : '-$';
+            const deltaStr = `${sign}${Math.abs(deltaVal).toFixed(2)}`;
+            const priceStr = `$${latestPt.val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            const timerStr = `⏱ ${remStr}`;
+
+            _ctx.save();
+            _ctx.font = 'bold 16px "JetBrains Mono", monospace';
+            const priceW = _ctx.measureText(priceStr).width;
+            _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+            const deltaW = _ctx.measureText(deltaStr).width;
+            const timerW = _ctx.measureText(timerStr).width;
+            const gapW = 10;
+            const padX = 12;
+            const badgeW = Math.round(padX * 2 + priceW + gapW + deltaW + gapW + timerW);
+            const badgeH = 34;
+            const DOT_OFFSET = 10;
+
+            let badgeX = Math.round(latestPt.x - badgeW / 2);
+            badgeX = Math.max(plotLeft + 4, Math.min(plotRight - badgeW - 4, badgeX));
+
+            let badgeY = Math.round(latestPt.y - badgeH - DOT_OFFSET);
+            let arrowBelow = true;
+            if (badgeY < plotTop + 4) {
+              badgeY = Math.round(latestPt.y + DOT_OFFSET + 4);
+              arrowBelow = false;
+            }
+
+            const bgSemiTransparent = 'rgba(8, 14, 24, 0.72)';
+
+            // Draw Pointer Arrow
+            _ctx.beginPath();
+            if (arrowBelow) {
+              _ctx.moveTo(latestPt.x - 6, badgeY + badgeH);
+              _ctx.lineTo(latestPt.x, latestPt.y - 4);
+              _ctx.lineTo(latestPt.x + 6, badgeY + badgeH);
+            } else {
+              _ctx.moveTo(latestPt.x - 6, badgeY);
+              _ctx.lineTo(latestPt.x, latestPt.y + 4);
+              _ctx.lineTo(latestPt.x + 6, badgeY);
+            }
+            _ctx.closePath();
+            _ctx.fillStyle = bgSemiTransparent;
+            _ctx.fill();
+            _ctx.strokeStyle = mainColor + 'cc';
+            _ctx.lineWidth = 1.4;
+            _ctx.stroke();
+
+            // Draw Card Body
+            _ctx.shadowColor = mainColor + '88';
+            _ctx.shadowBlur = 10;
+            _ctx.fillStyle = bgSemiTransparent;
+            _ctx.strokeStyle = mainColor + 'ee';
+            _ctx.lineWidth = 1.6;
+            _roundRect(_ctx, badgeX, badgeY, badgeW, badgeH, 8, true, true);
+            _ctx.restore();
+
+            // Draw Text inside Badge
+            _ctx.save();
+            _ctx.textBaseline = 'middle';
+            const midY = badgeY + badgeH / 2;
+
+            _ctx.textAlign = 'left';
+            _ctx.font = 'bold 16px "JetBrains Mono", monospace';
+            _ctx.fillStyle = '#ffffff';
+            _ctx.fillText(priceStr, badgeX + padX, midY);
+
+            _ctx.font = 'bold 14px "JetBrains Mono", monospace';
+            _ctx.fillStyle = mainColor;
+            _ctx.fillText(deltaStr, badgeX + padX + priceW + gapW, midY);
+
+            _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+            _ctx.fillStyle = '#64748b';
+            _ctx.fillText('·', badgeX + padX + priceW + gapW + deltaW + 3, midY);
+
+            _ctx.fillStyle = remSecs <= 30 ? '#ff4d6d' : '#94a3b8';
+            _ctx.fillText(timerStr, badgeX + padX + priceW + gapW + deltaW + gapW, midY);
+            _ctx.restore();
+          }
+
+          // Current Price Line to Right Scale
+          _ctx.beginPath();
+          _ctx.strokeStyle = mainColor + '66';
+          _ctx.lineWidth = 1;
+          _ctx.setLineDash([3, 3]);
+          _ctx.moveTo(latestPt.x, latestPt.y);
+          _ctx.lineTo(plotRight, latestPt.y);
+          _ctx.stroke();
+          _ctx.setLineDash([]);
+
+          // Right Scale Highlight Badge
+          _ctx.fillStyle = mainColor;
+          _roundRect(_ctx, plotRight + 2, latestPt.y - 9, RIGHT_SCALE_W - 4, 18, 4, true, false);
+          _ctx.fillStyle = '#090d16';
+          _ctx.font = 'bold 11px "JetBrains Mono", monospace';
+          _ctx.textAlign = 'left';
+          _ctx.textBaseline = 'middle';
+          _ctx.fillText(`$${latestPt.val.toFixed(1)}`, plotRight + 4, latestPt.y);
+        }
+      }
     }
 
-    // 5. Top Slim Header HUD
+    // ─── MODE B: OPTION TOKEN (0–100¢) PROBABILITY MODE ──────────────
+    else {
+      // Draw 0¢ ... 50¢ ... 100¢ reference lines
+      _ctx.lineWidth = 1;
+      _ctx.font = '10px "JetBrains Mono", monospace';
+      _ctx.textBaseline = 'middle';
+
+      const priceLevels = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+      for (const p of priceLevels) {
+        const y = plotBottom - (p / 100) * plotH;
+        const is50 = (p === 50);
+        const isBoundary = (p === 0 || p === 100);
+
+        _ctx.beginPath();
+        _ctx.strokeStyle = is50 ? 'rgba(56, 189, 248, 0.45)' : (isBoundary ? 'rgba(255,255,255,0.1)' : 'rgba(255, 255, 255, 0.04)');
+        _ctx.setLineDash(is50 ? [4, 4] : []);
+        _ctx.moveTo(plotLeft, y);
+        _ctx.lineTo(plotRight, y);
+        _ctx.stroke();
+
+        if (p % 20 === 0 || p === 50) {
+          _ctx.fillStyle = is50 ? '#38bdf8' : '#64748b';
+          _ctx.fillText(`${p.toFixed(1)}¢`, plotRight + 6, y);
+        }
+      }
+
+      let sessionTicks = _rawTicks.filter(([ts]) => ts >= _startTs && ts <= _endTs);
+
+      if (sessionTicks.length > 0) {
+        if (sessionTicks[0][0] > _startTs) {
+          sessionTicks.unshift([_startTs, sessionTicks[0][1]]);
+        }
+        const lastTick = sessionTicks[sessionTicks.length - 1];
+        if (effectiveNowSec > lastTick[0]) {
+          sessionTicks.push([effectiveNowSec, lastTick[1]]);
+        }
+      } else if (_lastPrice !== null) {
+        sessionTicks.push([_startTs, _lastPrice]);
+        if (effectiveNowSec > _startTs) {
+          sessionTicks.push([effectiveNowSec, _lastPrice]);
+        }
+      }
+
+      if (sessionTicks.length > 0 && _durationSecs > 0) {
+        const points = [];
+        for (const [ts, upCents] of sessionTicks) {
+          const val = _outcomeMode === 'down' ? (100 - upCents) : upCents;
+          const x = plotLeft + ((ts - _startTs) / _durationSecs) * plotW;
+          const y = plotBottom - (Math.min(100, Math.max(0, val)) / 100) * plotH;
+          points.push({ x, y, val, ts });
+        }
+
+        if (points.length >= 1) {
+          if (points.length === 1) {
+            const extraX = Math.max(points[0].x + 1, plotLeft + ((effectiveNowSec - _startTs) / _durationSecs) * plotW);
+            points.push({ x: extraX, y: points[0].y, val: points[0].val, ts: effectiveNowSec });
+          }
+
+          const latestPt = points[points.length - 1];
+          const mainColor = latestPt.val > 52 ? '#00d4aa' : (latestPt.val < 48 ? '#ff4d6d' : '#38bdf8');
+
+          const grad = _ctx.createLinearGradient(0, plotTop, 0, plotBottom);
+          grad.addColorStop(0, mainColor + '33');
+          grad.addColorStop(1, mainColor + '00');
+
+          _ctx.beginPath();
+          _ctx.moveTo(points[0].x, plotBottom);
+          for (let i = 0; i < points.length; i++) {
+            _ctx.lineTo(points[i].x, points[i].y);
+          }
+          _ctx.lineTo(latestPt.x, plotBottom);
+          _ctx.closePath();
+          _ctx.fillStyle = grad;
+          _ctx.fill();
+
+          _ctx.save();
+          _ctx.shadowColor = mainColor;
+          _ctx.shadowBlur = 8;
+          _ctx.strokeStyle = mainColor;
+          _ctx.lineWidth = 2.5;
+          _ctx.lineJoin = 'round';
+          _ctx.lineCap = 'round';
+
+          _ctx.beginPath();
+          _ctx.moveTo(points[0].x, points[0].y);
+          for (let i = 1; i < points.length; i++) {
+            _ctx.lineTo(points[i].x, points[i].y);
+          }
+          _ctx.stroke();
+          _ctx.restore();
+
+          const pulseR = 4 + Math.sin(_pulsePhase) * 1.5;
+          _ctx.beginPath();
+          _ctx.arc(latestPt.x, latestPt.y, pulseR + 4, 0, Math.PI * 2);
+          _ctx.fillStyle = mainColor + '44';
+          _ctx.fill();
+
+          _ctx.beginPath();
+          _ctx.arc(latestPt.x, latestPt.y, pulseR, 0, Math.PI * 2);
+          _ctx.fillStyle = mainColor;
+          _ctx.fill();
+
+          _ctx.beginPath();
+          _ctx.arc(latestPt.x, latestPt.y, 2, 0, Math.PI * 2);
+          _ctx.fillStyle = '#ffffff';
+          _ctx.fill();
+
+          // ─── Floating Live Head Badge in Token Mode ──────────────
+          if (_showHeadBadge && latestPt) {
+            const remSecs = Math.max(0, _endTs - effectiveNowSec);
+            const remM = Math.floor(remSecs / 60);
+            const remS = remSecs % 60;
+            const remStr = `${String(remM).padStart(2, '0')}:${String(remS).padStart(2, '0')}`;
+            
+            const priceStr = `${latestPt.val.toFixed(1)}¢`;
+            const timerStr = `⏱ ${remStr}`;
+
+            _ctx.save();
+            _ctx.font = 'bold 18px "JetBrains Mono", monospace';
+            const priceW = _ctx.measureText(priceStr).width;
+            _ctx.font = 'bold 15px "JetBrains Mono", monospace';
+            const timerW = _ctx.measureText(timerStr).width;
+            const gapW = 12;
+            const padX = 14;
+            const badgeW = Math.round(padX * 2 + priceW + gapW + timerW);
+            const badgeH = 34;
+            const DOT_OFFSET = 10;
+
+            let badgeX = Math.round(latestPt.x - badgeW / 2);
+            badgeX = Math.max(plotLeft + 4, Math.min(plotRight - badgeW - 4, badgeX));
+
+            let badgeY = Math.round(latestPt.y - badgeH - DOT_OFFSET);
+            let arrowBelow = true;
+            if (badgeY < plotTop + 4) {
+              badgeY = Math.round(latestPt.y + DOT_OFFSET + 4);
+              arrowBelow = false;
+            }
+
+            const bgSemiTransparent = 'rgba(8, 14, 24, 0.72)';
+
+            _ctx.beginPath();
+            if (arrowBelow) {
+              _ctx.moveTo(latestPt.x - 6, badgeY + badgeH);
+              _ctx.lineTo(latestPt.x, latestPt.y - 4);
+              _ctx.lineTo(latestPt.x + 6, badgeY + badgeH);
+            } else {
+              _ctx.moveTo(latestPt.x - 6, badgeY);
+              _ctx.lineTo(latestPt.x, latestPt.y + 4);
+              _ctx.lineTo(latestPt.x + 6, badgeY);
+            }
+            _ctx.closePath();
+            _ctx.fillStyle = bgSemiTransparent;
+            _ctx.fill();
+            _ctx.strokeStyle = mainColor + 'cc';
+            _ctx.lineWidth = 1.4;
+            _ctx.stroke();
+
+            _ctx.shadowColor = mainColor + '88';
+            _ctx.shadowBlur = 10;
+            _ctx.fillStyle = bgSemiTransparent;
+            _ctx.strokeStyle = mainColor + 'ee';
+            _ctx.lineWidth = 1.6;
+            _roundRect(_ctx, badgeX, badgeY, badgeW, badgeH, 8, true, true);
+            _ctx.restore();
+
+            _ctx.save();
+            _ctx.textBaseline = 'middle';
+            const midY = badgeY + badgeH / 2;
+
+            _ctx.textAlign = 'left';
+            _ctx.font = 'bold 18px "JetBrains Mono", monospace';
+            _ctx.fillStyle = mainColor;
+            _ctx.fillText(priceStr, badgeX + padX, midY);
+
+            _ctx.font = 'bold 15px "JetBrains Mono", monospace';
+            _ctx.fillStyle = '#64748b';
+            _ctx.fillText('·', badgeX + padX + priceW + 4, midY);
+
+            _ctx.fillStyle = remSecs <= 30 ? '#ff4d6d' : '#ffffff';
+            _ctx.fillText(timerStr, badgeX + padX + priceW + gapW, midY);
+            _ctx.restore();
+          }
+
+          _ctx.beginPath();
+          _ctx.strokeStyle = mainColor + '66';
+          _ctx.lineWidth = 1;
+          _ctx.setLineDash([3, 3]);
+          _ctx.moveTo(latestPt.x, latestPt.y);
+          _ctx.lineTo(plotRight, latestPt.y);
+          _ctx.stroke();
+          _ctx.setLineDash([]);
+
+          _ctx.fillStyle = mainColor;
+          _roundRect(_ctx, plotRight + 2, latestPt.y - 9, RIGHT_SCALE_W - 4, 18, 4, true, false);
+          _ctx.fillStyle = '#090d16';
+          _ctx.font = 'bold 11px "JetBrains Mono", monospace';
+          _ctx.textAlign = 'left';
+          _ctx.textBaseline = 'middle';
+          _ctx.fillText(`${latestPt.val.toFixed(1)}¢`, plotRight + 6, latestPt.y);
+        }
+      }
+    }
+
+    // ─── 4. Top Slim Header HUD ───────────────────────────────────────
     _ctx.fillStyle = 'rgba(9, 17, 30, 0.92)';
     _ctx.fillRect(0, 0, w, TOP_HUD_H);
 
@@ -4361,6 +4677,7 @@ window.LiveTradingManager = (() => {
     const isMobile = (w < 600);
     const slugText = isMobile ? `...${fullSlug.slice(-10)} ↗` : `${fullSlug} ↗`;
     const labelDuration = isMobile ? (is5m ? '5M' : '15M') : (is5m ? '5M FIXED (300s)' : '15M FIXED (900s)');
+    const modeBadge = _chartMode === 'btc' ? '₿ BTC ($)' : '¢ PROB (%)';
 
     let curX = isMobile ? 8 : 14;
     const textY = 17;
@@ -4381,6 +4698,15 @@ window.LiveTradingManager = (() => {
     _ctx.font = isMobile ? '800 11px "JetBrains Mono", monospace' : '800 12px "JetBrains Mono", monospace';
     _ctx.fillText(`⏳ ${labelDuration}`, curX, textY);
     curX += _ctx.measureText(`⏳ ${labelDuration}`).width + (isMobile ? 6 : 10);
+
+    _ctx.fillStyle = '#64748b';
+    _ctx.fillText('·', curX, textY);
+    curX += isMobile ? 10 : 14;
+
+    _ctx.fillStyle = '#a855f7';
+    _ctx.font = isMobile ? '700 10px "JetBrains Mono", monospace' : '700 11px "JetBrains Mono", monospace';
+    _ctx.fillText(modeBadge, curX, textY);
+    curX += _ctx.measureText(modeBadge).width + (isMobile ? 6 : 10);
 
     // TWAP BTC Price Feed
     if (_btcCurrent && curX + 110 < w - RIGHT_SCALE_W) {
@@ -4511,7 +4837,10 @@ window.LiveTradingManager = (() => {
     init,
     setMarket,
     pushTick,
+    pushBtcTick,
     setHistoricalTicks,
+    setChartMode,
+    getChartMode,
     setOutcomeMode,
     setShowHeadBadge,
     getShowHeadBadge,
@@ -5773,9 +6102,10 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v4.1
+ * app.js — Main Application Coordinator v4.2
  * 
- * Features & Fixes in v4.1:
+ * Features & Fixes in v4.2:
+ * - Dual Graph Modes: ₿ BTC ($) live curve vs ¢ PROB (%) option token curve
  * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent background)
  * - Real API session price history downloader on mid-session load (no fake 50¢ flat lines!)
  * - Centered panel & toolbar layout
@@ -5823,6 +6153,8 @@ window.App = (() => {
     liveBtcStrike:     $('live-btc-strike'),
 
     chkHeadTag:        $('chk-head-tag'),
+    btnModeBtc:        $('btn-mode-btc'),
+    btnModeToken:      $('btn-mode-token'),
 
     marketSlug:        $('market-slug-display'),
     marketWindow:      $('market-window-display'),
@@ -5877,13 +6209,16 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.1...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.2...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
       if (el.chkHeadTag) {
         el.chkHeadTag.checked = LiveTradingManager.getShowHeadBadge();
       }
+      const initialMode = LiveTradingManager.getChartMode();
+      el.btnModeBtc?.classList.toggle('active', initialMode === 'btc');
+      el.btnModeToken?.classList.toggle('active', initialMode === 'token');
     }
 
     const chartOk = ChartManager.init(el.chartContainer);
@@ -5958,7 +6293,9 @@ window.App = (() => {
         ChartManager.updateLiveSessionBtc(cur.slug, effStrike, _liveBtcCurrent, _liveBtcChange);
       }
       if (window.LiveTradingManager) {
+        const nowSec = Math.floor(Date.now() / 1000);
         LiveTradingManager.updateBtcPrice(effStrike, _liveBtcCurrent, _liveBtcChange);
+        LiveTradingManager.pushBtcTick(nowSec, _liveBtcCurrent, effStrike);
       }
     };
 
@@ -6069,6 +6406,9 @@ window.App = (() => {
 
     if (window.LiveTradingManager) {
       LiveTradingManager.pushTick(nowSec, rawUpCents);
+      if (_liveBtcCurrent) {
+        LiveTradingManager.pushBtcTick(nowSec, _liveBtcCurrent, _liveBtcOpen);
+      }
     }
 
     _updatePriceUI();
@@ -6344,6 +6684,9 @@ window.App = (() => {
         await LiveTradingManager.setMarket(newMarket);
         LiveTradingManager.pushTick(newMarket.startTs || nowSec, initialRawCents);
         LiveTradingManager.pushTick(nowSec, initialRawCents);
+        if (_liveBtcCurrent) {
+          LiveTradingManager.pushBtcTick(nowSec, _liveBtcCurrent, _liveBtcOpen);
+        }
       }
 
       TickBuffer.addTick(newMarket.startTs || nowSec, initialRawCents);
@@ -6529,6 +6872,24 @@ window.App = (() => {
       if (window.LiveTradingManager) {
         LiveTradingManager.setShowHeadBadge(e.target.checked);
         showToast(e.target.checked ? '🏷️ Live Head Badge: ON' : '🏷️ Live Head Badge: OFF', 'info', 1500);
+      }
+    });
+
+    el.btnModeBtc?.addEventListener('click', () => {
+      if (window.LiveTradingManager) {
+        LiveTradingManager.setChartMode('btc');
+        el.btnModeBtc.classList.add('active');
+        el.btnModeToken.classList.remove('active');
+        showToast('₿ Mode: BTC Price ($) Live Curve', 'info', 2000);
+      }
+    });
+
+    el.btnModeToken?.addEventListener('click', () => {
+      if (window.LiveTradingManager) {
+        LiveTradingManager.setChartMode('token');
+        el.btnModeToken.classList.add('active');
+        el.btnModeBtc.classList.remove('active');
+        showToast('¢ Mode: Option Token Probability (0–100¢)', 'info', 2000);
       }
     });
 

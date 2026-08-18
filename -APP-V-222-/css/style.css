@@ -284,6 +284,36 @@ html, body {
   box-shadow: 0 0 8px var(--accent-teal, #00d4aa);
 }
 
+/* Chart Mode Buttons (BTC vs PROB) */
+#chart-mode-buttons {
+  display: flex;
+  gap: 3px;
+  background: var(--bg-primary, #080b0f);
+  border: 1px solid var(--border, #1e293b);
+  border-radius: 6px;
+  padding: 2px;
+}
+.mode-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary, #94a3b8);
+  font-family: 'Inter', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+  letter-spacing: 0.03em;
+}
+.mode-btn:hover { color: #ffffff; background: var(--bg-hover); }
+.mode-btn.active {
+  background: linear-gradient(135deg, var(--accent-teal, #00d4aa), var(--accent-blue, #38bdf8));
+  color: #080b0f;
+  font-weight: 800;
+  box-shadow: 0 0 8px rgba(0, 212, 170, 0.3);
+}
+
 .price-hero-item {
   display: flex;
   flex-direction: column;

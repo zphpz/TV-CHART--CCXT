@@ -1,7 +1,8 @@
 /**
- * app.js — Main Application Coordinator v4.1
+ * app.js — Main Application Coordinator v4.2
  * 
- * Features & Fixes in v4.1:
+ * Features & Fixes in v4.2:
+ * - Dual Graph Modes: ₿ BTC ($) live curve vs ¢ PROB (%) option token curve
  * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent background)
  * - Real API session price history downloader on mid-session load (no fake 50¢ flat lines!)
  * - Centered panel & toolbar layout
@@ -49,6 +50,8 @@ window.App = (() => {
     liveBtcStrike:     $('live-btc-strike'),
 
     chkHeadTag:        $('chk-head-tag'),
+    btnModeBtc:        $('btn-mode-btc'),
+    btnModeToken:      $('btn-mode-token'),
 
     marketSlug:        $('market-slug-display'),
     marketWindow:      $('market-window-display'),
@@ -103,13 +106,16 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.1...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.2...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
       if (el.chkHeadTag) {
         el.chkHeadTag.checked = LiveTradingManager.getShowHeadBadge();
       }
+      const initialMode = LiveTradingManager.getChartMode();
+      el.btnModeBtc?.classList.toggle('active', initialMode === 'btc');
+      el.btnModeToken?.classList.toggle('active', initialMode === 'token');
     }
 
     const chartOk = ChartManager.init(el.chartContainer);
@@ -184,7 +190,9 @@ window.App = (() => {
         ChartManager.updateLiveSessionBtc(cur.slug, effStrike, _liveBtcCurrent, _liveBtcChange);
       }
       if (window.LiveTradingManager) {
+        const nowSec = Math.floor(Date.now() / 1000);
         LiveTradingManager.updateBtcPrice(effStrike, _liveBtcCurrent, _liveBtcChange);
+        LiveTradingManager.pushBtcTick(nowSec, _liveBtcCurrent, effStrike);
       }
     };
 
@@ -295,6 +303,9 @@ window.App = (() => {
 
     if (window.LiveTradingManager) {
       LiveTradingManager.pushTick(nowSec, rawUpCents);
+      if (_liveBtcCurrent) {
+        LiveTradingManager.pushBtcTick(nowSec, _liveBtcCurrent, _liveBtcOpen);
+      }
     }
 
     _updatePriceUI();
@@ -570,6 +581,9 @@ window.App = (() => {
         await LiveTradingManager.setMarket(newMarket);
         LiveTradingManager.pushTick(newMarket.startTs || nowSec, initialRawCents);
         LiveTradingManager.pushTick(nowSec, initialRawCents);
+        if (_liveBtcCurrent) {
+          LiveTradingManager.pushBtcTick(nowSec, _liveBtcCurrent, _liveBtcOpen);
+        }
       }
 
       TickBuffer.addTick(newMarket.startTs || nowSec, initialRawCents);
@@ -755,6 +769,24 @@ window.App = (() => {
       if (window.LiveTradingManager) {
         LiveTradingManager.setShowHeadBadge(e.target.checked);
         showToast(e.target.checked ? '🏷️ Live Head Badge: ON' : '🏷️ Live Head Badge: OFF', 'info', 1500);
+      }
+    });
+
+    el.btnModeBtc?.addEventListener('click', () => {
+      if (window.LiveTradingManager) {
+        LiveTradingManager.setChartMode('btc');
+        el.btnModeBtc.classList.add('active');
+        el.btnModeToken.classList.remove('active');
+        showToast('₿ Mode: BTC Price ($) Live Curve', 'info', 2000);
+      }
+    });
+
+    el.btnModeToken?.addEventListener('click', () => {
+      if (window.LiveTradingManager) {
+        LiveTradingManager.setChartMode('token');
+        el.btnModeToken.classList.add('active');
+        el.btnModeBtc.classList.remove('active');
+        showToast('¢ Mode: Option Token Probability (0–100¢)', 'info', 2000);
       }
     });
 
