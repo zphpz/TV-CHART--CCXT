@@ -141,7 +141,7 @@ window.MarketManager = (() => {
     return isNaN(mid) ? null : mid;
   }
 
-  // ─── Dual-Token Pure CLOB + 9-Stream Deep Trades History Downloader ──
+  // ─── Dual-Token Pure CLOB + Deep Market Trades History Downloader ───
   async function fetchSessionPriceHistory(upTokenId, downTokenId, startTs, endTs, conditionId) {
     if (!upTokenId || !startTs || !endTs) return [];
 
@@ -176,10 +176,10 @@ window.MarketManager = (() => {
       return { inSession: [], preStart: null };
     };
 
-    // 2. Fetch Data API trades by conditionId or asset_id with offset pagination
-    const fetchTradesPage = async (paramKey, paramVal, offset, isForceDown = false) => {
-      if (!paramVal) return [];
-      const url = `https://data-api.polymarket.com/trades?${paramKey}=${paramVal}&limit=500&offset=${offset}&_t=${nowNonce}`;
+    // 2. Fetch Data API trades strictly by conditionId (never global asset_id) with deep pagination
+    const fetchMarketTrades = async (cond, offset) => {
+      if (!cond) return [];
+      const url = `https://data-api.polymarket.com/trades?market=${cond}&limit=500&offset=${offset}&_t=${nowNonce}`;
       const data = await _fetchWithRetry(url, 2, 2500);
       if (Array.isArray(data) && data.length > 0) {
         const list = [];
@@ -189,7 +189,7 @@ window.MarketManager = (() => {
           let p = parseFloat(tr.price);
           if (!isNaN(ts) && !isNaN(p) && ts >= startTs && ts <= endTs) {
             const outcome = String(tr.outcome || '').toLowerCase();
-            const isDown = isForceDown || outcome === 'down' || tr.outcomeIndex === 1;
+            const isDown = outcome === 'down' || tr.outcomeIndex === 1;
             if (isDown) {
               p = 1.0 - p;
             }
@@ -203,24 +203,19 @@ window.MarketManager = (() => {
     };
 
     try {
-      // Launch all 9 high-density streams in parallel
+      // Launch CLOB + 6-page deep parallel ingestion strictly for this market's conditionId
       const tasks = [
         fetchTokenClob(upTokenId, false),
         fetchTokenClob(downTokenId, true),
       ];
 
       if (conditionId) {
-        tasks.push(fetchTradesPage('market', conditionId, 0));
-        tasks.push(fetchTradesPage('market', conditionId, 500));
-        tasks.push(fetchTradesPage('market', conditionId, 1000));
-      }
-      if (upTokenId) {
-        tasks.push(fetchTradesPage('asset_id', upTokenId, 0, false));
-        tasks.push(fetchTradesPage('asset_id', upTokenId, 500, false));
-      }
-      if (downTokenId) {
-        tasks.push(fetchTradesPage('asset_id', downTokenId, 0, true));
-        tasks.push(fetchTradesPage('asset_id', downTokenId, 500, true));
+        tasks.push(fetchMarketTrades(conditionId, 0));
+        tasks.push(fetchMarketTrades(conditionId, 500));
+        tasks.push(fetchMarketTrades(conditionId, 1000));
+        tasks.push(fetchMarketTrades(conditionId, 1500));
+        tasks.push(fetchMarketTrades(conditionId, 2000));
+        tasks.push(fetchMarketTrades(conditionId, 2500));
       }
 
       const results = await Promise.allSettled(tasks);
@@ -246,7 +241,7 @@ window.MarketManager = (() => {
         }
       }
 
-      // Process all trade pages (indices 2..N)
+      // Process all pure market trade pages (indices 2..N)
       for (let i = 2; i < results.length; i++) {
         if (results[i].status === 'fulfilled' && Array.isArray(results[i].value)) {
           for (let [ts, val] of results[i].value) {

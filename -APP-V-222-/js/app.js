@@ -1,8 +1,8 @@
 /**
- * app.js — Main Application Coordinator v5.4
+ * app.js — Main Application Coordinator v5.5
  * 
- * Features & Fixes in v5.4:
- * - 9-Stream Parallel Deep Trades Ingestion (captures all 1,200+ trades with zero middle gaps)
+ * Features & Fixes in v5.5:
+ * - Clean Multi-Page Market Pagination (eliminates asset_id spurious trades and sawtooth spikes)
  * - Anti-Cloudflare Cache Busting (_t=nonce): eliminates stale cached history from CDN
  * - High-Density History Merge: Merges Dual-Token CLOB prices-history with Data API individual trades
  * - True Pre-Start Opening Anchor: Captures pre-round baseline price and preserves early price steps
@@ -117,7 +117,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.4...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.5...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
