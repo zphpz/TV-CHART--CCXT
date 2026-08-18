@@ -1,7 +1,8 @@
 /**
- * app.js — Main Application Coordinator v5.5
+ * app.js — Main Application Coordinator v5.6
  * 
- * Features & Fixes in v5.5:
+ * Features & Fixes in v5.6:
+ * - F5-Proof Live Stream Cache (preserves high-frequency second-by-second live resolution across page reloads)
  * - Clean Multi-Page Market Pagination (eliminates asset_id spurious trades and sawtooth spikes)
  * - Anti-Cloudflare Cache Busting (_t=nonce): eliminates stale cached history from CDN
  * - High-Density History Merge: Merges Dual-Token CLOB prices-history with Data API individual trades
@@ -117,7 +118,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.5...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.6...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);

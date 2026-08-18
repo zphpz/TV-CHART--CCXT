@@ -98,6 +98,35 @@ window.LiveTradingManager = (() => {
     return true;
   }
 
+  // ─── SessionStorage Live Stream Cache (F5-Proof Persistence) ───────
+  let _lastSaveSessionTime = 0;
+  function _saveSessionStorage() {
+    if (!_currentMarket?.slug || !_rawTicks || _rawTicks.length === 0) return;
+    const now = Date.now();
+    if (now - _lastSaveSessionTime < 1000) return; // Throttle to 1s
+    _lastSaveSessionTime = now;
+    try {
+      const payload = {
+        slug: _currentMarket.slug,
+        rawTicks: _rawTicks,
+        btcTicks: _btcTicks,
+        lastSaved: now
+      };
+      sessionStorage.setItem('pm_live_' + _currentMarket.slug, JSON.stringify(payload));
+    } catch (e) {}
+  }
+
+  function _loadSessionStorage(slug) {
+    if (!slug) return null;
+    try {
+      const raw = sessionStorage.getItem('pm_live_' + slug);
+      if (raw) {
+        return JSON.parse(raw);
+      }
+    } catch (e) {}
+    return null;
+  }
+
   // ─── Market Initialization & History Population ────────────────────
   async function setMarket(market, initialHist) {
     if (!market) return;
@@ -120,15 +149,44 @@ window.LiveTradingManager = (() => {
       _btcTicks.push([_startTs, _btcOpen]);
     }
 
+    // Merge API history with any locally recorded live ticks from sessionStorage (F5-proof)
+    const cached = _loadSessionStorage(market.slug);
+    const tickMap = new Map();
+    const btcMap = new Map();
+
+    if (_btcOpen) btcMap.set(_startTs, _btcOpen);
+
     if (Array.isArray(initialHist) && initialHist.length > 0) {
-      _rawTicks = initialHist.slice();
-      _lastPrice = initialHist[initialHist.length - 1][1];
+      initialHist.forEach(([t, p]) => tickMap.set(t, p));
+    }
+
+    if (cached) {
+      if (Array.isArray(cached.rawTicks)) {
+        cached.rawTicks.forEach(([t, p]) => {
+          if (t >= _startTs && t <= _endTs) tickMap.set(t, p);
+        });
+      }
+      if (Array.isArray(cached.btcTicks)) {
+        cached.btcTicks.forEach(([t, p]) => {
+          if (t >= _startTs && t <= _endTs) btcMap.set(t, p);
+        });
+      }
+    }
+
+    if (tickMap.size > 0) {
+      _rawTicks = Array.from(tickMap.entries()).sort((a, b) => a[0] - b[0]);
+      _lastPrice = _rawTicks[_rawTicks.length - 1][1];
     } else {
       await _tryFetchHistory(market);
       if (_rawTicks.length < 2 && window.MarketManager) {
         _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1200));
         _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3000));
       }
+    }
+
+    if (btcMap.size > 0) {
+      _btcTicks = Array.from(btcMap.entries()).sort((a, b) => a[0] - b[0]);
+      _btcCurrent = _btcTicks[_btcTicks.length - 1][1];
     }
 
     _isDirty = true;
@@ -142,15 +200,21 @@ window.LiveTradingManager = (() => {
       const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, _startTs, _endTs, market.conditionId);
       if (_currentMarket?.slug !== targetSlug) return;
       if (Array.isArray(hist) && hist.length > 0) {
-        _rawTicks = hist.slice();
-        _lastPrice = hist[hist.length - 1][1];
+        // Merge fetched history with existing live buffer without overwriting newer live points
+        const map = new Map();
+        hist.forEach(([t, p]) => map.set(t, p));
+        _rawTicks.forEach(([t, p]) => map.set(t, p)); // preserve live recorded points
+
+        _rawTicks = Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+        _lastPrice = _rawTicks[_rawTicks.length - 1][1];
         if (window.TickBuffer) {
           window.TickBuffer.reset(false);
-          hist.forEach(([t, p]) => window.TickBuffer.addTick(t, p));
+          _rawTicks.forEach(([t, p]) => window.TickBuffer.addTick(t, p));
         }
         if (window.PriceEngine) {
           PriceEngine.updateLastTrade(_lastPrice / 100);
         }
+        _saveSessionStorage();
         _isDirty = true;
         _render();
       }
@@ -213,6 +277,7 @@ window.LiveTradingManager = (() => {
       }
     }
     _isDirty = true;
+    _saveSessionStorage();
   }
 
   function pushBtcTick(unixSec, btcPrice, strikePrice) {
@@ -263,6 +328,7 @@ window.LiveTradingManager = (() => {
       }
     }
     _isDirty = true;
+    _saveSessionStorage();
   }
 
   function setHistoricalTicks(ticks) {
