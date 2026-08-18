@@ -1,10 +1,10 @@
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.0
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.1
  * 
  * Features:
  * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
+ * - Large prominent floating live head badge (20px font, 10px offset, semi-transparent glass background)
  * - Automatic historical trade backfill on mid-session join (no fake 50¢ flat line or diagonal jumps!)
- * - Large prominent floating live head badge with current price & remaining countdown timer
  * - Toggleable on/off via header control & persisted in localStorage
  * - Real-time auto-advancing line & pulsing head from second 0 to nowSec
  * - Anti-aliased glowing live price line with gradient under-fill
@@ -84,7 +84,7 @@ window.LiveTradingManager = (() => {
     _setupResize();
     _startAnimationLoop();
 
-    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.0)');
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.1)');
     return true;
   }
 
@@ -149,7 +149,6 @@ window.LiveTradingManager = (() => {
 
     _lastPrice = rawUpCents;
 
-    // If starting fresh, anchor from _startTs with the ACTUAL real price (no 50¢ dummy jumps!)
     if (_rawTicks.length === 0) {
       _rawTicks.push([_startTs, rawUpCents]);
       if (unixSec > _startTs) {
@@ -287,11 +286,9 @@ window.LiveTradingManager = (() => {
     let sessionTicks = _rawTicks.filter(([ts]) => ts >= _startTs && ts <= _endTs);
 
     if (sessionTicks.length > 0) {
-      // Ensure start anchor
       if (sessionTicks[0][0] > _startTs) {
         sessionTicks.unshift([_startTs, sessionTicks[0][1]]);
       }
-      // Extend line forward to current live second
       const lastTick = sessionTicks[sessionTicks.length - 1];
       if (effectiveNowSec > lastTick[0]) {
         sessionTicks.push([effectiveNowSec, lastTick[1]]);
@@ -370,7 +367,7 @@ window.LiveTradingManager = (() => {
         _ctx.fillStyle = '#ffffff';
         _ctx.fill();
 
-        // Draw Large Prominent Floating Live Head Badge with Price & Remaining Timer
+        // ─── Draw Large Prominent Floating Live Head Badge ────────────────
         if (_showHeadBadge && latestPt) {
           const remSecs = Math.max(0, _endTs - effectiveNowSec);
           const remM = Math.floor(remSecs / 60);
@@ -381,51 +378,56 @@ window.LiveTradingManager = (() => {
           const timerStr = `⏱ ${remStr}`;
 
           _ctx.save();
-          _ctx.font = 'bold 14px "JetBrains Mono", monospace';
+          // Large Hero Font
+          _ctx.font = 'bold 18px "JetBrains Mono", monospace';
           const priceW = _ctx.measureText(priceStr).width;
-          _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+          _ctx.font = 'bold 15px "JetBrains Mono", monospace';
           const timerW = _ctx.measureText(timerStr).width;
-          const gapW = 10;
-          const padX = 12;
+          const gapW = 12;
+          const padX = 14;
           const badgeW = Math.round(padX * 2 + priceW + gapW + timerW);
-          const badgeH = 28;
+          const badgeH = 34;
+          const DOT_OFFSET = 10; // Requested 10px offset
 
           // Position badge centered above latestPt
           let badgeX = Math.round(latestPt.x - badgeW / 2);
           badgeX = Math.max(plotLeft + 4, Math.min(plotRight - badgeW - 4, badgeX));
 
-          let badgeY = Math.round(latestPt.y - badgeH - 12);
+          let badgeY = Math.round(latestPt.y - badgeH - DOT_OFFSET);
           let arrowBelow = true;
           if (badgeY < plotTop + 4) {
-            badgeY = Math.round(latestPt.y + 14);
+            badgeY = Math.round(latestPt.y + DOT_OFFSET + 4);
             arrowBelow = false;
           }
+
+          // Semi-transparent background
+          const bgSemiTransparent = 'rgba(8, 14, 24, 0.72)';
 
           // Draw Pointer Arrow Caret
           _ctx.beginPath();
           if (arrowBelow) {
-            _ctx.moveTo(latestPt.x - 5, badgeY + badgeH);
+            _ctx.moveTo(latestPt.x - 6, badgeY + badgeH);
             _ctx.lineTo(latestPt.x, latestPt.y - 4);
-            _ctx.lineTo(latestPt.x + 5, badgeY + badgeH);
+            _ctx.lineTo(latestPt.x + 6, badgeY + badgeH);
           } else {
-            _ctx.moveTo(latestPt.x - 5, badgeY);
+            _ctx.moveTo(latestPt.x - 6, badgeY);
             _ctx.lineTo(latestPt.x, latestPt.y + 4);
-            _ctx.lineTo(latestPt.x + 5, badgeY);
+            _ctx.lineTo(latestPt.x + 6, badgeY);
           }
           _ctx.closePath();
-          _ctx.fillStyle = '#090d16';
+          _ctx.fillStyle = bgSemiTransparent;
           _ctx.fill();
-          _ctx.strokeStyle = mainColor;
+          _ctx.strokeStyle = mainColor + 'cc';
           _ctx.lineWidth = 1.4;
           _ctx.stroke();
 
-          // Draw Badge Card Body with Glow
-          _ctx.shadowColor = mainColor + '99';
-          _ctx.shadowBlur = 12;
-          _ctx.fillStyle = 'rgba(9, 13, 22, 0.95)';
-          _ctx.strokeStyle = mainColor;
+          // Draw Badge Card Body with Glow & Semi-transparent background
+          _ctx.shadowColor = mainColor + '88';
+          _ctx.shadowBlur = 10;
+          _ctx.fillStyle = bgSemiTransparent;
+          _ctx.strokeStyle = mainColor + 'ee';
           _ctx.lineWidth = 1.6;
-          _roundRect(_ctx, badgeX, badgeY, badgeW, badgeH, 6, true, true);
+          _roundRect(_ctx, badgeX, badgeY, badgeW, badgeH, 8, true, true);
           _ctx.restore();
 
           // Draw Text inside Badge
@@ -433,19 +435,19 @@ window.LiveTradingManager = (() => {
           _ctx.textBaseline = 'middle';
           const midY = badgeY + badgeH / 2;
 
-          // Price text (large & colored)
+          // Large Price Text
           _ctx.textAlign = 'left';
-          _ctx.font = 'bold 14px "JetBrains Mono", monospace';
+          _ctx.font = 'bold 18px "JetBrains Mono", monospace';
           _ctx.fillStyle = mainColor;
           _ctx.fillText(priceStr, badgeX + padX, midY);
 
           // Divider dot
-          _ctx.font = 'bold 13px "JetBrains Mono", monospace';
-          _ctx.fillStyle = '#475569';
-          _ctx.fillText('·', badgeX + padX + priceW + 3, midY);
+          _ctx.font = 'bold 15px "JetBrains Mono", monospace';
+          _ctx.fillStyle = '#64748b';
+          _ctx.fillText('·', badgeX + padX + priceW + 4, midY);
 
           // Countdown Timer text
-          _ctx.font = 'bold 13px "JetBrains Mono", monospace';
+          _ctx.font = 'bold 15px "JetBrains Mono", monospace';
           _ctx.fillStyle = remSecs <= 30 ? '#ff4d6d' : '#ffffff';
           _ctx.fillText(timerStr, badgeX + padX + priceW + gapW, midY);
           _ctx.restore();

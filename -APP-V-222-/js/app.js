@@ -1,7 +1,8 @@
 /**
- * app.js — Main Application Coordinator v4.0
+ * app.js — Main Application Coordinator v4.1
  * 
- * Features & Fixes in v4.0:
+ * Features & Fixes in v4.1:
+ * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent background)
  * - Real API session price history downloader on mid-session load (no fake 50¢ flat lines!)
  * - Centered panel & toolbar layout
  * - Floating live head badge (Price & Countdown Timer) toggle control
@@ -102,7 +103,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.0...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.1...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
