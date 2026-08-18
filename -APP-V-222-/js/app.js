@@ -1,8 +1,10 @@
 /**
- * app.js — Main Application Coordinator v5.8
+ * app.js — Main Application Coordinator v5.9
  * 
- * Features & Fixes in v5.8:
- * - Dedicated Left Scale for Option Tokens (0–100¢) with Large Bold Text (step of 10: 0¢..100¢)
+ * Features & Fixes in v5.9:
+ * - 1:1 Accurate STRIKE Price for 15M & 5M Markets (direct Preddy API TWAP 60s priority & duration binding)
+ * - Identical 5-Cent Step Price Scales on Both Left and Right (0¢, 5¢, 10¢ ... 95¢, 100¢)
+ * - Dedicated Left Scale for Option Tokens (0–100¢) with Large Bold Text
  * - Dual-Badge Interactive System: Floating Live Head Badge + Interactive Hover Cursor Info Badge
  * - Clean Integer Cent Price Display (48¢, 50¢, 51¢, 99¢ matching official Polymarket UI without 0.5 fractions)
  * - F5-Proof Live Stream Cache (preserves high-frequency second-by-second live resolution across page reloads)
@@ -120,7 +122,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.8...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.9...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -521,7 +523,19 @@ window.App = (() => {
 
     // 4. Fetch official target strike
     if (window.PolyRTDS) {
-      PolyRTDS.checkAndRefreshWindow();
+      const dur = (market.startTs && market.endTs) ? (market.endTs - market.startTs) : (tfMinutes * 60);
+      PolyRTDS.setDurationSecs(dur);
+      if (market.startTs && market.endTs) {
+        PolyRTDS.fetchOfficialTargetPrice(market.startTs, market.endTs).then(openP => {
+          if (openP) {
+            _liveBtcOpen = openP;
+            _updateBtcHeroMetrics((_liveBtcCurrent ? _liveBtcCurrent - openP : 0), _liveBtcCurrent, openP);
+            if (window.LiveTradingManager) {
+              LiveTradingManager.updateBtcPrice(openP, _liveBtcCurrent, _liveBtcChange);
+            }
+          }
+        }).catch(() => {});
+      }
     }
 
     // 5. Fetch accurate midpoint for UP and DOWN tokens

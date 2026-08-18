@@ -1871,7 +1871,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v5.8</span>
+        <span id="app-version">v5.9</span>
       </div>
     </footer>
 
@@ -3742,25 +3742,28 @@ window.PolyRTDS = (() => {
 
   // ─── Target Price (OpenPrice / Strike) Multi-Tier Fetcher ─────────
   async function fetchOfficialTargetPrice(winStartSec, winEndSec) {
-    if (_isFetchingTarget) return;
-    _isFetchingTarget = true;
+    if (!winStartSec) return null;
+    const duration = (winEndSec && winEndSec > winStartSec) ? (winEndSec - winStartSec) : _durationSecs;
+    const endSec = winEndSec || (winStartSec + duration);
 
     const startISO = new Date(winStartSec * 1000).toISOString().replace('.000Z', 'Z');
-    const endISO = new Date(winEndSec * 1000).toISOString().replace('.000Z', 'Z');
+    const endISO = new Date(endSec * 1000).toISOString().replace('.000Z', 'Z');
 
     const endpoints = [
-      // 1. Local Server API Proxy (Zero CORS delay if run_app.py or server.js is running)
-      `/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
-      // 2. Direct Preddy Trade API
+      // 1. Direct Preddy Trade API (Strict 1:1 Polymarket Chainlink 60s TWAP Strike API)
       `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
-      // 3. Direct Polymarket Crypto API
+      // 2. Direct Polymarket Crypto API
       `https://polymarket.com/api/crypto/crypto-price?symbol=BTC&eventStartTime=${startISO}&endDate=${endISO}&twapEnabled=true&twapLookbackSeconds=60`,
+      // 3. Local Server API Proxy fallback
+      `/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
     ];
 
-    // Priority Tier 1: Local / Direct requests
     for (const url of endpoints) {
       try {
-        const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3000);
+        const resp = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: controller.signal });
+        clearTimeout(timer);
         if (resp.ok) {
           const data = await resp.json();
           const openPrice = typeof data.openPrice === 'number' ? data.openPrice : parseFloat(data.openPrice);
@@ -3769,35 +3772,16 @@ window.PolyRTDS = (() => {
             _cacheStrike(winStartSec, openPrice);
             _emitPriceUpdate();
             _isFetchingTarget = false;
-            return;
+            return openPrice;
           }
         }
       } catch (e) {
-        // Continue to next endpoint / proxy fallback
+        // Continue to next endpoint fallback
       }
     }
 
-    // Priority Tier 2: Direct API fetch with strict timeout
-    const preddyUrl = `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2500);
-      const resp = await fetch(preddyUrl, { signal: controller.signal });
-      clearTimeout(timer);
-      if (resp.ok) {
-        const data = await resp.json();
-        const openPrice = typeof data.openPrice === 'number' ? data.openPrice : parseFloat(data.openPrice);
-        if (!isNaN(openPrice) && openPrice > 0) {
-          _targetBtcPrice = openPrice;
-          _cacheStrike(winStartSec, openPrice);
-          _emitPriceUpdate();
-          _isFetchingTarget = false;
-          return;
-        }
-      }
-    } catch (e) {}
-
     _isFetchingTarget = false;
+    return null;
   }
 
   function _cacheStrike(winStartSec, price) {
@@ -3901,13 +3885,21 @@ window.PolyRTDS = (() => {
               _lastTimestamp = payload.timestamp || msg.timestamp || Date.now();
 
               const nowSec = Math.floor(_lastTimestamp / 1000);
+              const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
               const secInWin = nowSec % _durationSecs;
 
               // At exact round open (0-th second), anchor the target price
-              if (secInWin === 0 || _targetBtcPrice === null) {
+              if (secInWin === 0) {
                 _targetBtcPrice = val;
-                const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
                 _cacheStrike(winStartSec, val);
+              } else if (_targetBtcPrice === null) {
+                // If not cached, fetch official strike from API
+                const cached = _getCachedStrike(winStartSec);
+                if (cached) {
+                  _targetBtcPrice = cached;
+                } else {
+                  fetchOfficialTargetPrice(winStartSec, winStartSec + _durationSecs);
+                }
               }
 
               _emitPriceUpdate();
@@ -4060,7 +4052,7 @@ window.LiveTradingManager = (() => {
 
   const TOP_HUD_H    = 26;
   const LEFT_SCALE_W = 48;
-  const RIGHT_SCALE_W= 68;
+  const RIGHT_SCALE_W= 48;
   const BOTTOM_AXIS_H= 22;
 
   function init(container) {
@@ -4717,42 +4709,40 @@ window.LiveTradingManager = (() => {
       _ctx.lineWidth = 1;
       _ctx.textBaseline = 'middle';
 
-      const priceLevels = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+      const priceLevels = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
       for (let i = 0; i < priceLevels.length; i++) {
         const p = priceLevels[i];
         const y = plotBottom - (p / 100) * plotH;
         const is50 = (p === 50);
         const isBoundary = (p === 0 || p === 100);
+        const isDecade = (p % 10 === 0);
 
         _ctx.beginPath();
-        _ctx.strokeStyle = is50 ? 'rgba(56, 189, 248, 0.45)' : (isBoundary ? 'rgba(255,255,255,0.12)' : 'rgba(255, 255, 255, 0.05)');
+        _ctx.strokeStyle = is50 ? 'rgba(56, 189, 248, 0.45)' : (isBoundary ? 'rgba(255,255,255,0.12)' : (isDecade ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.02)'));
         _ctx.lineWidth = is50 ? 1.2 : 1;
         _ctx.setLineDash(is50 ? [4, 4] : []);
         _ctx.moveTo(plotLeft, y);
         _ctx.lineTo(plotRight, y);
         _ctx.stroke();
 
-        // ─── Left Scale: Large bold font with step of 10 ───
-        _ctx.font = 'bold 12px "JetBrains Mono", monospace';
+        // ─── Scale Text Color & Font (Identical on both sides) ───
+        let scaleColor = '#94a3b8';
+        if (p === 100) scaleColor = '#34d399';
+        else if (p === 50) scaleColor = '#38bdf8';
+        else if (p === 0) scaleColor = '#ff4d6d';
+        else if (isDecade) scaleColor = '#cbd5e1';
+
+        const fontStr = isDecade ? 'bold 11px "JetBrains Mono", monospace' : '10px "JetBrains Mono", monospace';
+        _ctx.font = fontStr;
+        _ctx.fillStyle = scaleColor;
+
+        // ─── Left Scale (step of 5) ───
         _ctx.textAlign = 'right';
-        if (p === 100) {
-          _ctx.fillStyle = '#34d399';
-        } else if (p === 50) {
-          _ctx.fillStyle = '#38bdf8';
-        } else if (p === 0) {
-          _ctx.fillStyle = '#ff4d6d';
-        } else {
-          _ctx.fillStyle = '#cbd5e1';
-        }
         _ctx.fillText(`${p}¢`, plotLeft - 6, y);
 
-        // ─── Right Scale: Secondary axis labels ───
-        if (p % 20 === 0 || p === 50) {
-          _ctx.font = '10px "JetBrains Mono", monospace';
-          _ctx.textAlign = 'left';
-          _ctx.fillStyle = is50 ? '#38bdf8' : '#64748b';
-          _ctx.fillText(`${p}¢`, plotRight + 6, y);
-        }
+        // ─── Right Scale (identical step of 5) ───
+        _ctx.textAlign = 'left';
+        _ctx.fillText(`${p}¢`, plotRight + 6, y);
       }
 
       _pointBuffer.length = 0;
@@ -4930,9 +4920,9 @@ window.LiveTradingManager = (() => {
         _roundRect(_ctx, plotRight + 2, latestPt.y - 9, RIGHT_SCALE_W - 4, 18, 4, true, false);
         _ctx.fillStyle = '#090d16';
         _ctx.font = 'bold 11px "JetBrains Mono", monospace';
-        _ctx.textAlign = 'left';
+        _ctx.textAlign = 'center';
         _ctx.textBaseline = 'middle';
-        _ctx.fillText(`${Math.round(latestPt.val)}¢`, plotRight + 6, latestPt.y);
+        _ctx.fillText(`${Math.round(latestPt.val)}¢`, plotRight + (RIGHT_SCALE_W / 2), latestPt.y);
       }
     }
 
@@ -6564,10 +6554,12 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v5.8
+ * app.js — Main Application Coordinator v5.9
  * 
- * Features & Fixes in v5.8:
- * - Dedicated Left Scale for Option Tokens (0–100¢) with Large Bold Text (step of 10: 0¢..100¢)
+ * Features & Fixes in v5.9:
+ * - 1:1 Accurate STRIKE Price for 15M & 5M Markets (direct Preddy API TWAP 60s priority & duration binding)
+ * - Identical 5-Cent Step Price Scales on Both Left and Right (0¢, 5¢, 10¢ ... 95¢, 100¢)
+ * - Dedicated Left Scale for Option Tokens (0–100¢) with Large Bold Text
  * - Dual-Badge Interactive System: Floating Live Head Badge + Interactive Hover Cursor Info Badge
  * - Clean Integer Cent Price Display (48¢, 50¢, 51¢, 99¢ matching official Polymarket UI without 0.5 fractions)
  * - F5-Proof Live Stream Cache (preserves high-frequency second-by-second live resolution across page reloads)
@@ -6685,7 +6677,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.8...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.9...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -7086,7 +7078,19 @@ window.App = (() => {
 
     // 4. Fetch official target strike
     if (window.PolyRTDS) {
-      PolyRTDS.checkAndRefreshWindow();
+      const dur = (market.startTs && market.endTs) ? (market.endTs - market.startTs) : (tfMinutes * 60);
+      PolyRTDS.setDurationSecs(dur);
+      if (market.startTs && market.endTs) {
+        PolyRTDS.fetchOfficialTargetPrice(market.startTs, market.endTs).then(openP => {
+          if (openP) {
+            _liveBtcOpen = openP;
+            _updateBtcHeroMetrics((_liveBtcCurrent ? _liveBtcCurrent - openP : 0), _liveBtcCurrent, openP);
+            if (window.LiveTradingManager) {
+              LiveTradingManager.updateBtcPrice(openP, _liveBtcCurrent, _liveBtcChange);
+            }
+          }
+        }).catch(() => {});
+      }
     }
 
     // 5. Fetch accurate midpoint for UP and DOWN tokens

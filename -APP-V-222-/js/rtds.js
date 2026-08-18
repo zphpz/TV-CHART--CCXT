@@ -43,25 +43,28 @@ window.PolyRTDS = (() => {
 
   // ─── Target Price (OpenPrice / Strike) Multi-Tier Fetcher ─────────
   async function fetchOfficialTargetPrice(winStartSec, winEndSec) {
-    if (_isFetchingTarget) return;
-    _isFetchingTarget = true;
+    if (!winStartSec) return null;
+    const duration = (winEndSec && winEndSec > winStartSec) ? (winEndSec - winStartSec) : _durationSecs;
+    const endSec = winEndSec || (winStartSec + duration);
 
     const startISO = new Date(winStartSec * 1000).toISOString().replace('.000Z', 'Z');
-    const endISO = new Date(winEndSec * 1000).toISOString().replace('.000Z', 'Z');
+    const endISO = new Date(endSec * 1000).toISOString().replace('.000Z', 'Z');
 
     const endpoints = [
-      // 1. Local Server API Proxy (Zero CORS delay if run_app.py or server.js is running)
-      `/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
-      // 2. Direct Preddy Trade API
+      // 1. Direct Preddy Trade API (Strict 1:1 Polymarket Chainlink 60s TWAP Strike API)
       `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
-      // 3. Direct Polymarket Crypto API
+      // 2. Direct Polymarket Crypto API
       `https://polymarket.com/api/crypto/crypto-price?symbol=BTC&eventStartTime=${startISO}&endDate=${endISO}&twapEnabled=true&twapLookbackSeconds=60`,
+      // 3. Local Server API Proxy fallback
+      `/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
     ];
 
-    // Priority Tier 1: Local / Direct requests
     for (const url of endpoints) {
       try {
-        const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3000);
+        const resp = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: controller.signal });
+        clearTimeout(timer);
         if (resp.ok) {
           const data = await resp.json();
           const openPrice = typeof data.openPrice === 'number' ? data.openPrice : parseFloat(data.openPrice);
@@ -70,35 +73,16 @@ window.PolyRTDS = (() => {
             _cacheStrike(winStartSec, openPrice);
             _emitPriceUpdate();
             _isFetchingTarget = false;
-            return;
+            return openPrice;
           }
         }
       } catch (e) {
-        // Continue to next endpoint / proxy fallback
+        // Continue to next endpoint fallback
       }
     }
 
-    // Priority Tier 2: Direct API fetch with strict timeout
-    const preddyUrl = `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2500);
-      const resp = await fetch(preddyUrl, { signal: controller.signal });
-      clearTimeout(timer);
-      if (resp.ok) {
-        const data = await resp.json();
-        const openPrice = typeof data.openPrice === 'number' ? data.openPrice : parseFloat(data.openPrice);
-        if (!isNaN(openPrice) && openPrice > 0) {
-          _targetBtcPrice = openPrice;
-          _cacheStrike(winStartSec, openPrice);
-          _emitPriceUpdate();
-          _isFetchingTarget = false;
-          return;
-        }
-      }
-    } catch (e) {}
-
     _isFetchingTarget = false;
+    return null;
   }
 
   function _cacheStrike(winStartSec, price) {
@@ -202,13 +186,21 @@ window.PolyRTDS = (() => {
               _lastTimestamp = payload.timestamp || msg.timestamp || Date.now();
 
               const nowSec = Math.floor(_lastTimestamp / 1000);
+              const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
               const secInWin = nowSec % _durationSecs;
 
               // At exact round open (0-th second), anchor the target price
-              if (secInWin === 0 || _targetBtcPrice === null) {
+              if (secInWin === 0) {
                 _targetBtcPrice = val;
-                const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
                 _cacheStrike(winStartSec, val);
+              } else if (_targetBtcPrice === null) {
+                // If not cached, fetch official strike from API
+                const cached = _getCachedStrike(winStartSec);
+                if (cached) {
+                  _targetBtcPrice = cached;
+                } else {
+                  fetchOfficialTargetPrice(winStartSec, winStartSec + _durationSecs);
+                }
               }
 
               _emitPriceUpdate();

@@ -52,7 +52,7 @@ window.LiveTradingManager = (() => {
 
   const TOP_HUD_H    = 26;
   const LEFT_SCALE_W = 48;
-  const RIGHT_SCALE_W= 68;
+  const RIGHT_SCALE_W= 48;
   const BOTTOM_AXIS_H= 22;
 
   function init(container) {
@@ -709,42 +709,40 @@ window.LiveTradingManager = (() => {
       _ctx.lineWidth = 1;
       _ctx.textBaseline = 'middle';
 
-      const priceLevels = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+      const priceLevels = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
       for (let i = 0; i < priceLevels.length; i++) {
         const p = priceLevels[i];
         const y = plotBottom - (p / 100) * plotH;
         const is50 = (p === 50);
         const isBoundary = (p === 0 || p === 100);
+        const isDecade = (p % 10 === 0);
 
         _ctx.beginPath();
-        _ctx.strokeStyle = is50 ? 'rgba(56, 189, 248, 0.45)' : (isBoundary ? 'rgba(255,255,255,0.12)' : 'rgba(255, 255, 255, 0.05)');
+        _ctx.strokeStyle = is50 ? 'rgba(56, 189, 248, 0.45)' : (isBoundary ? 'rgba(255,255,255,0.12)' : (isDecade ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.02)'));
         _ctx.lineWidth = is50 ? 1.2 : 1;
         _ctx.setLineDash(is50 ? [4, 4] : []);
         _ctx.moveTo(plotLeft, y);
         _ctx.lineTo(plotRight, y);
         _ctx.stroke();
 
-        // ─── Left Scale: Large bold font with step of 10 ───
-        _ctx.font = 'bold 12px "JetBrains Mono", monospace';
+        // ─── Scale Text Color & Font (Identical on both sides) ───
+        let scaleColor = '#94a3b8';
+        if (p === 100) scaleColor = '#34d399';
+        else if (p === 50) scaleColor = '#38bdf8';
+        else if (p === 0) scaleColor = '#ff4d6d';
+        else if (isDecade) scaleColor = '#cbd5e1';
+
+        const fontStr = isDecade ? 'bold 11px "JetBrains Mono", monospace' : '10px "JetBrains Mono", monospace';
+        _ctx.font = fontStr;
+        _ctx.fillStyle = scaleColor;
+
+        // ─── Left Scale (step of 5) ───
         _ctx.textAlign = 'right';
-        if (p === 100) {
-          _ctx.fillStyle = '#34d399';
-        } else if (p === 50) {
-          _ctx.fillStyle = '#38bdf8';
-        } else if (p === 0) {
-          _ctx.fillStyle = '#ff4d6d';
-        } else {
-          _ctx.fillStyle = '#cbd5e1';
-        }
         _ctx.fillText(`${p}¢`, plotLeft - 6, y);
 
-        // ─── Right Scale: Secondary axis labels ───
-        if (p % 20 === 0 || p === 50) {
-          _ctx.font = '10px "JetBrains Mono", monospace';
-          _ctx.textAlign = 'left';
-          _ctx.fillStyle = is50 ? '#38bdf8' : '#64748b';
-          _ctx.fillText(`${p}¢`, plotRight + 6, y);
-        }
+        // ─── Right Scale (identical step of 5) ───
+        _ctx.textAlign = 'left';
+        _ctx.fillText(`${p}¢`, plotRight + 6, y);
       }
 
       _pointBuffer.length = 0;
@@ -922,9 +920,9 @@ window.LiveTradingManager = (() => {
         _roundRect(_ctx, plotRight + 2, latestPt.y - 9, RIGHT_SCALE_W - 4, 18, 4, true, false);
         _ctx.fillStyle = '#090d16';
         _ctx.font = 'bold 11px "JetBrains Mono", monospace';
-        _ctx.textAlign = 'left';
+        _ctx.textAlign = 'center';
         _ctx.textBaseline = 'middle';
-        _ctx.fillText(`${Math.round(latestPt.val)}¢`, plotRight + 6, latestPt.y);
+        _ctx.fillText(`${Math.round(latestPt.val)}¢`, plotRight + (RIGHT_SCALE_W / 2), latestPt.y);
       }
     }
 
