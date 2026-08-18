@@ -50,19 +50,18 @@ window.PolyRTDS = (() => {
     const startISO = new Date(winStartSec * 1000).toISOString().replace('.000Z', 'Z');
     const endISO = new Date(endSec * 1000).toISOString().replace('.000Z', 'Z');
 
+    // 1. Try Direct Preddy & Local API Proxy
     const endpoints = [
-      // 1. Direct Preddy Trade API (Strict 1:1 Polymarket Chainlink 60s TWAP Strike API)
-      `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
-      // 2. Direct Polymarket Crypto API
-      `https://polymarket.com/api/crypto/crypto-price?symbol=BTC&eventStartTime=${startISO}&endDate=${endISO}&twapEnabled=true&twapLookbackSeconds=60`,
-      // 3. Local Server API Proxy fallback
       `/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
+      `http://localhost:8080/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
+      `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
+      `https://polymarket.com/api/crypto/crypto-price?symbol=BTC&eventStartTime=${startISO}&endDate=${endISO}&twapEnabled=true&twapLookbackSeconds=60`,
     ];
 
     for (const url of endpoints) {
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 3000);
+        const timer = setTimeout(() => controller.abort(), 2000);
         const resp = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: controller.signal });
         clearTimeout(timer);
         if (resp.ok) {
@@ -76,10 +75,30 @@ window.PolyRTDS = (() => {
             return openPrice;
           }
         }
-      } catch (e) {
-        // Continue to next endpoint fallback
-      }
+      } catch (e) {}
     }
+
+    // 2. CORS-Free High Reliability Fallback (Binance 1m Kline at exact window start)
+    try {
+      const bUrl = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&startTime=${winStartSec * 1000}&limit=1`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
+      const resp = await fetch(bUrl, { signal: controller.signal });
+      clearTimeout(timer);
+      if (resp.ok) {
+        const arr = await resp.json();
+        if (Array.isArray(arr) && arr[0] && arr[0][1]) {
+          const openPrice = parseFloat(arr[0][1]);
+          if (!isNaN(openPrice) && openPrice > 0) {
+            _targetBtcPrice = openPrice;
+            _cacheStrike(winStartSec, openPrice);
+            _emitPriceUpdate();
+            _isFetchingTarget = false;
+            return openPrice;
+          }
+        }
+      }
+    } catch (e) {}
 
     _isFetchingTarget = false;
     return null;
@@ -87,13 +106,13 @@ window.PolyRTDS = (() => {
 
   function _cacheStrike(winStartSec, price) {
     try {
-      localStorage.setItem(`pm_btc_twap_strike_${winStartSec}`, price);
+      localStorage.setItem(`pm_btc_twap_strike_v6_${winStartSec}`, price);
     } catch {}
   }
 
   function _getCachedStrike(winStartSec) {
     try {
-      const v = localStorage.getItem(`pm_btc_twap_strike_${winStartSec}`);
+      const v = localStorage.getItem(`pm_btc_twap_strike_v6_${winStartSec}`);
       return v ? parseFloat(v) : null;
     } catch {
       return null;
@@ -115,11 +134,10 @@ window.PolyRTDS = (() => {
 
   function _emitPriceUpdate() {
     if (_currentBtcPrice === null) return;
-    const effStrike = _targetBtcPrice !== null ? _targetBtcPrice : _currentBtcPrice;
-    const delta = _targetBtcPrice !== null ? (_currentBtcPrice - _targetBtcPrice) : 0;
+    const delta = _targetBtcPrice !== null ? (_currentBtcPrice - _targetBtcPrice) : null;
 
     if (handlers.onBtcPrice) {
-      handlers.onBtcPrice(_currentBtcPrice, _lastTimestamp || Date.now(), effStrike, delta, true);
+      handlers.onBtcPrice(_currentBtcPrice, _lastTimestamp || Date.now(), _targetBtcPrice, delta, true);
     }
   }
 
@@ -166,15 +184,6 @@ window.PolyRTDS = (() => {
                 _lastTimestamp = tsMs;
               }
             }
-
-            // If target price is still null and wasn't loaded from API, set earliest point in round
-            if (_targetBtcPrice === null && payload.data[0]) {
-              const firstVal = parseFloat(payload.data[0].value || payload.data[0].price);
-              if (!isNaN(firstVal) && firstVal > 0) {
-                _targetBtcPrice = firstVal;
-              }
-            }
-
             _emitPriceUpdate();
           }
 
@@ -190,11 +199,10 @@ window.PolyRTDS = (() => {
               const secInWin = nowSec % _durationSecs;
 
               // At exact round open (0-th second), anchor the target price
-              if (secInWin === 0) {
+              if (secInWin === 0 && _targetBtcPrice === null) {
                 _targetBtcPrice = val;
                 _cacheStrike(winStartSec, val);
               } else if (_targetBtcPrice === null) {
-                // If not cached, fetch official strike from API
                 const cached = _getCachedStrike(winStartSec);
                 if (cached) {
                   _targetBtcPrice = cached;

@@ -1,7 +1,9 @@
 /**
- * app.js — Main Application Coordinator v6.0
+ * app.js — Main Application Coordinator v6.1
  * 
- * Features & Fixes in v6.0:
+ * Features & Fixes in v6.1:
+ * - Direct STRIKE & DELTA Parity Fix: Multi-Tier CORS-Proof Strike Engine (Preddy -> Local -> Binance 1m kline)
+ * - Fixed Delta Zero Freeze: Prevents _liveBtcOpen from falling back to _liveBtcCurrent mid-session
  * - High-Legibility Large Font Scales (bold 14px / 12px Mono) across Left & Right Scales and Bottom Timeline
  * - 1:1 Accurate STRIKE Price for 15M & 5M Markets (direct Preddy API TWAP 60s priority & duration binding)
  * - Identical 5-Cent Step Price Scales on Both Left and Right (0¢, 5¢, 10¢ ... 95¢, 100¢)
@@ -123,7 +125,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.0...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.1...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -216,12 +218,16 @@ window.App = (() => {
     PolyRTDS.handlers.onBtcPrice = (price, ts, targetPrice, delta) => {
       const cur = MarketManager.getCurrentMarket();
       _liveBtcCurrent = price;
-      if (targetPrice) _liveBtcOpen = targetPrice;
+      if (typeof targetPrice === 'number' && !isNaN(targetPrice) && targetPrice > 0) {
+        _liveBtcOpen = targetPrice;
+      }
 
-      const effStrike = _liveBtcOpen || targetPrice || price;
-      const effDelta = _liveBtcOpen !== null ? (_liveBtcCurrent - _liveBtcOpen) : (delta !== undefined ? delta : 0);
+      const effStrike = _liveBtcOpen;
+      const effDelta = (_liveBtcOpen !== null && _liveBtcCurrent !== null)
+        ? (_liveBtcCurrent - _liveBtcOpen)
+        : (delta !== null && delta !== undefined ? delta : 0);
 
-      if (effStrike > 0) {
+      if (effStrike && effStrike > 0) {
         _liveBtcChange = Math.round((effDelta / effStrike) * 10000) / 100;
       }
 
@@ -242,20 +248,29 @@ window.App = (() => {
 
   function _updateBtcHeroMetrics(delta, currentPrice, strikePrice) {
     if (el.liveBtcDelta) {
-      const isPos = (delta || 0) >= 0;
-      const sign = isPos ? '+$' : '-$';
-      const absVal = Math.abs(delta || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      el.liveBtcDelta.textContent = `${sign}${absVal}`;
-      el.liveBtcDelta.classList.toggle('green', isPos);
-      el.liveBtcDelta.classList.toggle('red', !isPos);
+      if (delta !== null && delta !== undefined && strikePrice !== null && !isNaN(strikePrice) && strikePrice > 0) {
+        const isPos = delta >= 0;
+        const sign = isPos ? '+$' : '-$';
+        const absVal = Math.abs(delta).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        el.liveBtcDelta.textContent = `${sign}${absVal}`;
+        el.liveBtcDelta.classList.toggle('green', isPos);
+        el.liveBtcDelta.classList.toggle('red', !isPos);
+      } else {
+        el.liveBtcDelta.textContent = '--';
+        el.liveBtcDelta.classList.remove('green', 'red');
+      }
     }
 
     if (el.liveBtcCurrent && currentPrice !== null && !isNaN(currentPrice)) {
       el.liveBtcCurrent.textContent = '$' + currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    if (el.liveBtcStrike && strikePrice !== null && !isNaN(strikePrice)) {
-      el.liveBtcStrike.textContent = '$' + strikePrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (el.liveBtcStrike) {
+      if (strikePrice !== null && !isNaN(strikePrice) && strikePrice > 0) {
+        el.liveBtcStrike.textContent = '$' + strikePrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      } else {
+        el.liveBtcStrike.textContent = '--';
+      }
     }
   }
 
