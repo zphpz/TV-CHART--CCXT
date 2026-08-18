@@ -13,19 +13,14 @@ window.PriceEngine = (() => {
 
   /**
    * Polymarket UI logic:
-   * If spread > $0.10 AND last trade exists → show last trade
-   * Otherwise → show midpoint
+   * Prioritize last traded price (real execution price: 41.3¢, 41.2¢, etc.)
+   * Fallback to orderbook midpoint if last trade is not available yet
    */
   function effectivePrice() {
-    if (_bid !== null && _ask !== null) {
-      const spread = _ask - _bid;
-      const mid = (_bid + _ask) / 2;
-      if (spread > 0.10 && _last !== null) {
-        return _last;
-      }
-      return mid;
-    }
     if (_last !== null) return _last;
+    if (_bid !== null && _ask !== null) return (_bid + _ask) / 2;
+    if (_bid !== null) return _bid;
+    if (_ask !== null) return _ask;
     return 0.50; // fallback: 50¢
   }
 

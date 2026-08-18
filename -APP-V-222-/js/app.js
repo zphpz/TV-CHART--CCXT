@@ -1,7 +1,8 @@
 /**
- * app.js — Main Application Coordinator v5.0
+ * app.js — Main Application Coordinator v5.1
  * 
- * Features & Fixes in v5.0:
+ * Features & Fixes in v5.1:
+ * - Real Executed Trade Prices (41.3¢, 41.2¢, 42.1¢) prioritized over mathematical midpoint
  * - 0.1¢ One-decimal Token Price Precision across all UI components and charts
  * - Eliminated Blind Spot Gap: WebSocket subscribes immediately prior to history hydration
  * - Zero-clamping fixes in ws.js & market.js (preserves full 0-100¢ range)
@@ -114,7 +115,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.0...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.1...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -184,7 +185,7 @@ window.App = (() => {
           try {
             const mid = await MarketManager.fetchMidpoint(cur.upTokenId);
             if (mid !== null) {
-              PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+              PriceEngine.updateLastTrade(mid);
               _emitPrice();
             }
           } catch {}
@@ -286,6 +287,7 @@ window.App = (() => {
       if (msg.best_bid !== undefined && msg.best_ask !== undefined) {
         PriceEngine.updateBidAsk(msg.best_bid, msg.best_ask);
       } else if (msg.price !== undefined) {
+        PriceEngine.updateLastTrade(msg.price);
         if (msg.side === 'BUY')  PriceEngine.updateBidAsk(msg.price, PriceEngine.toAsk());
         if (msg.side === 'SELL') PriceEngine.updateBidAsk(PriceEngine.toBid(), msg.price);
       }
@@ -520,7 +522,7 @@ window.App = (() => {
     // 5. Fetch accurate midpoint for UP and DOWN tokens
     MarketManager.fetchMidpoint(market.upTokenId).then(mid => {
       if (mid !== null) {
-        PriceEngine.updateBidAsk(mid - 0.01, mid + 0.01);
+        PriceEngine.updateLastTrade(mid);
         _emitPrice();
       }
     }).catch(() => {});
