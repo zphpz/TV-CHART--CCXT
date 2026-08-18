@@ -1,7 +1,8 @@
 /**
- * app.js — Main Application Coordinator v4.7
+ * app.js — Main Application Coordinator v4.8
  * 
- * Features & Fixes in v4.7:
+ * Features & Fixes in v4.8:
+ * - Step-Curve Financial Zero-Order Hold Rendering for Option Probabilities
  * - Pure Official CLOB Dual-Token History Engine (Zero Sawtooth / Anti-Noise)
  * - True Session-Start Anchor & Self-Healing Hydration on Mid-Session Joins
  * - 100% Direct Polymarket REST APIs with Zero Third-Party Proxies & Strict 2.5s Timeout
@@ -110,7 +111,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.7...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.8...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);

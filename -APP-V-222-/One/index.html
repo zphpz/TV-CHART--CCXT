@@ -1871,7 +1871,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v4.7</span>
+        <span id="app-version">v4.8</span>
       </div>
     </footer>
 
@@ -4611,7 +4611,9 @@ window.LiveTradingManager = (() => {
 
         _ctx.beginPath();
         _ctx.moveTo(_pointBuffer[0].x, plotBottom);
-        for (let i = 0; i < _pointBuffer.length; i++) {
+        _ctx.lineTo(_pointBuffer[0].x, _pointBuffer[0].y);
+        for (let i = 1; i < _pointBuffer.length; i++) {
+          _ctx.lineTo(_pointBuffer[i].x, _pointBuffer[i - 1].y);
           _ctx.lineTo(_pointBuffer[i].x, _pointBuffer[i].y);
         }
         _ctx.lineTo(latestPt.x, plotBottom);
@@ -4630,6 +4632,7 @@ window.LiveTradingManager = (() => {
         _ctx.beginPath();
         _ctx.moveTo(_pointBuffer[0].x, _pointBuffer[0].y);
         for (let i = 1; i < _pointBuffer.length; i++) {
+          _ctx.lineTo(_pointBuffer[i].x, _pointBuffer[i - 1].y);
           _ctx.lineTo(_pointBuffer[i].x, _pointBuffer[i].y);
         }
         _ctx.stroke();
@@ -6197,9 +6200,10 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v4.7
+ * app.js — Main Application Coordinator v4.8
  * 
- * Features & Fixes in v4.7:
+ * Features & Fixes in v4.8:
+ * - Step-Curve Financial Zero-Order Hold Rendering for Option Probabilities
  * - Pure Official CLOB Dual-Token History Engine (Zero Sawtooth / Anti-Noise)
  * - True Session-Start Anchor & Self-Healing Hydration on Mid-Session Joins
  * - 100% Direct Polymarket REST APIs with Zero Third-Party Proxies & Strict 2.5s Timeout
@@ -6308,7 +6312,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.7...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.8...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);

@@ -666,7 +666,9 @@ window.LiveTradingManager = (() => {
 
         _ctx.beginPath();
         _ctx.moveTo(_pointBuffer[0].x, plotBottom);
-        for (let i = 0; i < _pointBuffer.length; i++) {
+        _ctx.lineTo(_pointBuffer[0].x, _pointBuffer[0].y);
+        for (let i = 1; i < _pointBuffer.length; i++) {
+          _ctx.lineTo(_pointBuffer[i].x, _pointBuffer[i - 1].y);
           _ctx.lineTo(_pointBuffer[i].x, _pointBuffer[i].y);
         }
         _ctx.lineTo(latestPt.x, plotBottom);
@@ -685,6 +687,7 @@ window.LiveTradingManager = (() => {
         _ctx.beginPath();
         _ctx.moveTo(_pointBuffer[0].x, _pointBuffer[0].y);
         for (let i = 1; i < _pointBuffer.length; i++) {
+          _ctx.lineTo(_pointBuffer[i].x, _pointBuffer[i - 1].y);
           _ctx.lineTo(_pointBuffer[i].x, _pointBuffer[i].y);
         }
         _ctx.stroke();
