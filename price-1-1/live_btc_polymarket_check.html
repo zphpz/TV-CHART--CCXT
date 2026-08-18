@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polymarket BTC 5m - Live Verified Parity</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 16px;
+            padding: 30px;
+            width: 100%;
+            max-width: 480px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            border-bottom: 1px solid #21262d;
+            padding-bottom: 14px;
+        }
+        .title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #f0f6fc;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .badge-live {
+            background: rgba(46, 160, 67, 0.15);
+            color: #3fb950;
+            border: 1px solid rgba(46, 160, 67, 0.4);
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .dot {
+            width: 7px;
+            height: 7px;
+            background: #3fb950;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.8); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        .time-box {
+            font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, monospace;
+            font-size: 15px;
+            font-weight: 600;
+            color: #e3b341;
+            background: #21262d;
+            padding: 4px 10px;
+            border-radius: 6px;
+        }
+        .price-section {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            margin-bottom: 24px;
+        }
+        .price-card {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 16px 20px;
+        }
+        .label {
+            font-size: 12px;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        .price-val {
+            font-size: 28px;
+            font-weight: 700;
+            font-family: ui-monospace, SFMono-Regular, monospace;
+            letter-spacing: -0.5px;
+        }
+        .price-start { color: #8b949e; }
+        .price-current { color: #f0f6fc; }
+        .delta-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #21262d;
+            border-radius: 10px;
+            padding: 12px 18px;
+        }
+        .delta-val {
+            font-size: 20px;
+            font-weight: 700;
+            font-family: ui-monospace, monospace;
+        }
+        .up { color: #3fb950; }
+        .down { color: #f85149; }
+        .status-bar {
+            font-size: 12px;
+            color: #8b949e;
+            text-align: center;
+            border-top: 1px solid #21262d;
+            padding-top: 14px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <div class="title">
+            <span>₿ BTC 5M Live</span>
+            <span class="badge-live"><span class="dot"></span> LIVE 1:1</span>
+        </div>
+        <div class="time-box" id="timer">00:00</div>
+    </div>
+
+    <div class="price-section">
+        <!-- 1. ЦЕЛЕВАЯ ЦЕНА СЕССИИ (STRIKE / OPENPRICE) -->
+        <div class="price-card">
+            <div class="label">1. Целевая цена (Polymarket Target)</div>
+            <div class="price-val price-start" id="targetPrice">Загрузка...</div>
+        </div>
+
+        <!-- 2. ТЕКУЩАЯ ЦЕНА В ПРЯМОМ ЭФИРЕ -->
+        <div class="price-card">
+            <div class="label">2. Текущая цена (Live Chainlink)</div>
+            <div class="price-val price-current" id="currentPrice">---</div>
+        </div>
+
+        <!-- 3. ДЕЛЬТА (РАЗНИЦА) -->
+        <div class="delta-container">
+            <div class="label" style="margin: 0;">Дельта от старта:</div>
+            <div class="delta-val" id="deltaVal">---</div>
+        </div>
+    </div>
+
+    <div class="status-bar" id="statusText">Подключение к прямому потоку...</div>
+</div>
+
+<script>
+    let activeWindowStart = null;
+    let targetPrice = null;
+    let currentPrice = null;
+
+    // 1. Форматирование цены в $XX,XXX.XX
+    function formatUSD(val) {
+        if (val === null || val === undefined || isNaN(val)) return '---';
+        return '$' + Number(val).toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    }
+
+    // 2. Обновление UI
+    function updateUI() {
+        if (targetPrice !== null) {
+            document.getElementById('targetPrice').innerText = formatUSD(targetPrice);
+        }
+        if (currentPrice !== null) {
+            document.getElementById('currentPrice').innerText = formatUSD(currentPrice);
+        }
+        if (currentPrice !== null && targetPrice !== null) {
+            const delta = currentPrice - targetPrice;
+            const deltaElem = document.getElementById('deltaVal');
+            const sign = delta >= 0 ? '▲ +$' : '▼ -$';
+            deltaElem.innerText = `${sign}${Math.abs(delta).toFixed(2)}`;
+            deltaElem.className = `delta-val ${delta >= 0 ? 'up' : 'down'}`;
+        }
+    }
+
+    // 3. Запрос официальной начальной цены (openPrice)
+    async function loadOfficialTargetPrice(winStartSec) {
+        try {
+            const winEndSec = winStartSec + 300;
+            const startISO = new Date(winStartSec * 1000).toISOString().replace('.000Z', 'Z');
+            const endISO = new Date(winEndSec * 1000).toISOString().replace('.000Z', 'Z');
+            const targetUrl = `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`;
+
+            // Запрос через открытый CORS-прокси (чтобы работало при открытии локального HTML файла)
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+            const res = await fetch(proxyUrl);
+            if (res.ok) {
+                const data = await res.json();
+                if (data && typeof data.openPrice === 'number' && Number.isFinite(data.openPrice)) {
+                    targetPrice = data.openPrice;
+                    updateUI();
+                    return;
+                }
+            }
+        } catch (err) {
+            console.warn("Proxy fetch error, fallback to WebSocket first tick:", err);
+        }
+    }
+
+    // 4. Таймер и смена 5-минуток
+    setInterval(() => {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const winStartSec = Math.floor(nowSec / 300) * 300;
+        const secInWin = nowSec % 300;
+        const remSec = 300 - secInWin;
+        const m = Math.floor(remSec / 60).toString().padStart(2, '0');
+        const s = (remSec % 60).toString().padStart(2, '0');
+        document.getElementById('timer').innerText = `${m}:${s} (${secInWin}s)`;
+
+        // При смене 5-минутки запрашиваем новую Целевую цену
+        if (activeWindowStart !== winStartSec) {
+            activeWindowStart = winStartSec;
+            targetPrice = null;
+            document.getElementById('targetPrice').innerText = 'Загрузка...';
+            loadOfficialTargetPrice(winStartSec);
+        }
+    }, 1000);
+
+    // 5. Подключение к прямому WebSocket Polymarket RTDS
+    function initWebSocket() {
+        const ws = new WebSocket('wss://ws-live-data.polymarket.com');
+
+        ws.onopen = () => {
+            document.getElementById('statusText').innerText = '🟢 Подключено: wss://ws-live-data.polymarket.com';
+            
+            // Подписываемся на живой поток цен Chainlink BTC
+            ws.send(JSON.stringify({
+                action: 'subscribe',
+                subscriptions: [
+                    {
+                        topic: 'crypto_prices_chainlink',
+                        type: '*',
+                        filters: JSON.stringify({ symbol: 'btc/usd' })
+                    }
+                ]
+            }));
+
+            const nowSec = Math.floor(Date.now() / 1000);
+            const winStartSec = Math.floor(nowSec / 300) * 300;
+            activeWindowStart = winStartSec;
+            loadOfficialTargetPrice(winStartSec);
+        };
+
+        ws.onmessage = (event) => {
+            if (!event.data || !event.data.trim()) return;
+            try {
+                const data = JSON.parse(event.data);
+                const payload = data?.payload || {};
+
+                // 1. Пачка исторических тиков текущего окна
+                if (payload.data && Array.isArray(payload.data) && payload.data.length > 0) {
+                    const lastPt = payload.data[payload.data.length - 1];
+                    currentPrice = lastPt.value;
+                    
+                    // Если целевая цена еще не пришла по API, берем начальную точку
+                    if (targetPrice === null) {
+                        targetPrice = payload.data[0].value;
+                    }
+                    updateUI();
+                    const timeStr = new Date(lastPt.timestamp).toLocaleTimeString();
+                    document.getElementById('statusText').innerText = `🟢 Живой тик: ${timeStr} | Цена: $${currentPrice.toFixed(2)}`;
+                }
+
+                // 2. Одиночный живой тик (каждую секунду)
+                if (payload.value !== undefined && payload.value !== null) {
+                    currentPrice = payload.value;
+                    
+                    // На 0-й секунде нового окна обновляем targetPrice
+                    const nowSec = Math.floor(Date.now() / 1000);
+                    if ((nowSec % 300) === 0 || targetPrice === null) {
+                        targetPrice = currentPrice;
+                    }
+                    
+                    updateUI();
+                    const timeStr = new Date(payload.timestamp || Date.now()).toLocaleTimeString();
+                    document.getElementById('statusText').innerText = `🟢 Живой тик: ${timeStr} | Цена: $${currentPrice.toFixed(2)}`;
+                }
+            } catch (err) {
+                console.error("Ошибка парсинга WS:", err);
+            }
+        };
+
+        ws.onclose = () => {
+            document.getElementById('statusText').innerText = '🔴 Переподключение...';
+            setTimeout(initWebSocket, 2000);
+        };
+    }
+
+    initWebSocket();
+</script>
+
+</body>
+</html>

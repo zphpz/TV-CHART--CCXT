@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Polymarket BTC Up/Down — 1:1 Live TWAP Chart & History Database</title>
+  <meta name="description" content="Real-time Polymarket BTC Up/Down rolling market chart with 1:1 TWAP price synchronization and local database." />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- ═══════════════ HEADER ═══════════════ -->
+    <header id="main-header">
+      <div id="brand">
+        <div id="brand-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#00d4aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div id="brand-text">
+          <span id="brand-name">PM CHART 1:1</span>
+          <span id="brand-sub">Polymarket Live TWAP</span>
+        </div>
+      </div>
+
+      <!-- Main Navigation Tabs: Live Trading vs All Sessions vs Database -->
+      <div id="view-switcher">
+        <button class="view-tab active" id="tab-view-trading" data-view="trading">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <span class="tab-label">LIVE TRADING</span>
+        </button>
+        <button class="view-tab" id="tab-view-chart" data-view="chart">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M18 9l-5 5-4-4-6 6"/></svg>
+          <span class="tab-label">ALL SESSIONS</span>
+        </button>
+        <button class="view-tab" id="tab-view-history" data-view="history">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zM22 10H2M7 15h.01M12 15h.01M17 15h.01"/></svg>
+          <span class="tab-label">DATABASE & HISTORY</span>
+        </button>
+      </div>
+
+      <!-- Market switcher: 5m / 15m -->
+      <div id="market-switcher">
+        <button class="mkt-btn active" id="btn-mkt-5m" data-tf="5">BTC 5M</button>
+        <button class="mkt-btn" id="btn-mkt-15m" data-tf="15">BTC 15M</button>
+      </div>
+
+      <!-- Status indicator -->
+      <div id="status-panel">
+        <div id="status-indicator" class="status-connecting">
+          <span id="status-dot"></span>
+          <span id="status-text">CONNECTING</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Global Real-Time Price & Outcome Bar -->
+    <div id="price-bar">
+      <!-- 1. Left of Timer: Large Outcome Price -->
+      <div class="price-hero-item" id="price-current-wrap">
+        <span class="price-hero-label">PRICE</span>
+        <span class="price-hero-value" id="price-current">--.-¢</span>
+      </div>
+
+      <div class="price-divider"></div>
+
+      <!-- 2. Center: Large countdown timer (Clickable: Remaining <-> Elapsed) -->
+      <div id="timer-center" style="cursor: pointer; user-select: none;" title="Click to switch between Remaining & Elapsed time">
+        <span id="timer-label-top">ENDS IN</span>
+        <span id="timer-value">--:--</span>
+      </div>
+
+      <div class="price-divider"></div>
+
+      <!-- 3. Right of Timer: Delta, Current BTC Price, Strike BTC Price -->
+      <div id="live-btc-metrics">
+        <div class="price-hero-item" id="btc-delta-wrap">
+          <span class="price-hero-label">DELTA</span>
+          <span class="price-hero-value green" id="live-btc-delta">+$0.00</span>
+        </div>
+
+        <div class="price-divider-mini"></div>
+
+        <div class="price-hero-item" id="btc-current-wrap">
+          <span class="price-hero-label">BTC LIVE (TWAP)</span>
+          <span class="price-hero-value" id="live-btc-current">---</span>
+        </div>
+
+        <div class="price-divider-mini"></div>
+
+        <div class="price-hero-item" id="btc-strike-wrap">
+          <span class="price-hero-label">STRIKE</span>
+          <span class="price-hero-value muted" id="live-btc-strike">---</span>
+        </div>
+      </div>
+
+      <!-- 4. Far Right: UP / DOWN outcome buttons -->
+      <div id="outcome-switcher">
+        <span class="price-hero-label">OUTCOME</span>
+        <div id="outcome-buttons">
+          <button class="outcome-btn active" id="btn-outcome-up">▲ UP</button>
+          <button class="outcome-btn" id="btn-outcome-down">▼ DOWN</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════ VIEW 1: LIVE TRADING (Dedicated Fixed 300s/900s) ═══════════════ -->
+    <main id="trading-view" class="active-view">
+      <div id="trading-chart-wrapper" style="position:relative; width:100%; height:100%; flex:1; display:flex; flex-direction:column; overflow:hidden;">
+        <div id="trading-chart-container" style="width:100%; height:100%; flex:1; position:relative;"></div>
+      </div>
+    </main>
+
+    <!-- ═══════════════ VIEW 2: MULTI-SESSION TIMELINE CHART ═══════════════ -->
+    <main id="chart-view" class="hidden-view">
+      <!-- Chart toolbar -->
+      <div id="chart-toolbar">
+        <div id="tf-switcher">
+          <span class="tf-label">TIMEFRAME</span>
+          <div id="tf-buttons">
+            <button class="tf-btn active" id="btn-tf-1s" data-tf="1">1s</button>
+            <button class="tf-btn" id="btn-tf-5s" data-tf="5">5s</button>
+            <button class="tf-btn" id="btn-tf-15s" data-tf="15">15s</button>
+            <button class="tf-btn" id="btn-tf-30s" data-tf="30">30s</button>
+            <button class="tf-btn" id="btn-tf-1m" data-tf="60">1m</button>
+          </div>
+        </div>
+
+        <div id="market-info">
+          <span class="info-label">MARKET</span>
+          <span id="market-slug-display">---</span>
+          <span class="info-sep">→</span>
+          <span id="market-window-display">--:-- – --:--</span>
+        </div>
+
+        <div id="chart-actions">
+          <button id="btn-scroll-start" class="action-btn" title="Scroll back to the beginning of history (Earliest session)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
+            <span style="margin-left:4px; font-size:11px; font-weight:600;">Start</span>
+          </button>
+          <button id="btn-quick-load-db" class="action-btn" title="Load saved history from database">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zM22 10H2"/></svg>
+            <span style="margin-left:5px; font-size:11px; font-weight:600;">Load DB History</span>
+          </button>
+          <button id="btn-reset-zoom" class="action-btn" title="Fit all sessions (Overview)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+            <span style="margin-left:4px; font-size:11px; font-weight:600;">Fit All</span>
+          </button>
+          <button id="btn-scroll-live" class="action-btn" title="Scroll forward to live real-time market">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+            <span style="margin-left:4px; font-size:11px; font-weight:600;">Live</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Chart wrapper -->
+      <div id="chart-wrapper">
+        <div id="chart-container"></div>
+        <div id="chart-tooltip" style="display: none;"></div>
+
+        <!-- Loading overlay -->
+        <div id="loading-overlay">
+          <div id="loading-spinner"></div>
+          <div id="loading-text">Fetching market data…</div>
+          <div id="loading-sub" style="display:none"></div>
+        </div>
+
+        <!-- Error overlay -->
+        <div id="error-overlay" style="display:none">
+          <div id="error-icon">⚠</div>
+          <div id="error-text">Connection lost</div>
+          <div id="error-sub">Reconnecting…</div>
+          <button id="btn-retry">Retry Now</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- ═══════════════ VIEW 3: DATABASE & HISTORY PANEL ═══════════════ -->
+    <section id="history-panel-view" class="hidden-view">
+      <div id="panel-content">
+
+        <!-- Header Row / Summary Cards -->
+        <div class="panel-grid-top">
+          <!-- Card 1: Storage File Management -->
+          <div class="panel-card" id="card-storage">
+            <div class="card-header">
+              <div class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                DATABASE FILE STORAGE
+              </div>
+              <span id="db-status-badge" class="badge-disconnected">NOT CONNECTED</span>
+            </div>
+            <div class="card-body">
+              <div class="storage-meta-row">
+                <div class="meta-item">
+                  <span class="meta-lbl">File Size</span>
+                  <span class="meta-val" id="db-file-size">-- KB</span>
+                </div>
+                <div class="meta-item">
+                  <span class="meta-lbl">Last Saved</span>
+                  <span class="meta-val" id="db-last-saved">Never</span>
+                </div>
+                <div class="meta-item">
+                  <span class="meta-lbl">Auto-Save</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="chk-autosave" checked />
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+              </div>
+              <div class="card-actions-row">
+                <button id="btn-connect-file" class="btn-primary">
+                  📁 Choose / Create Database File
+                </button>
+                <button id="btn-save-file" class="btn-secondary">
+                  💾 Save to Disk Now
+                </button>
+                <button id="btn-import-json" class="btn-outline">
+                  📥 Import JSON
+                </button>
+                <button id="btn-export-json" class="btn-outline">
+                  📤 Export JSON
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 2: Polymarket History Downloader (Backfill) -->
+          <div class="panel-card" id="card-downloader">
+            <div class="card-header">
+              <div class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                POLYMARKET HISTORY DOWNLOADER
+              </div>
+              <span id="bf-count-display" class="badge-info">72 sessions (6h)</span>
+            </div>
+            <div class="card-body">
+              <!-- Controls row -->
+              <div class="downloader-controls-row">
+                <div class="ctrl-group">
+                  <span class="ctrl-label">Market:</span>
+                  <div class="bf-tf-group">
+                    <button class="bf-tf-btn active" data-tf="5">BTC 5M</button>
+                    <button class="bf-tf-btn" data-tf="15">BTC 15M</button>
+                  </div>
+                </div>
+
+                <div class="ctrl-group">
+                  <span class="ctrl-label">Time Range:</span>
+                  <div class="preset-group">
+                    <button class="preset-btn active" data-hours="6">6h</button>
+                    <button class="preset-btn" data-hours="12">12h</button>
+                    <button class="preset-btn" data-hours="24">24h</button>
+                    <button class="preset-btn" data-hours="72">3 Days</button>
+                    <button class="preset-btn" data-hours="168">7 Days</button>
+                  </div>
+                </div>
+
+                <div class="ctrl-group">
+                  <label class="checkbox-label" title="Skip downloading sessions that are already saved in your database">
+                    <input type="checkbox" id="chk-smart-merge" checked />
+                    <span>Smart Merge (Skip existing)</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Progress bar wrap -->
+              <div id="bf-progress-wrap" style="display:none;">
+                <div class="progress-bar-bg">
+                  <div id="bf-progress-bar"></div>
+                </div>
+                <div id="bf-progress-text">Ready</div>
+              </div>
+
+              <!-- Action buttons -->
+              <div class="card-actions-row">
+                <button id="btn-start-backfill" class="btn-success">
+                  ▶ Start Download from Polymarket
+                </button>
+                <button id="btn-stop-backfill" class="btn-danger" disabled>
+                  ⏹ Stop
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Analytics Row -->
+        <div class="panel-analytics-row">
+          <div class="analytic-badge">
+            <span class="an-lbl">Total Sessions</span>
+            <span class="an-val" id="stat-total-sessions">0</span>
+          </div>
+          <div class="analytic-badge">
+            <span class="an-lbl">Total Price Ticks</span>
+            <span class="an-val" id="stat-total-ticks">0</span>
+          </div>
+          <div class="analytic-badge">
+            <span class="an-lbl">UP Wins</span>
+            <span class="an-val green" id="stat-up-pct">0.0%</span>
+          </div>
+          <div class="analytic-badge">
+            <span class="an-lbl">DOWN Wins</span>
+            <span class="an-val coral" id="stat-down-pct">0.0%</span>
+          </div>
+          <div class="analytic-badge">
+            <span class="an-lbl">Total Traded Volume</span>
+            <span class="an-val" id="stat-total-volume">$0</span>
+          </div>
+        </div>
+
+        <!-- Session Explorer Table Card -->
+        <div class="panel-card" id="card-table">
+          <div class="table-toolbar">
+            <div class="table-title">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+              SAVED SESSIONS EXPLORER
+              <span id="selected-sessions-count" class="badge-subtle">0 selected</span>
+            </div>
+            <div class="table-actions">
+              <button id="btn-load-to-chart" class="btn-secondary btn-sm">
+                📈 Display All on Chart
+              </button>
+              <button id="btn-delete-selected" class="btn-danger-outline btn-sm">
+                🗑 Delete Selected
+              </button>
+              <button id="btn-clear-db" class="btn-danger-outline btn-sm">
+                ✕ Clear All DB
+              </button>
+            </div>
+          </div>
+
+          <div class="table-scroll-container">
+            <table class="pm-table">
+              <thead>
+                <tr>
+                  <th class="th-chk"><input type="checkbox" id="chk-select-all" /></th>
+                  <th>Session Window (UTC)</th>
+                  <th>TF</th>
+                  <th>Official Winner</th>
+                  <th>OHLC (Open / High / Low / Close)</th>
+                  <th>Ticks</th>
+                  <th>Volume</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="session-table-body">
+                <tr><td colspan="8" class="empty-table-msg">Loading database sessions…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /#panel-content -->
+    </section>
+
+    <!-- ═══════════════ FOOTER ═══════════════ -->
+    <footer id="main-footer">
+      <div id="footer-left">
+        <span id="market-count-display"></span>
+      </div>
+      <div id="footer-center">
+        <span class="attr-text">Charts powered by </span>
+        <a href="https://www.tradingview.com/" target="_blank" class="attr-link">TradingView (Local)</a>
+        <span class="attr-text"> · Data from </span>
+        <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
+      </div>
+      <div id="footer-right">
+        <span id="app-version">v3.7</span>
+      </div>
+    </footer>
+
+  </div><!-- /#app -->
+
+  <input type="file" id="file-import-input" accept=".json" style="display:none;" />
+
+  <!-- Local Lightweight Charts v5 -->
+  <script src="libs/lightweight-charts.standalone.production.js"></script>
+
+  <!-- App modules -->
+  <script src="js/price.js"></script>
+  <script src="js/buffer.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/backfill.js"></script>
+  <script src="js/market.js"></script>
+  <script src="js/ws.js"></script>
+  <script src="js/rtds.js"></script>
+  <script src="js/live_trading.js"></script>
+  <script src="js/chart.js"></script>
+  <script src="js/panel.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
