@@ -1871,7 +1871,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v4.8</span>
+        <span id="app-version">v4.9</span>
       </div>
     </footer>
 
@@ -3944,25 +3944,17 @@ window.PolyRTDS = (() => {
 
 /* ═══ MODULE: js/live_trading.js ═══ */
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.5
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.9
  * 
- * Features & Fixes in v4.5:
- * - Dual-Token History Hydration (merges UP and inverted DOWN token trades for full curve history)
- * - Self-healing background retry loop for mid-session opens
+ * Features & Fixes in v4.9:
+ * - Direct history handoff from loadMarket eliminates race conditions on page refresh
+ * - Step-curve zero-order hold rendering for Option Probability mode
+ * - Pure Official CLOB Dual-Token History Hydration
+ * - True session-start anchor (anchors startTs to first historical tick)
  * - Zero-allocation point buffer reuse (_pointBuffer) eliminates GC pauses
  * - Cached linear gradients for area under curve
- * - Dirty-flag & frame-rate managed animation loop (60fps on ticks/interaction, 30fps on idle pulse)
- * - Dual Chart Modes:
- *   1. ₿ BTC ($) Mode: 1:1 Live Bitcoin TWAP price curve vs Strike / Target Line ($64,746 vs $64,739)
- *   2. ¢ PROB (%) Mode: Polymarket CLOB Option token probability in cents (0–100¢)
- * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
+ * - Dual Chart Modes: ₿ BTC ($) live curve vs ¢ PROB (%) option token curve
  * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent glass background)
- * - Anti-aliased glowing live price line with gradient under-fill
- * - Pulsing live leading dot at the current active second
- * - Blue dashed vertical second & minute grid lines (+01:00, +02:00 ... / 30s, 90s ...)
- * - Dynamic price scale & horizontal reference grid (Strike line / 50¢ anchor)
- * - Interactive hover crosshair with exact price & elapsed second tooltip
- * - Single-line top header HUD with slug link, ⏳ LIVE session badge & TWAP BTC price stream
  */
 'use strict';
 
@@ -4047,12 +4039,12 @@ window.LiveTradingManager = (() => {
     _setupResize();
     _startAnimationLoop();
 
-    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.5 self-healing)');
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.9)');
     return true;
   }
 
   // ─── Market Initialization & History Population ────────────────────
-  async function setMarket(market) {
+  async function setMarket(market, initialHist) {
     if (!market) return;
     _currentMarket = market;
     _startTs = market.startTs || Math.floor(Date.now() / 1000);
@@ -4073,13 +4065,15 @@ window.LiveTradingManager = (() => {
       _btcTicks.push([_startTs, _btcOpen]);
     }
 
-    // 1. Fetch pure CLOB history immediately
-    await _tryFetchHistory(market);
-
-    // 2. Self-healing background retries if history is thin (< 2 points)
-    if (_rawTicks.length < 2 && window.MarketManager) {
-      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1200));
-      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3000));
+    if (Array.isArray(initialHist) && initialHist.length > 0) {
+      _rawTicks = initialHist.slice();
+      _lastPrice = initialHist[initialHist.length - 1][1];
+    } else {
+      await _tryFetchHistory(market);
+      if (_rawTicks.length < 2 && window.MarketManager) {
+        _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1200));
+        _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3000));
+      }
     }
 
     _isDirty = true;
@@ -4139,7 +4133,7 @@ window.LiveTradingManager = (() => {
       const last = _rawTicks[_rawTicks.length - 1];
       if (last[0] === unixSec) {
         last[1] = rawUpCents;
-      } else {
+      } else if (unixSec > last[0]) {
         _rawTicks.push([unixSec, rawUpCents]);
       }
     }
@@ -4173,7 +4167,7 @@ window.LiveTradingManager = (() => {
       const last = _btcTicks[_btcTicks.length - 1];
       if (last[0] === unixSec) {
         last[1] = btcPrice;
-      } else {
+      } else if (unixSec > last[0]) {
         _btcTicks.push([unixSec, btcPrice]);
       }
     }
@@ -4609,6 +4603,7 @@ window.LiveTradingManager = (() => {
           _cachedGradKey = gradKey;
         }
 
+        // Step-curve area fill
         _ctx.beginPath();
         _ctx.moveTo(_pointBuffer[0].x, plotBottom);
         _ctx.lineTo(_pointBuffer[0].x, _pointBuffer[0].y);
@@ -4621,6 +4616,7 @@ window.LiveTradingManager = (() => {
         _ctx.fillStyle = _cachedGrad;
         _ctx.fill();
 
+        // Step-curve outline stroke
         _ctx.save();
         _ctx.shadowColor = mainColor;
         _ctx.shadowBlur = 8;
@@ -6200,9 +6196,10 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v4.8
+ * app.js — Main Application Coordinator v4.9
  * 
- * Features & Fixes in v4.8:
+ * Features & Fixes in v4.9:
+ * - Clean asynchronous loadMarket handoff & initialized emission gate (fixes refresh flat line)
  * - Step-Curve Financial Zero-Order Hold Rendering for Option Probabilities
  * - Pure Official CLOB Dual-Token History Engine (Zero Sawtooth / Anti-Noise)
  * - True Session-Start Anchor & Self-Healing Hydration on Mid-Session Joins
@@ -6312,7 +6309,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.8...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.9...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -6518,6 +6515,8 @@ window.App = (() => {
 
   // ─── Price Flow & Emission ────────────────────────────────────────
   function _emitPrice() {
+    if (!_isInitialized) return;
+
     const rawUpPrice = PriceEngine.effectivePrice();
     const rawUpCents = rawUpPrice * 100;
     const nowSec = Math.floor(Date.now() / 1000);
@@ -6631,6 +6630,7 @@ window.App = (() => {
   async function loadMarket(tfMinutes) {
     showLoading('Fetching market discovery...');
     _loadingRetries = 0;
+    _isInitialized = false;
     PriceEngine.reset();
     _currentSessionTicks = [];
 
@@ -6659,32 +6659,42 @@ window.App = (() => {
     MarketManager.setCurrentMarket(market);
     _updateMarketUI(market);
 
-    const initialProb = market.initialProb || 0.50;
-    PriceEngine.updateLastTrade(initialProb);
-
-    // 1. Initialize stationary Live Trading chart
-    if (window.LiveTradingManager) {
-      await LiveTradingManager.setMarket(market);
+    // Initial strike from metadata
+    const metaStrike = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice);
+    if (!isNaN(metaStrike) && metaStrike > 0) {
+      _liveBtcOpen = metaStrike;
+      _updateBtcHeroMetrics(0, _liveBtcCurrent, _liveBtcOpen);
     }
 
-    // 2. Fetch session price history in parallel
+    // 1. Fetch pure CLOB session price history
     setLoadingSub('Fetching pure CLOB session history...');
+    let hist = [];
     try {
-      const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, market.startTs, market.endTs);
-      if (Array.isArray(hist) && hist.length > 0) {
-        TickBuffer.reset(false);
-        _currentSessionTicks = [];
-        hist.forEach(([t, p]) => {
-          TickBuffer.addTick(t, p);
-          _currentSessionTicks.push([t, p]);
-        });
-        const lastP = hist[hist.length - 1][1];
-        PriceEngine.updateLastTrade(lastP / 100);
-        if (_activeView === 'chart') {
-          ChartManager.setData(TickBuffer.aggregate(_currentTfSeconds, _outcomeMode));
-        }
-      }
+      hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, market.startTs, market.endTs);
     } catch (e) {}
+
+    // Seed PriceEngine and TickBuffer with history
+    if (Array.isArray(hist) && hist.length > 0) {
+      TickBuffer.reset(false);
+      _currentSessionTicks = [];
+      hist.forEach(([t, p]) => {
+        TickBuffer.addTick(t, p);
+        _currentSessionTicks.push([t, p]);
+      });
+      const lastP = hist[hist.length - 1][1];
+      PriceEngine.updateLastTrade(lastP / 100);
+      if (_activeView === 'chart') {
+        ChartManager.setData(TickBuffer.aggregate(_currentTfSeconds, _outcomeMode));
+      }
+    } else {
+      const initialProb = market.initialProb || 0.50;
+      PriceEngine.updateLastTrade(initialProb);
+    }
+
+    // 2. Initialize stationary Live Trading chart with direct history handoff
+    if (window.LiveTradingManager) {
+      await LiveTradingManager.setMarket(market, hist);
+    }
 
     // 3. Connect Dual-Token WebSocket (UP & DOWN)
     setLoadingSub('Connecting to live CLOB Dual-Token WebSocket...');
@@ -6708,9 +6718,9 @@ window.App = (() => {
       }
     }).catch(() => {});
 
+    _isInitialized = true;
     _updatePriceUI();
     hideLoading();
-    _isInitialized = true;
   }
 
   // ─── Market Switch (Rollover Callback) ────────────────────────────

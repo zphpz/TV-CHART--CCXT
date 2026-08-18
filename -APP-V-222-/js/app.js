@@ -1,7 +1,8 @@
 /**
- * app.js — Main Application Coordinator v4.8
+ * app.js — Main Application Coordinator v4.9
  * 
- * Features & Fixes in v4.8:
+ * Features & Fixes in v4.9:
+ * - Clean asynchronous loadMarket handoff & initialized emission gate (fixes refresh flat line)
  * - Step-Curve Financial Zero-Order Hold Rendering for Option Probabilities
  * - Pure Official CLOB Dual-Token History Engine (Zero Sawtooth / Anti-Noise)
  * - True Session-Start Anchor & Self-Healing Hydration on Mid-Session Joins
@@ -111,7 +112,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.8...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v4.9...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -317,6 +318,8 @@ window.App = (() => {
 
   // ─── Price Flow & Emission ────────────────────────────────────────
   function _emitPrice() {
+    if (!_isInitialized) return;
+
     const rawUpPrice = PriceEngine.effectivePrice();
     const rawUpCents = rawUpPrice * 100;
     const nowSec = Math.floor(Date.now() / 1000);
@@ -430,6 +433,7 @@ window.App = (() => {
   async function loadMarket(tfMinutes) {
     showLoading('Fetching market discovery...');
     _loadingRetries = 0;
+    _isInitialized = false;
     PriceEngine.reset();
     _currentSessionTicks = [];
 
@@ -458,32 +462,42 @@ window.App = (() => {
     MarketManager.setCurrentMarket(market);
     _updateMarketUI(market);
 
-    const initialProb = market.initialProb || 0.50;
-    PriceEngine.updateLastTrade(initialProb);
-
-    // 1. Initialize stationary Live Trading chart
-    if (window.LiveTradingManager) {
-      await LiveTradingManager.setMarket(market);
+    // Initial strike from metadata
+    const metaStrike = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice);
+    if (!isNaN(metaStrike) && metaStrike > 0) {
+      _liveBtcOpen = metaStrike;
+      _updateBtcHeroMetrics(0, _liveBtcCurrent, _liveBtcOpen);
     }
 
-    // 2. Fetch session price history in parallel
+    // 1. Fetch pure CLOB session price history
     setLoadingSub('Fetching pure CLOB session history...');
+    let hist = [];
     try {
-      const hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, market.startTs, market.endTs);
-      if (Array.isArray(hist) && hist.length > 0) {
-        TickBuffer.reset(false);
-        _currentSessionTicks = [];
-        hist.forEach(([t, p]) => {
-          TickBuffer.addTick(t, p);
-          _currentSessionTicks.push([t, p]);
-        });
-        const lastP = hist[hist.length - 1][1];
-        PriceEngine.updateLastTrade(lastP / 100);
-        if (_activeView === 'chart') {
-          ChartManager.setData(TickBuffer.aggregate(_currentTfSeconds, _outcomeMode));
-        }
-      }
+      hist = await MarketManager.fetchSessionPriceHistory(market.upTokenId, market.downTokenId, market.startTs, market.endTs);
     } catch (e) {}
+
+    // Seed PriceEngine and TickBuffer with history
+    if (Array.isArray(hist) && hist.length > 0) {
+      TickBuffer.reset(false);
+      _currentSessionTicks = [];
+      hist.forEach(([t, p]) => {
+        TickBuffer.addTick(t, p);
+        _currentSessionTicks.push([t, p]);
+      });
+      const lastP = hist[hist.length - 1][1];
+      PriceEngine.updateLastTrade(lastP / 100);
+      if (_activeView === 'chart') {
+        ChartManager.setData(TickBuffer.aggregate(_currentTfSeconds, _outcomeMode));
+      }
+    } else {
+      const initialProb = market.initialProb || 0.50;
+      PriceEngine.updateLastTrade(initialProb);
+    }
+
+    // 2. Initialize stationary Live Trading chart with direct history handoff
+    if (window.LiveTradingManager) {
+      await LiveTradingManager.setMarket(market, hist);
+    }
 
     // 3. Connect Dual-Token WebSocket (UP & DOWN)
     setLoadingSub('Connecting to live CLOB Dual-Token WebSocket...');
@@ -507,9 +521,9 @@ window.App = (() => {
       }
     }).catch(() => {});
 
+    _isInitialized = true;
     _updatePriceUI();
     hideLoading();
-    _isInitialized = true;
   }
 
   // ─── Market Switch (Rollover Callback) ────────────────────────────

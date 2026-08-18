@@ -1,23 +1,15 @@
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.5
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.9
  * 
- * Features & Fixes in v4.5:
- * - Dual-Token History Hydration (merges UP and inverted DOWN token trades for full curve history)
- * - Self-healing background retry loop for mid-session opens
+ * Features & Fixes in v4.9:
+ * - Direct history handoff from loadMarket eliminates race conditions on page refresh
+ * - Step-curve zero-order hold rendering for Option Probability mode
+ * - Pure Official CLOB Dual-Token History Hydration
+ * - True session-start anchor (anchors startTs to first historical tick)
  * - Zero-allocation point buffer reuse (_pointBuffer) eliminates GC pauses
  * - Cached linear gradients for area under curve
- * - Dirty-flag & frame-rate managed animation loop (60fps on ticks/interaction, 30fps on idle pulse)
- * - Dual Chart Modes:
- *   1. ₿ BTC ($) Mode: 1:1 Live Bitcoin TWAP price curve vs Strike / Target Line ($64,746 vs $64,739)
- *   2. ¢ PROB (%) Mode: Polymarket CLOB Option token probability in cents (0–100¢)
- * - 100% stationary, non-scrolling full-session canvas locked from second 0 to second 300 (or 900)
+ * - Dual Chart Modes: ₿ BTC ($) live curve vs ¢ PROB (%) option token curve
  * - Large prominent floating live head badge (18px/15px, 10px offset, semi-transparent glass background)
- * - Anti-aliased glowing live price line with gradient under-fill
- * - Pulsing live leading dot at the current active second
- * - Blue dashed vertical second & minute grid lines (+01:00, +02:00 ... / 30s, 90s ...)
- * - Dynamic price scale & horizontal reference grid (Strike line / 50¢ anchor)
- * - Interactive hover crosshair with exact price & elapsed second tooltip
- * - Single-line top header HUD with slug link, ⏳ LIVE session badge & TWAP BTC price stream
  */
 'use strict';
 
@@ -102,12 +94,12 @@ window.LiveTradingManager = (() => {
     _setupResize();
     _startAnimationLoop();
 
-    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.5 self-healing)');
+    console.log('[LiveTradingManager] Custom 300s/900s Live Trading Canvas initialized (v4.9)');
     return true;
   }
 
   // ─── Market Initialization & History Population ────────────────────
-  async function setMarket(market) {
+  async function setMarket(market, initialHist) {
     if (!market) return;
     _currentMarket = market;
     _startTs = market.startTs || Math.floor(Date.now() / 1000);
@@ -128,13 +120,15 @@ window.LiveTradingManager = (() => {
       _btcTicks.push([_startTs, _btcOpen]);
     }
 
-    // 1. Fetch pure CLOB history immediately
-    await _tryFetchHistory(market);
-
-    // 2. Self-healing background retries if history is thin (< 2 points)
-    if (_rawTicks.length < 2 && window.MarketManager) {
-      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1200));
-      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3000));
+    if (Array.isArray(initialHist) && initialHist.length > 0) {
+      _rawTicks = initialHist.slice();
+      _lastPrice = initialHist[initialHist.length - 1][1];
+    } else {
+      await _tryFetchHistory(market);
+      if (_rawTicks.length < 2 && window.MarketManager) {
+        _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1200));
+        _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3000));
+      }
     }
 
     _isDirty = true;
@@ -194,7 +188,7 @@ window.LiveTradingManager = (() => {
       const last = _rawTicks[_rawTicks.length - 1];
       if (last[0] === unixSec) {
         last[1] = rawUpCents;
-      } else {
+      } else if (unixSec > last[0]) {
         _rawTicks.push([unixSec, rawUpCents]);
       }
     }
@@ -228,7 +222,7 @@ window.LiveTradingManager = (() => {
       const last = _btcTicks[_btcTicks.length - 1];
       if (last[0] === unixSec) {
         last[1] = btcPrice;
-      } else {
+      } else if (unixSec > last[0]) {
         _btcTicks.push([unixSec, btcPrice]);
       }
     }
@@ -664,6 +658,7 @@ window.LiveTradingManager = (() => {
           _cachedGradKey = gradKey;
         }
 
+        // Step-curve area fill
         _ctx.beginPath();
         _ctx.moveTo(_pointBuffer[0].x, plotBottom);
         _ctx.lineTo(_pointBuffer[0].x, _pointBuffer[0].y);
@@ -676,6 +671,7 @@ window.LiveTradingManager = (() => {
         _ctx.fillStyle = _cachedGrad;
         _ctx.fill();
 
+        // Step-curve outline stroke
         _ctx.save();
         _ctx.shadowColor = mainColor;
         _ctx.shadowBlur = 8;
