@@ -1,7 +1,8 @@
 /**
- * app.js — Main Application Coordinator v5.9
+ * app.js — Main Application Coordinator v6.0
  * 
- * Features & Fixes in v5.9:
+ * Features & Fixes in v6.0:
+ * - High-Legibility Large Font Scales (bold 14px / 12px Mono) across Left & Right Scales and Bottom Timeline
  * - 1:1 Accurate STRIKE Price for 15M & 5M Markets (direct Preddy API TWAP 60s priority & duration binding)
  * - Identical 5-Cent Step Price Scales on Both Left and Right (0¢, 5¢, 10¢ ... 95¢, 100¢)
  * - Dedicated Left Scale for Option Tokens (0–100¢) with Large Bold Text
@@ -122,7 +123,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v5.9...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.0...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);

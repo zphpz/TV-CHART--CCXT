@@ -51,9 +51,9 @@ window.LiveTradingManager = (() => {
   let _cachedGrad    = null;
 
   const TOP_HUD_H    = 26;
-  const LEFT_SCALE_W = 48;
-  const RIGHT_SCALE_W= 48;
-  const BOTTOM_AXIS_H= 22;
+  const LEFT_SCALE_W = 56;
+  const RIGHT_SCALE_W= 56;
+  const BOTTOM_AXIS_H= 26;
 
   function init(container) {
     if (!container) return false;
@@ -441,9 +441,9 @@ window.LiveTradingManager = (() => {
       const fullTag = `+${String(m).padStart(2, '0')}:${String(secRem).padStart(2, '0')}`;
       const timeTag = isMajor ? `${m}m` : `${s}s`;
 
-      _ctx.fillStyle = isMajor ? '#38bdf8' : '#64748b';
-      _ctx.font = isMajor ? 'bold 10px "JetBrains Mono", monospace' : '9px "JetBrains Mono", monospace';
-      _ctx.fillText(isMajor ? fullTag : timeTag, x, h - 4);
+      _ctx.fillStyle = isMajor ? '#38bdf8' : '#94a3b8';
+      _ctx.font = isMajor ? 'bold 13px "JetBrains Mono", monospace' : 'bold 11px "JetBrains Mono", monospace';
+      _ctx.fillText(isMajor ? fullTag : timeTag, x, h - 5);
     }
 
     _ctx.setLineDash([]);
@@ -489,15 +489,15 @@ window.LiveTradingManager = (() => {
         _ctx.stroke();
 
         // Left Scale Label
-        _ctx.font = 'bold 11px "JetBrains Mono", monospace';
+        _ctx.font = 'bold 13px "JetBrains Mono", monospace';
         _ctx.textAlign = 'right';
-        _ctx.fillStyle = '#94a3b8';
+        _ctx.fillStyle = '#cbd5e1';
         _ctx.fillText(`$${p.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, plotLeft - 6, y);
 
         // Right Scale Label
-        _ctx.font = '10px "JetBrains Mono", monospace';
+        _ctx.font = 'bold 13px "JetBrains Mono", monospace';
         _ctx.textAlign = 'left';
-        _ctx.fillStyle = '#64748b';
+        _ctx.fillStyle = '#cbd5e1';
         _ctx.fillText(`$${p.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, plotRight + 6, y);
       }
 
@@ -726,13 +726,13 @@ window.LiveTradingManager = (() => {
         _ctx.stroke();
 
         // ─── Scale Text Color & Font (Identical on both sides) ───
-        let scaleColor = '#94a3b8';
+        let scaleColor = '#cbd5e1';
         if (p === 100) scaleColor = '#34d399';
         else if (p === 50) scaleColor = '#38bdf8';
         else if (p === 0) scaleColor = '#ff4d6d';
-        else if (isDecade) scaleColor = '#cbd5e1';
+        else if (isDecade) scaleColor = '#ffffff';
 
-        const fontStr = isDecade ? 'bold 11px "JetBrains Mono", monospace' : '10px "JetBrains Mono", monospace';
+        const fontStr = isDecade ? 'bold 14px "JetBrains Mono", monospace' : 'bold 12px "JetBrains Mono", monospace';
         _ctx.font = fontStr;
         _ctx.fillStyle = scaleColor;
 
@@ -917,9 +917,9 @@ window.LiveTradingManager = (() => {
         _ctx.setLineDash([]);
 
         _ctx.fillStyle = mainColor;
-        _roundRect(_ctx, plotRight + 2, latestPt.y - 9, RIGHT_SCALE_W - 4, 18, 4, true, false);
+        _roundRect(_ctx, plotRight + 2, latestPt.y - 10, RIGHT_SCALE_W - 4, 20, 4, true, false);
         _ctx.fillStyle = '#090d16';
-        _ctx.font = 'bold 11px "JetBrains Mono", monospace';
+        _ctx.font = 'bold 12px "JetBrains Mono", monospace';
         _ctx.textAlign = 'center';
         _ctx.textBaseline = 'middle';
         _ctx.fillText(`${Math.round(latestPt.val)}¢`, plotRight + (RIGHT_SCALE_W / 2), latestPt.y);
@@ -1092,12 +1092,12 @@ window.LiveTradingManager = (() => {
         // D. Axis Tag Markers (Left Axis)
         _ctx.save();
         _ctx.fillStyle = hColor;
-        _roundRect(_ctx, plotLeft - 44, hoverY - 8, 40, 16, 3, true, false);
+        _roundRect(_ctx, plotLeft - 52, hoverY - 10, 48, 20, 4, true, false);
         _ctx.fillStyle = '#090d16';
-        _ctx.font = 'bold 10px "JetBrains Mono", monospace';
+        _ctx.font = 'bold 12px "JetBrains Mono", monospace';
         _ctx.textAlign = 'center';
         _ctx.textBaseline = 'middle';
-        _ctx.fillText(_chartMode === 'btc' ? `$${Math.round(hoverPrice)}` : `${Math.round(hoverPrice)}¢`, plotLeft - 24, hoverY);
+        _ctx.fillText(_chartMode === 'btc' ? `$${Math.round(hoverPrice)}` : `${Math.round(hoverPrice)}¢`, plotLeft - 28, hoverY);
         _ctx.restore();
       }
     }
