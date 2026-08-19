@@ -1,5 +1,5 @@
 /**
- * rtds.js — Polymarket Real-Time Data Stream (RTDS) WebSocket Client v2.0
+ * rtds.js — Polymarket Real-Time Data Stream (RTDS) WebSocket Client v6.6
  * 
  * 1:1 Parity Engine:
  * - Topic: crypto_prices_twap_sixty (symbol: btc/usd) with type: "*"
@@ -17,6 +17,8 @@ window.PolyRTDS = (() => {
   let _ws = null;
   let _pingTimer = null;
   let _reconnectTimer = null;
+  let _reconciliationTimer = null;
+  let _reconciliationTimeout = null;
   let _destroyed = false;
 
   let _currentBtcPrice = null;
@@ -25,6 +27,8 @@ window.PolyRTDS = (() => {
   let _durationSecs    = 300;
   let _lastTimestamp   = 0;
   let _isFetchingTarget= false;
+  let _isOfficialStrikeVerified = false;
+  let _isReconciling   = false;
 
   const handlers = {
     onBtcPrice: null,        // (currentPrice, tsMs, targetPrice, delta, isTwapVerified)
@@ -61,7 +65,6 @@ window.PolyRTDS = (() => {
       `http://localhost:8088/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `http://127.0.0.1:8088/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
-      `https://polymarket.com/api/crypto/crypto-price?symbol=BTC&eventStartTime=${startISO}&endDate=${endISO}&twapEnabled=true&twapLookbackSeconds=60`,
     ];
 
     for (const url of endpoints) {
@@ -103,50 +106,68 @@ window.PolyRTDS = (() => {
     }
   }
 
-  let _reconciliationTimer = null;
-  let _isOfficialStrikeVerified = false;
-
-  function _startFastStrikeReconciliation(winStartSec) {
+  function _stopReconciliation() {
     if (_reconciliationTimer) {
       clearInterval(_reconciliationTimer);
       _reconciliationTimer = null;
     }
+    if (_reconciliationTimeout) {
+      clearTimeout(_reconciliationTimeout);
+      _reconciliationTimeout = null;
+    }
+    _isReconciling = false;
+  }
+
+  function _startFastStrikeReconciliation(winStartSec) {
+    _stopReconciliation();
+    if (!winStartSec) return;
 
     let attempts = 0;
     const maxAttempts = 15; // Fast polling: 15 attempts * 2.5s = ~37s
 
     const poll = async () => {
-      attempts++;
-      if (_destroyed || _isOfficialStrikeVerified || attempts > maxAttempts) {
-        if (_reconciliationTimer) {
-          clearInterval(_reconciliationTimer);
-          _reconciliationTimer = null;
-        }
+      if (_destroyed || _isOfficialStrikeVerified || attempts >= maxAttempts) {
+        _stopReconciliation();
         return;
       }
+      if (_isReconciling) return;
+      _isReconciling = true;
+      attempts++;
 
-      const endSec = winStartSec + _durationSecs;
-      const officialPrice = await fetchOfficialTargetPrice(winStartSec, endSec);
-      if (officialPrice !== null && !isNaN(officialPrice) && officialPrice > 0) {
-        _targetBtcPrice = officialPrice;
-        _isOfficialStrikeVerified = true;
-        _cacheStrike(winStartSec, officialPrice);
-        _emitPriceUpdate();
-        if (_reconciliationTimer) {
-          clearInterval(_reconciliationTimer);
-          _reconciliationTimer = null;
+      try {
+        const endSec = winStartSec + _durationSecs;
+        const officialPrice = await fetchOfficialTargetPrice(winStartSec, endSec);
+        if (officialPrice !== null && !isNaN(officialPrice) && officialPrice > 0) {
+          _targetBtcPrice = officialPrice;
+          _isOfficialStrikeVerified = true;
+          _cacheStrike(winStartSec, officialPrice);
+          _emitPriceUpdate();
+          _stopReconciliation();
+          return;
         }
+      } catch (err) {
+        // network retry
+      } finally {
+        _isReconciling = false;
+      }
+
+      if (attempts >= maxAttempts) {
+        _stopReconciliation();
       }
     };
 
-    setTimeout(poll, 1200);
-    _reconciliationTimer = setInterval(poll, 2500);
+    // Fast initial check after 1.2s, then interval loop
+    _reconciliationTimeout = setTimeout(() => {
+      poll();
+      if (!_isOfficialStrikeVerified && !_destroyed) {
+        _reconciliationTimer = setInterval(poll, 2500);
+      }
+    }, 1200);
   }
 
   function checkAndRefreshWindow() {
-    const nowSec = Math.floor(Date.now() / 1000);
+    const nowSec = _lastTimestamp > 0 ? Math.floor(_lastTimestamp / 1000) : Math.floor(Date.now() / 1000);
     const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
-    const winEndSec = winStartSec + _durationSecs;
     const winId = Math.floor(nowSec / _durationSecs);
 
     if (_currentWindowId !== winId) {
@@ -161,7 +182,7 @@ window.PolyRTDS = (() => {
 
   function resetForNewWindow(winStartSec) {
     if (!winStartSec) {
-      const nowSec = Math.floor(Date.now() / 1000);
+      const nowSec = _lastTimestamp > 0 ? Math.floor(_lastTimestamp / 1000) : Math.floor(Date.now() / 1000);
       winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
     }
     _currentWindowId = Math.floor(winStartSec / _durationSecs);
@@ -175,7 +196,7 @@ window.PolyRTDS = (() => {
     const delta = _targetBtcPrice !== null ? (_currentBtcPrice - _targetBtcPrice) : null;
 
     if (handlers.onBtcPrice) {
-      handlers.onBtcPrice(_currentBtcPrice, _lastTimestamp || Date.now(), _targetBtcPrice, delta, true);
+      handlers.onBtcPrice(_currentBtcPrice, _lastTimestamp || Date.now(), _targetBtcPrice, delta, Boolean(_isOfficialStrikeVerified));
     }
   }
 
@@ -195,7 +216,7 @@ window.PolyRTDS = (() => {
     }
 
     _ws.onopen = () => {
-      console.log('[PolyRTDS] Connected to Polymarket RTDS (60s TWAP 1:1 Stream)');
+      console.log('[PolyRTDS] Connected to Polymarket RTDS (60s TWAP 1:1 Stream v6.6)');
       _subscribeTwapPrices();
       _startPing();
       checkAndRefreshWindow();
@@ -217,6 +238,8 @@ window.PolyRTDS = (() => {
             const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
             let strikeCandidate = null;
             let minDiff = Infinity;
+            let latestPrice = null;
+            let maxTsMs = 0;
 
             for (const pt of payload.data) {
               const rawVal = pt.value !== undefined ? pt.value : pt.price;
@@ -225,25 +248,32 @@ window.PolyRTDS = (() => {
               const ptSec = Math.floor(tsMs / 1000);
 
               if (!isNaN(price) && price > 0) {
-                _currentBtcPrice = price;
-                _lastTimestamp = tsMs;
+                if (tsMs >= maxTsMs) {
+                  maxTsMs = tsMs;
+                  latestPrice = price;
+                }
 
-                const diff = Math.abs(ptSec - winStartSec);
-                if (diff < minDiff && diff <= 3) {
-                  minDiff = diff;
-                  strikeCandidate = price;
+                // Strict boundary check: strike MUST be at or after winStartSec (never previous round!)
+                if (ptSec >= winStartSec) {
+                  const diff = ptSec - winStartSec;
+                  if (diff < minDiff && diff <= 5) {
+                    minDiff = diff;
+                    strikeCandidate = price;
+                  }
                 }
               }
+            }
+
+            if (latestPrice !== null) {
+              _currentBtcPrice = latestPrice;
+              _lastTimestamp = maxTsMs || Date.now();
             }
 
             if (strikeCandidate !== null) {
               _targetBtcPrice = strikeCandidate;
               _isOfficialStrikeVerified = true;
               _cacheStrike(winStartSec, strikeCandidate);
-              if (_reconciliationTimer) {
-                clearInterval(_reconciliationTimer);
-                _reconciliationTimer = null;
-              }
+              _stopReconciliation();
             }
 
             _emitPriceUpdate();
@@ -313,7 +343,7 @@ window.PolyRTDS = (() => {
   }
 
   function _startPing() {
-    _clearTimers();
+    clearInterval(_pingTimer);
     _pingTimer = setInterval(() => {
       if (_ws && _ws.readyState === WebSocket.OPEN) {
         try {
@@ -331,8 +361,13 @@ window.PolyRTDS = (() => {
   function _clearTimers() {
     clearInterval(_pingTimer);
     clearTimeout(_reconnectTimer);
+    clearInterval(_reconciliationTimer);
+    clearTimeout(_reconciliationTimeout);
     _pingTimer = null;
     _reconnectTimer = null;
+    _reconciliationTimer = null;
+    _reconciliationTimeout = null;
+    _isReconciling = false;
   }
 
   function destroy() {

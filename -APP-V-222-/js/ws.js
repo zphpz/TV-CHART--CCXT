@@ -296,8 +296,8 @@ window.PolyWS = (() => {
     if (_isConnected) {
       _sendUnsubscribe(upTokenId || _upTokenId, downTokenId || _downTokenId);
     }
-    if (String(upTokenId) === _upTokenId) _upTokenId = null;
-    if (String(downTokenId) === _downTokenId) _downTokenId = null;
+    if (!upTokenId || String(upTokenId) === _upTokenId) _upTokenId = null;
+    if (!downTokenId || String(downTokenId) === _downTokenId) _downTokenId = null;
   }
 
   function _send(str) {

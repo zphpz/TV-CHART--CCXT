@@ -138,6 +138,19 @@ window.BackfillEngine = (() => {
       if (!isNaN(fPrice) && fPrice > 0) btcClose = fPrice;
     }
 
+    // Try Preddy API for 1:1 Chainlink 60s TWAP strike if not in metadata
+    if (btcOpen === null && startTs && endTs) {
+      try {
+        const startISO = new Date(startTs * 1000).toISOString().replace('.000Z', 'Z');
+        const endISO = new Date(endTs * 1000).toISOString().replace('.000Z', 'Z');
+        const pData = await _fetchJSON(`https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`);
+        if (pData && pData.openPrice) {
+          const p = parseFloat(pData.openPrice);
+          if (!isNaN(p) && p > 0) btcOpen = p;
+        }
+      } catch {}
+    }
+
     // Fallback to Binance BTCUSDT kline if eventMetadata is not yet available
     if ((btcOpen === null || btcClose === null) && startTs) {
       try {

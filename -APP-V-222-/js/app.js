@@ -1,7 +1,12 @@
 /**
- * app.js — Main Application Coordinator v6.5
+ * app.js — Main Application Coordinator v6.6
  * 
- * Features & Fixes in v6.5:
+ * Features & Fixes in v6.6:
+ * - Robust Strike Engine: Strict round boundary check (ptSec >= winStartSec) prevents selecting ticks from previous round
+ * - Controlled fast strike reconciliation with concurrency guard and full timer cleanup on destroy
+ * - Correct Order Book bestBid / bestAsk resolution (highest bid, lowest ask) with sorting-independent search
+ * - Eliminated race conditions between loadMarket and RTDS reconciliation loop
+ * - Rollover tick deduplication ensuring clean stationarity without duplicate timestamps
  * - Ultra-Fast Strike Reconciliation: 0-second preliminary live tick anchor with immediate replacement from RTDS historical buffer (5M & 15M)
  * - 1:1 Live RTDS Second-0 Opening Strike Capture & WebSocket History Buffer Extraction
  * - Instant Strike Reset on Rollover: Zero residual latency/old strike persistence across rounds
@@ -299,10 +304,18 @@ window.App = (() => {
       const bids = msg.bids || [];
       const asks = msg.asks || [];
       if (bids.length > 0 && asks.length > 0) {
-        const bestBid = parseFloat(bids[bids.length - 1].price);
-        const bestAsk = parseFloat(asks[asks.length - 1].price);
-        if (!isNaN(bestBid) && !isNaN(bestAsk)) {
-          PriceEngine.updateBidAsk(bestBid, bestAsk);
+        let maxBid = -Infinity;
+        for (let i = 0; i < bids.length; i++) {
+          const p = parseFloat(bids[i].price);
+          if (!isNaN(p) && p > maxBid) maxBid = p;
+        }
+        let minAsk = Infinity;
+        for (let i = 0; i < asks.length; i++) {
+          const p = parseFloat(asks[i].price);
+          if (!isNaN(p) && p < minAsk) minAsk = p;
+        }
+        if (maxBid > -Infinity && minAsk < Infinity) {
+          PriceEngine.updateBidAsk(maxBid, minAsk);
           _emitPrice();
         }
       }
@@ -545,20 +558,12 @@ window.App = (() => {
 
     MarketManager.scheduleRollover(market, _onMarketSwitch);
 
-    // 4. Fetch official target strike
+    // 4. Coordinate official target strike via PolyRTDS
     if (window.PolyRTDS) {
       const dur = (market.startTs && market.endTs) ? (market.endTs - market.startTs) : (tfMinutes * 60);
       PolyRTDS.setDurationSecs(dur);
-      if (market.startTs && market.endTs) {
-        PolyRTDS.fetchOfficialTargetPrice(market.startTs, market.endTs).then(openP => {
-          if (openP) {
-            _liveBtcOpen = openP;
-            _updateBtcHeroMetrics((_liveBtcCurrent ? _liveBtcCurrent - openP : 0), _liveBtcCurrent, openP);
-            if (window.LiveTradingManager) {
-              LiveTradingManager.updateBtcPrice(openP, _liveBtcCurrent, _liveBtcChange);
-            }
-          }
-        }).catch(() => {});
+      if (market.startTs) {
+        PolyRTDS.resetForNewWindow(market.startTs);
       }
     }
 
@@ -678,21 +683,26 @@ window.App = (() => {
       _currentSessionTicks = [];
 
       const nowSec = Math.floor(Date.now() / 1000);
+      const startTs = newMarket.startTs || nowSec;
       const initialRawCents = newProb * 100;
 
       // Seed new session in LiveTradingManager immediately
       if (window.LiveTradingManager) {
         await LiveTradingManager.setMarket(newMarket);
-        LiveTradingManager.pushTick(newMarket.startTs || nowSec, initialRawCents);
+        if (startTs !== nowSec) {
+          LiveTradingManager.pushTick(startTs, initialRawCents);
+        }
         LiveTradingManager.pushTick(nowSec, initialRawCents);
         if (_liveBtcCurrent) {
           LiveTradingManager.pushBtcTick(nowSec, _liveBtcCurrent, null);
         }
       }
 
-      TickBuffer.addTick(newMarket.startTs || nowSec, initialRawCents);
+      if (startTs !== nowSec) {
+        TickBuffer.addTick(startTs, initialRawCents);
+        _currentSessionTicks.push([startTs, initialRawCents]);
+      }
       TickBuffer.addTick(nowSec, initialRawCents);
-      _currentSessionTicks.push([newMarket.startTs || nowSec, initialRawCents]);
       _currentSessionTicks.push([nowSec, initialRawCents]);
 
       if (_activeView === 'chart') {

@@ -159,7 +159,7 @@ def run_server():
     server = HTTPServer(("0.0.0.0", PORT), AppHTTPHandler)
     local_ip = get_local_ip()
     print("=" * 65)
-    print(">> POLYMARKET BTC 1:1 TWAP LIVE CHART SERVER (v6.5)")
+    print(">> POLYMARKET BTC 1:1 TWAP LIVE CHART SERVER (v6.6)")
     print(f"   PC:     http://localhost:{PORT}")
     print(f"   LAN:    http://{local_ip}:{PORT}")
     print(f"   DIR:    {ROOT_DIR}")

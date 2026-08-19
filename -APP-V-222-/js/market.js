@@ -349,6 +349,7 @@ window.MarketManager = (() => {
     console.log('[MarketManager] Pre-fetching next market:', nextSlug);
 
     for (let i = 0; i < 25; i++) {
+      if (_isRollingOver) return;
       const md = await fetchMarketData(nextSlug);
       if (md) {
         _nextMarket = md;
@@ -397,7 +398,6 @@ window.MarketManager = (() => {
       } else {
         console.error('[MarketManager] Rollover retry: no active market found, retrying in 3s...');
         setTimeout(() => {
-          _isRollingOver = false;
           _doRollover();
         }, 3000);
         return;

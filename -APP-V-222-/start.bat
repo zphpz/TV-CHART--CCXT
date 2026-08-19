@@ -1,9 +1,9 @@
 @echo off
-title Polymarket BTC 1:1 Live Chart v6.5
+title Polymarket BTC 1:1 Live Chart v6.6
 cd /d "%~dp0"
 
 echo =======================================================
-echo   POLYMARKET BTC 1:1 LIVE CHART (v6.5)
+echo   POLYMARKET BTC 1:1 LIVE CHART (v6.6)
 echo   Local Dual-Mode Launcher
 echo =======================================================
 echo.
