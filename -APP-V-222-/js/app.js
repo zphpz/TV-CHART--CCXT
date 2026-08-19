@@ -1,7 +1,9 @@
 /**
- * app.js — Main Application Coordinator v6.9
+ * app.js — Main Application Coordinator v7.0
  * 
- * Features & Fixes in v6.9:
+ * Features & Fixes in v7.0:
+ * - 8-Page Deep Parallel Trade Pagination (up to 4,000 trades per 5M/15M session)
+ * - Continuous Background Density Healing: Eliminates mid-session flat shelves upon late entrance or F5
  * - Full Mid-Session History Hydration: Ingests 100% 1-second historical BTC TWAP points from RTDS buffer on connect/refresh
  * - Multi-Query CLOB Token History Merge eliminating mid-session gaps and diagonal line artifacts
  * - Multi-tier CORS-resilient strike reconciliation engine with zero-drop callback dispatch

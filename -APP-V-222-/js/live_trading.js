@@ -1,7 +1,8 @@
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v5.0
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v5.1
  * 
- * Features & Fixes in v5.0 (App v6.9):
+ * Features & Fixes in v5.1 (App v7.0):
+ * - Deep Continuous Background Density Healing: Auto-hydrates full trade depth if initial buffer is sparse
  * - 100% BTC Historical Buffer Ingestion from RTDS on page refresh / mid-session entry (zero gaps/diagonal lines)
  * - Enhanced multi-query token history hydration and session storage synchronization
  * - Direct history handoff from loadMarket eliminates race conditions on page refresh
@@ -197,12 +198,14 @@ window.LiveTradingManager = (() => {
     if (tickMap.size > 0) {
       _rawTicks = Array.from(tickMap.entries()).sort((a, b) => a[0] - b[0]);
       _lastPrice = _rawTicks[_rawTicks.length - 1][1];
-    } else {
-      await _tryFetchHistory(market);
-      if (_rawTicks.length < 2 && window.MarketManager) {
-        _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1200));
-        _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3000));
-      }
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const secIntoSession = nowSec - _startTs;
+    if (_rawTicks.length < 25 && secIntoSession > 15) {
+      _tryFetchHistory(market);
+      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 1500));
+      _historyRetryTimers.push(setTimeout(() => _tryFetchHistory(market), 3500));
     }
 
     if (btcMap.size > 0) {

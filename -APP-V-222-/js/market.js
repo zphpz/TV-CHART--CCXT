@@ -187,11 +187,20 @@ window.MarketManager = (() => {
       return { inSession: [], preStart: null };
     };
 
-    // 2. Fetch Data API trades strictly by conditionId (never global asset_id) with deep pagination
+    // 2. Fetch Data API trades strictly by conditionId (never global asset_id) with 8-page deep pagination
     const fetchMarketTrades = async (cond, offset) => {
       if (!cond) return [];
-      const url = `https://data-api.polymarket.com/trades?market=${cond}&limit=500&offset=${offset}&_t=${nowNonce}`;
-      const data = await _fetchWithRetry(url, 2, 2500);
+      const urls = [
+        `/api/data/trades?market=${cond}&limit=500&offset=${offset}&_t=${nowNonce}`,
+        `https://data-api.polymarket.com/trades?market=${cond}&limit=500&offset=${offset}&_t=${nowNonce}`,
+      ];
+
+      let data = null;
+      for (const u of urls) {
+        data = await _fetchWithRetry(u, 2, 3500);
+        if (Array.isArray(data) && data.length > 0) break;
+      }
+
       if (Array.isArray(data) && data.length > 0) {
         const list = [];
         for (let i = 0; i < data.length; i++) {
@@ -214,7 +223,7 @@ window.MarketManager = (() => {
     };
 
     try {
-      // Launch CLOB + 6-page deep parallel ingestion strictly for this market's conditionId
+      // Launch CLOB + 8-page deep parallel ingestion strictly for this market's conditionId
       const tasks = [
         fetchTokenClob(upTokenId, false),
         fetchTokenClob(downTokenId, true),
@@ -227,6 +236,8 @@ window.MarketManager = (() => {
         tasks.push(fetchMarketTrades(conditionId, 1500));
         tasks.push(fetchMarketTrades(conditionId, 2000));
         tasks.push(fetchMarketTrades(conditionId, 2500));
+        tasks.push(fetchMarketTrades(conditionId, 3000));
+        tasks.push(fetchMarketTrades(conditionId, 3500));
       }
 
       const results = await Promise.allSettled(tasks);
