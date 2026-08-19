@@ -1,7 +1,8 @@
 /**
- * app.js — Main Application Coordinator v6.4
+ * app.js — Main Application Coordinator v6.5
  * 
- * Features & Fixes in v6.4:
+ * Features & Fixes in v6.5:
+ * - Ultra-Fast Strike Reconciliation: 0-second preliminary live tick anchor with immediate replacement from RTDS historical buffer (5M & 15M)
  * - 1:1 Live RTDS Second-0 Opening Strike Capture & WebSocket History Buffer Extraction
  * - Instant Strike Reset on Rollover: Zero residual latency/old strike persistence across rounds
  * - Removed Binance USDT Spot Fallback: 100% Chainlink BTC/USD TWAP Parity via Preddy & Local Proxy
@@ -130,7 +131,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.4...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.5...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);

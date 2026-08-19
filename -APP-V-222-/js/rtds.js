@@ -33,8 +33,13 @@ window.PolyRTDS = (() => {
   };
 
   function setDurationSecs(secs) {
-    _durationSecs = Math.max(60, secs || 300);
-    checkAndRefreshWindow();
+    const newDur = Math.max(60, secs || 300);
+    if (_durationSecs !== newDur) {
+      _durationSecs = newDur;
+      _currentWindowId = null;
+      _isOfficialStrikeVerified = false;
+      checkAndRefreshWindow();
+    }
   }
 
   function getDurationSecs() {
@@ -98,6 +103,46 @@ window.PolyRTDS = (() => {
     }
   }
 
+  let _reconciliationTimer = null;
+  let _isOfficialStrikeVerified = false;
+
+  function _startFastStrikeReconciliation(winStartSec) {
+    if (_reconciliationTimer) {
+      clearInterval(_reconciliationTimer);
+      _reconciliationTimer = null;
+    }
+
+    let attempts = 0;
+    const maxAttempts = 15; // Fast polling: 15 attempts * 2.5s = ~37s
+
+    const poll = async () => {
+      attempts++;
+      if (_destroyed || _isOfficialStrikeVerified || attempts > maxAttempts) {
+        if (_reconciliationTimer) {
+          clearInterval(_reconciliationTimer);
+          _reconciliationTimer = null;
+        }
+        return;
+      }
+
+      const endSec = winStartSec + _durationSecs;
+      const officialPrice = await fetchOfficialTargetPrice(winStartSec, endSec);
+      if (officialPrice !== null && !isNaN(officialPrice) && officialPrice > 0) {
+        _targetBtcPrice = officialPrice;
+        _isOfficialStrikeVerified = true;
+        _cacheStrike(winStartSec, officialPrice);
+        _emitPriceUpdate();
+        if (_reconciliationTimer) {
+          clearInterval(_reconciliationTimer);
+          _reconciliationTimer = null;
+        }
+      }
+    };
+
+    setTimeout(poll, 1200);
+    _reconciliationTimer = setInterval(poll, 2500);
+  }
+
   function checkAndRefreshWindow() {
     const nowSec = Math.floor(Date.now() / 1000);
     const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
@@ -106,9 +151,10 @@ window.PolyRTDS = (() => {
 
     if (_currentWindowId !== winId) {
       _currentWindowId = winId;
+      _isOfficialStrikeVerified = false;
       _targetBtcPrice = _getCachedStrike(winStartSec);
       if (_targetBtcPrice === null) {
-        fetchOfficialTargetPrice(winStartSec, winEndSec);
+        _startFastStrikeReconciliation(winStartSec);
       }
     }
   }
@@ -119,10 +165,9 @@ window.PolyRTDS = (() => {
       winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
     }
     _currentWindowId = Math.floor(winStartSec / _durationSecs);
+    _isOfficialStrikeVerified = false;
     _targetBtcPrice = _getCachedStrike(winStartSec);
-    if (_targetBtcPrice === null) {
-      fetchOfficialTargetPrice(winStartSec, winStartSec + _durationSecs);
-    }
+    _startFastStrikeReconciliation(winStartSec);
   }
 
   function _emitPriceUpdate() {
@@ -191,9 +236,14 @@ window.PolyRTDS = (() => {
               }
             }
 
-            if (_targetBtcPrice === null && strikeCandidate !== null) {
+            if (strikeCandidate !== null) {
               _targetBtcPrice = strikeCandidate;
+              _isOfficialStrikeVerified = true;
               _cacheStrike(winStartSec, strikeCandidate);
+              if (_reconciliationTimer) {
+                clearInterval(_reconciliationTimer);
+                _reconciliationTimer = null;
+              }
             }
 
             _emitPriceUpdate();
@@ -210,16 +260,18 @@ window.PolyRTDS = (() => {
               const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
               const secInWin = nowSec % _durationSecs;
 
-              // At exact round open (0-th second), anchor the target price directly from live RTDS
+              // At exact round open (0-th second), anchor the initial target price directly from live RTDS
               if (secInWin === 0) {
                 _targetBtcPrice = val;
                 _cacheStrike(winStartSec, val);
+                _isOfficialStrikeVerified = false;
+                _startFastStrikeReconciliation(winStartSec);
               } else if (_targetBtcPrice === null) {
                 const cached = _getCachedStrike(winStartSec);
                 if (cached) {
                   _targetBtcPrice = cached;
                 } else {
-                  fetchOfficialTargetPrice(winStartSec, winStartSec + _durationSecs);
+                  _startFastStrikeReconciliation(winStartSec);
                 }
               }
 
