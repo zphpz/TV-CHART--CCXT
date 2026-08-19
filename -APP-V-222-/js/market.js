@@ -147,16 +147,26 @@ window.MarketManager = (() => {
 
     const nowNonce = Date.now();
 
-    // 1. Fetch CLOB prices-history for UP/DOWN with cache buster
+    // 1. Fetch CLOB prices-history for UP/DOWN with multi-query merge & cache buster
     const fetchTokenClob = async (tok, isInverted) => {
       if (!tok) return { inSession: [], preStart: null };
-      const url = `${CLOB_BASE}/prices-history?market=${tok}&interval=1d&fidelity=1&_t=${nowNonce}`;
-      const data = await _fetchWithRetry(url, 2, 2500);
-      if (data && Array.isArray(data.history) && data.history.length > 0) {
-        const inSession = [];
+      const url1 = `${CLOB_BASE}/prices-history?market=${tok}&interval=1d&fidelity=1&_t=${nowNonce}`;
+      const url2 = `${CLOB_BASE}/prices-history?market=${tok}&startTs=${startTs}&endTs=${endTs}&fidelity=1&_t=${nowNonce}`;
+
+      const [data1, data2] = await Promise.all([
+        _fetchWithRetry(url1, 2, 2500),
+        _fetchWithRetry(url2, 2, 2500),
+      ]);
+
+      const combined = [];
+      if (data1 && Array.isArray(data1.history)) combined.push(...data1.history);
+      if (data2 && Array.isArray(data2.history)) combined.push(...data2.history);
+
+      if (combined.length > 0) {
+        const inSessionMap = new Map();
         let preStart = null;
-        for (let i = 0; i < data.history.length; i++) {
-          const item = data.history[i];
+        for (let i = 0; i < combined.length; i++) {
+          const item = combined[i];
           const ts = parseInt(item.t);
           const p = parseFloat(item.p);
           if (!isNaN(ts) && !isNaN(p)) {
@@ -167,10 +177,11 @@ window.MarketManager = (() => {
             if (ts <= startTs) {
               preStart = clamped;
             } else if (ts <= endTs) {
-              inSession.push([ts, clamped]);
+              inSessionMap.set(ts, clamped);
             }
           }
         }
+        const inSession = Array.from(inSessionMap.entries()).sort((a, b) => a[0] - b[0]);
         return { inSession, preStart };
       }
       return { inSession: [], preStart: null };

@@ -1871,7 +1871,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v6.8</span>
+        <span id="app-version">v6.9</span>
       </div>
     </footer>
 
@@ -3056,16 +3056,26 @@ window.MarketManager = (() => {
 
     const nowNonce = Date.now();
 
-    // 1. Fetch CLOB prices-history for UP/DOWN with cache buster
+    // 1. Fetch CLOB prices-history for UP/DOWN with multi-query merge & cache buster
     const fetchTokenClob = async (tok, isInverted) => {
       if (!tok) return { inSession: [], preStart: null };
-      const url = `${CLOB_BASE}/prices-history?market=${tok}&interval=1d&fidelity=1&_t=${nowNonce}`;
-      const data = await _fetchWithRetry(url, 2, 2500);
-      if (data && Array.isArray(data.history) && data.history.length > 0) {
-        const inSession = [];
+      const url1 = `${CLOB_BASE}/prices-history?market=${tok}&interval=1d&fidelity=1&_t=${nowNonce}`;
+      const url2 = `${CLOB_BASE}/prices-history?market=${tok}&startTs=${startTs}&endTs=${endTs}&fidelity=1&_t=${nowNonce}`;
+
+      const [data1, data2] = await Promise.all([
+        _fetchWithRetry(url1, 2, 2500),
+        _fetchWithRetry(url2, 2, 2500),
+      ]);
+
+      const combined = [];
+      if (data1 && Array.isArray(data1.history)) combined.push(...data1.history);
+      if (data2 && Array.isArray(data2.history)) combined.push(...data2.history);
+
+      if (combined.length > 0) {
+        const inSessionMap = new Map();
         let preStart = null;
-        for (let i = 0; i < data.history.length; i++) {
-          const item = data.history[i];
+        for (let i = 0; i < combined.length; i++) {
+          const item = combined[i];
           const ts = parseInt(item.t);
           const p = parseFloat(item.p);
           if (!isNaN(ts) && !isNaN(p)) {
@@ -3076,10 +3086,11 @@ window.MarketManager = (() => {
             if (ts <= startTs) {
               preStart = clamped;
             } else if (ts <= endTs) {
-              inSession.push([ts, clamped]);
+              inSessionMap.set(ts, clamped);
             }
           }
         }
+        const inSession = Array.from(inSessionMap.entries()).sort((a, b) => a[0] - b[0]);
         return { inSession, preStart };
       }
       return { inSession: [], preStart: null };
@@ -3742,10 +3753,12 @@ window.PolyRTDS = (() => {
   let _lastTimestamp   = 0;
   let _isOfficialStrikeVerified = false;
   let _isReconciling   = false;
+  let _lastHistoricalBuffer = [];
 
   const handlers = {
     onBtcPrice: null,          // (currentPrice, tsMs, targetPrice, delta, isTwapVerified)
     onStrikeConfirmed: null,   // (price, winStartSec) -- fires independently of live price
+    onHistoricalBtcTicks: null,// (batchArray) -- full historical 1s TWAP points
     onConnected: null,
     onDisconnected: null,
   };
@@ -3973,6 +3986,11 @@ window.PolyRTDS = (() => {
 
           // -- 1. Batch historical points (sent once on (re)connect) --
           if (Array.isArray(payload.data) && payload.data.length > 0) {
+            _lastHistoricalBuffer = payload.data;
+            if (handlers.onHistoricalBtcTicks) {
+              try { handlers.onHistoricalBtcTicks(payload.data); } catch (e) {}
+            }
+
             // Use authoritative winStartSec if available; fallback to computed
             const winStartSec = _activeWinStartSec != null ? _activeWinStartSec
               : (Math.floor((_lastTimestamp > 0 ? Math.floor(_lastTimestamp / 1000) : Math.floor(Date.now() / 1000)) / _durationSecs) * _durationSecs);
@@ -4110,6 +4128,8 @@ window.PolyRTDS = (() => {
       ? (_currentBtcPrice - _targetBtcPrice) : null;
   }
 
+  function getHistoricalBuffer() { return _lastHistoricalBuffer || []; }
+
   return {
     connect,
     destroy,
@@ -4123,6 +4143,7 @@ window.PolyRTDS = (() => {
     getCurrentPrice,
     getTargetPrice,
     getDelta,
+    getHistoricalBuffer,
     handlers,
   };
 })();
@@ -4131,9 +4152,11 @@ window.PolyRTDS = (() => {
 
 /* ═══ MODULE: js/live_trading.js ═══ */
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.9
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v5.0
  * 
- * Features & Fixes in v4.9:
+ * Features & Fixes in v5.0 (App v6.9):
+ * - 100% BTC Historical Buffer Ingestion from RTDS on page refresh / mid-session entry (zero gaps/diagonal lines)
+ * - Enhanced multi-query token history hydration and session storage synchronization
  * - Direct history handoff from loadMarket eliminates race conditions on page refresh
  * - Step-curve zero-order hold rendering for Option Probability mode
  * - Pure Official CLOB Dual-Token History Hydration
@@ -4302,6 +4325,24 @@ window.LiveTradingManager = (() => {
       if (Array.isArray(cached.btcTicks)) {
         cached.btcTicks.forEach(([t, p]) => {
           if (t >= _startTs && t <= _endTs) btcMap.set(t, p);
+        });
+      }
+    }
+
+    // Ingest RTDS historical buffer if available
+    if (window.PolyRTDS && typeof PolyRTDS.getHistoricalBuffer === 'function') {
+      const rtdsBuf = PolyRTDS.getHistoricalBuffer();
+      if (Array.isArray(rtdsBuf) && rtdsBuf.length > 0) {
+        rtdsBuf.forEach(pt => {
+          const rawVal = pt.value !== undefined ? pt.value : pt.price;
+          const val = typeof rawVal === 'number' ? rawVal : parseFloat(rawVal);
+          const tsMs = typeof pt.timestamp === 'number' ? pt.timestamp : (typeof pt.t === 'number' ? pt.t * 1000 : null);
+          if (tsMs !== null && !isNaN(val) && val > 0) {
+            const sec = Math.floor(tsMs / 1000);
+            if (sec >= _startTs && sec <= _endTs) {
+              btcMap.set(sec, val);
+            }
+          }
         });
       }
     }
@@ -4475,6 +4516,39 @@ window.LiveTradingManager = (() => {
       }
       _isDirty = true;
       _render();
+    }
+  }
+
+  function addHistoricalBtcTicks(pts) {
+    if (!Array.isArray(pts) || pts.length === 0) return;
+    const btcMap = new Map();
+    if (_btcOpen && _startTs) btcMap.set(_startTs, _btcOpen);
+
+    for (let i = 0; i < _btcTicks.length; i++) {
+      btcMap.set(_btcTicks[i][0], _btcTicks[i][1]);
+    }
+
+    for (let i = 0; i < pts.length; i++) {
+      const pt = pts[i];
+      const rawVal = pt.value !== undefined ? pt.value : pt.price;
+      const val = typeof rawVal === 'number' ? rawVal : parseFloat(rawVal);
+      const tsMs = typeof pt.timestamp === 'number' ? pt.timestamp : (typeof pt.t === 'number' ? pt.t * 1000 : null);
+      if (tsMs !== null && !isNaN(val) && val > 0) {
+        const sec = Math.floor(tsMs / 1000);
+        if (sec >= _startTs && sec <= _endTs) {
+          btcMap.set(sec, val);
+        }
+      }
+    }
+
+    if (btcMap.size > 0) {
+      _btcTicks = Array.from(btcMap.entries()).sort((a, b) => a[0] - b[0]);
+      _btcCurrent = _btcTicks[_btcTicks.length - 1][1];
+      if (_btcOpen && _btcCurrent) {
+        _btcChange = Math.round(((_btcCurrent - _btcOpen) / _btcOpen) * 10000) / 100;
+      }
+      _isDirty = true;
+      _saveSessionStorage();
     }
   }
 
@@ -5423,6 +5497,7 @@ window.LiveTradingManager = (() => {
     pushTick,
     pushBtcTick,
     setHistoricalTicks,
+    addHistoricalBtcTicks,
     setChartMode,
     getChartMode,
     setOutcomeMode,
@@ -6686,9 +6761,11 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v6.8
+ * app.js — Main Application Coordinator v6.9
  * 
- * Features & Fixes in v6.8:
+ * Features & Fixes in v6.9:
+ * - Full Mid-Session History Hydration: Ingests 100% 1-second historical BTC TWAP points from RTDS buffer on connect/refresh
+ * - Multi-Query CLOB Token History Merge eliminating mid-session gaps and diagonal line artifacts
  * - Multi-tier CORS-resilient strike reconciliation engine with zero-drop callback dispatch
  * - Direct onStrikeConfirmed dispatch: UI immediately receives official strike without needing prior live tick
  * - Market metadata strike injection via setVerifiedStrike() ensuring 1:1 strike sync on page load and TF switch
@@ -6935,6 +7012,12 @@ window.App = (() => {
         if (window.LiveTradingManager) {
           LiveTradingManager.updateBtcPrice(_liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
         }
+      }
+    };
+
+    PolyRTDS.handlers.onHistoricalBtcTicks = (pts) => {
+      if (window.LiveTradingManager && Array.isArray(pts)) {
+        LiveTradingManager.addHistoricalBtcTicks(pts);
       }
     };
 
@@ -7269,6 +7352,12 @@ window.App = (() => {
     // 3. Initialize stationary Live Trading chart with direct history handoff
     if (window.LiveTradingManager) {
       await LiveTradingManager.setMarket(market, hist);
+      if (window.PolyRTDS && typeof PolyRTDS.getHistoricalBuffer === 'function') {
+        const rtdsBuf = PolyRTDS.getHistoricalBuffer();
+        if (Array.isArray(rtdsBuf) && rtdsBuf.length > 0) {
+          LiveTradingManager.addHistoricalBtcTicks(rtdsBuf);
+        }
+      }
     }
 
     MarketManager.scheduleRollover(market, _onMarketSwitch);

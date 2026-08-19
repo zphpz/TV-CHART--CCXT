@@ -30,10 +30,12 @@ window.PolyRTDS = (() => {
   let _lastTimestamp   = 0;
   let _isOfficialStrikeVerified = false;
   let _isReconciling   = false;
+  let _lastHistoricalBuffer = [];
 
   const handlers = {
     onBtcPrice: null,          // (currentPrice, tsMs, targetPrice, delta, isTwapVerified)
     onStrikeConfirmed: null,   // (price, winStartSec) -- fires independently of live price
+    onHistoricalBtcTicks: null,// (batchArray) -- full historical 1s TWAP points
     onConnected: null,
     onDisconnected: null,
   };
@@ -261,6 +263,11 @@ window.PolyRTDS = (() => {
 
           // -- 1. Batch historical points (sent once on (re)connect) --
           if (Array.isArray(payload.data) && payload.data.length > 0) {
+            _lastHistoricalBuffer = payload.data;
+            if (handlers.onHistoricalBtcTicks) {
+              try { handlers.onHistoricalBtcTicks(payload.data); } catch (e) {}
+            }
+
             // Use authoritative winStartSec if available; fallback to computed
             const winStartSec = _activeWinStartSec != null ? _activeWinStartSec
               : (Math.floor((_lastTimestamp > 0 ? Math.floor(_lastTimestamp / 1000) : Math.floor(Date.now() / 1000)) / _durationSecs) * _durationSecs);
@@ -398,6 +405,8 @@ window.PolyRTDS = (() => {
       ? (_currentBtcPrice - _targetBtcPrice) : null;
   }
 
+  function getHistoricalBuffer() { return _lastHistoricalBuffer || []; }
+
   return {
     connect,
     destroy,
@@ -411,6 +420,7 @@ window.PolyRTDS = (() => {
     getCurrentPrice,
     getTargetPrice,
     getDelta,
+    getHistoricalBuffer,
     handlers,
   };
 })();

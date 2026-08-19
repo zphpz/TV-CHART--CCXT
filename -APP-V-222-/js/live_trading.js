@@ -1,7 +1,9 @@
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v4.9
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v5.0
  * 
- * Features & Fixes in v4.9:
+ * Features & Fixes in v5.0 (App v6.9):
+ * - 100% BTC Historical Buffer Ingestion from RTDS on page refresh / mid-session entry (zero gaps/diagonal lines)
+ * - Enhanced multi-query token history hydration and session storage synchronization
  * - Direct history handoff from loadMarket eliminates race conditions on page refresh
  * - Step-curve zero-order hold rendering for Option Probability mode
  * - Pure Official CLOB Dual-Token History Hydration
@@ -170,6 +172,24 @@ window.LiveTradingManager = (() => {
       if (Array.isArray(cached.btcTicks)) {
         cached.btcTicks.forEach(([t, p]) => {
           if (t >= _startTs && t <= _endTs) btcMap.set(t, p);
+        });
+      }
+    }
+
+    // Ingest RTDS historical buffer if available
+    if (window.PolyRTDS && typeof PolyRTDS.getHistoricalBuffer === 'function') {
+      const rtdsBuf = PolyRTDS.getHistoricalBuffer();
+      if (Array.isArray(rtdsBuf) && rtdsBuf.length > 0) {
+        rtdsBuf.forEach(pt => {
+          const rawVal = pt.value !== undefined ? pt.value : pt.price;
+          const val = typeof rawVal === 'number' ? rawVal : parseFloat(rawVal);
+          const tsMs = typeof pt.timestamp === 'number' ? pt.timestamp : (typeof pt.t === 'number' ? pt.t * 1000 : null);
+          if (tsMs !== null && !isNaN(val) && val > 0) {
+            const sec = Math.floor(tsMs / 1000);
+            if (sec >= _startTs && sec <= _endTs) {
+              btcMap.set(sec, val);
+            }
+          }
         });
       }
     }
@@ -343,6 +363,39 @@ window.LiveTradingManager = (() => {
       }
       _isDirty = true;
       _render();
+    }
+  }
+
+  function addHistoricalBtcTicks(pts) {
+    if (!Array.isArray(pts) || pts.length === 0) return;
+    const btcMap = new Map();
+    if (_btcOpen && _startTs) btcMap.set(_startTs, _btcOpen);
+
+    for (let i = 0; i < _btcTicks.length; i++) {
+      btcMap.set(_btcTicks[i][0], _btcTicks[i][1]);
+    }
+
+    for (let i = 0; i < pts.length; i++) {
+      const pt = pts[i];
+      const rawVal = pt.value !== undefined ? pt.value : pt.price;
+      const val = typeof rawVal === 'number' ? rawVal : parseFloat(rawVal);
+      const tsMs = typeof pt.timestamp === 'number' ? pt.timestamp : (typeof pt.t === 'number' ? pt.t * 1000 : null);
+      if (tsMs !== null && !isNaN(val) && val > 0) {
+        const sec = Math.floor(tsMs / 1000);
+        if (sec >= _startTs && sec <= _endTs) {
+          btcMap.set(sec, val);
+        }
+      }
+    }
+
+    if (btcMap.size > 0) {
+      _btcTicks = Array.from(btcMap.entries()).sort((a, b) => a[0] - b[0]);
+      _btcCurrent = _btcTicks[_btcTicks.length - 1][1];
+      if (_btcOpen && _btcCurrent) {
+        _btcChange = Math.round(((_btcCurrent - _btcOpen) / _btcOpen) * 10000) / 100;
+      }
+      _isDirty = true;
+      _saveSessionStorage();
     }
   }
 
@@ -1291,6 +1344,7 @@ window.LiveTradingManager = (() => {
     pushTick,
     pushBtcTick,
     setHistoricalTicks,
+    addHistoricalBtcTicks,
     setChartMode,
     getChartMode,
     setOutcomeMode,

@@ -1,7 +1,9 @@
 /**
- * app.js — Main Application Coordinator v6.8
+ * app.js — Main Application Coordinator v6.9
  * 
- * Features & Fixes in v6.8:
+ * Features & Fixes in v6.9:
+ * - Full Mid-Session History Hydration: Ingests 100% 1-second historical BTC TWAP points from RTDS buffer on connect/refresh
+ * - Multi-Query CLOB Token History Merge eliminating mid-session gaps and diagonal line artifacts
  * - Multi-tier CORS-resilient strike reconciliation engine with zero-drop callback dispatch
  * - Direct onStrikeConfirmed dispatch: UI immediately receives official strike without needing prior live tick
  * - Market metadata strike injection via setVerifiedStrike() ensuring 1:1 strike sync on page load and TF switch
@@ -248,6 +250,12 @@ window.App = (() => {
         if (window.LiveTradingManager) {
           LiveTradingManager.updateBtcPrice(_liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
         }
+      }
+    };
+
+    PolyRTDS.handlers.onHistoricalBtcTicks = (pts) => {
+      if (window.LiveTradingManager && Array.isArray(pts)) {
+        LiveTradingManager.addHistoricalBtcTicks(pts);
       }
     };
 
@@ -582,6 +590,12 @@ window.App = (() => {
     // 3. Initialize stationary Live Trading chart with direct history handoff
     if (window.LiveTradingManager) {
       await LiveTradingManager.setMarket(market, hist);
+      if (window.PolyRTDS && typeof PolyRTDS.getHistoricalBuffer === 'function') {
+        const rtdsBuf = PolyRTDS.getHistoricalBuffer();
+        if (Array.isArray(rtdsBuf) && rtdsBuf.length > 0) {
+          LiveTradingManager.addHistoricalBtcTicks(rtdsBuf);
+        }
+      }
     }
 
     MarketManager.scheduleRollover(market, _onMarketSwitch);
