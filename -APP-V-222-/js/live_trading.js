@@ -1,7 +1,9 @@
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v5.2
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v5.3
  * 
- * Features & Fixes in v5.2 (App v7.1):
+ * Features & Fixes in v5.3 (App v7.2):
+ * - Unified Server-Side Aggregated History Ingestion with Zero Gaps
+ * - Instant Canvas Activation & Progressive Background Density Hydration
  * - Instant Canvas Activation & Progressive Background Density Hydration
  * - Safe Timestamp-Deduplicated Merging in setHistoricalTicks
  * - Deep Continuous Background Density Healing: Auto-hydrates full trade depth if initial buffer is sparse

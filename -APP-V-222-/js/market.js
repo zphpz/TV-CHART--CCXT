@@ -147,7 +147,16 @@ window.MarketManager = (() => {
 
     const nowNonce = Date.now();
 
-    // 1. Fetch CLOB prices-history for UP/DOWN with multi-query merge & cache buster
+    // 0. Primary Fast Path: Unified Server-side Aggregator
+    try {
+      const serverUrl = `/api/session-history?conditionId=${conditionId || ''}&upToken=${upTokenId}&downToken=${downTokenId || ''}&startTs=${startTs}&endTs=${endTs}&_t=${nowNonce}`;
+      const srvData = await _fetchWithRetry(serverUrl, 1, 3500);
+      if (Array.isArray(srvData) && srvData.length > 0) {
+        return srvData;
+      }
+    } catch (e) {}
+
+    // 1. Client-Side Fallback: Fetch CLOB prices-history for UP/DOWN with multi-query merge & cache buster
     const fetchTokenClob = async (tok, isInverted) => {
       if (!tok) return { inSession: [], preStart: null };
       const url1 = `${CLOB_BASE}/prices-history?market=${tok}&interval=1d&fidelity=1&_t=${nowNonce}`;

@@ -1,7 +1,9 @@
 /**
- * app.js — Main Application Coordinator v7.1
+ * app.js — Main Application Coordinator v7.2
  * 
- * Features & Fixes in v7.1:
+ * Features & Fixes in v7.2:
+ * - Unified High-Density Server-Side Session History Ingestion (/api/session-history)
+ * - 100% Uniform Granular Distribution across all minutes of 5M/15M rounds
  * - Instantaneous Non-Blocking Timeframe Switching (5M <-> 15M in < 50ms)
  * - Progressive Background Trade Hydration with Zero UI Freeze
  * - 8-Page Deep Parallel Trade Pagination (up to 4,000 trades per 5M/15M session)
