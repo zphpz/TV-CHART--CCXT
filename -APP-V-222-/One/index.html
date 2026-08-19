@@ -1871,7 +1871,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v6.2</span>
+        <span id="app-version">v6.3</span>
       </div>
     </footer>
 
@@ -3749,12 +3749,11 @@ window.PolyRTDS = (() => {
     const startISO = new Date(winStartSec * 1000).toISOString().replace('.000Z', 'Z');
     const endISO = new Date(endSec * 1000).toISOString().replace('.000Z', 'Z');
 
-    // 1. Try Direct Preddy & Local API Proxy (Port 8088 / 8080)
+    // 1. Direct Preddy & Local API Proxies (Strict 1:1 Polymarket Chainlink 60s TWAP Strike API)
     const endpoints = [
       `/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `http://localhost:8088/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `http://127.0.0.1:8088/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
-      `http://localhost:8080/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `https://polymarket.com/api/crypto/crypto-price?symbol=BTC&eventStartTime=${startISO}&endDate=${endISO}&twapEnabled=true&twapLookbackSeconds=60`,
     ];
@@ -3762,7 +3761,7 @@ window.PolyRTDS = (() => {
     for (const url of endpoints) {
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 2000);
+        const timer = setTimeout(() => controller.abort(), 2500);
         const resp = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: controller.signal });
         clearTimeout(timer);
         if (resp.ok) {
@@ -3779,41 +3778,19 @@ window.PolyRTDS = (() => {
       } catch (e) {}
     }
 
-    // 2. CORS-Free High Reliability Fallback (Binance 1m Kline at exact window start)
-    try {
-      const bUrl = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&startTime=${winStartSec * 1000}&limit=1`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2500);
-      const resp = await fetch(bUrl, { signal: controller.signal });
-      clearTimeout(timer);
-      if (resp.ok) {
-        const arr = await resp.json();
-        if (Array.isArray(arr) && arr[0] && arr[0][1]) {
-          const openPrice = parseFloat(arr[0][1]);
-          if (!isNaN(openPrice) && openPrice > 0) {
-            _targetBtcPrice = openPrice;
-            _cacheStrike(winStartSec, openPrice);
-            _emitPriceUpdate();
-            _isFetchingTarget = false;
-            return openPrice;
-          }
-        }
-      }
-    } catch (e) {}
-
     _isFetchingTarget = false;
     return null;
   }
 
   function _cacheStrike(winStartSec, price) {
     try {
-      localStorage.setItem(`pm_btc_twap_strike_v6_${winStartSec}`, price);
+      localStorage.setItem(`pm_btc_twap_strike_v7_${winStartSec}`, price);
     } catch {}
   }
 
   function _getCachedStrike(winStartSec) {
     try {
-      const v = localStorage.getItem(`pm_btc_twap_strike_v6_${winStartSec}`);
+      const v = localStorage.getItem(`pm_btc_twap_strike_v7_${winStartSec}`);
       return v ? parseFloat(v) : null;
     } catch {
       return null;
@@ -6564,9 +6541,11 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v6.2
+ * app.js — Main Application Coordinator v6.3
  * 
- * Features & Fixes in v6.2:
+ * Features & Fixes in v6.3:
+ * - Instant Strike Reset on Rollover: Zero residual latency/old strike persistence across rounds
+ * - Removed Binance USDT Spot Fallback: 100% Chainlink BTC/USD TWAP Parity via Preddy & Local Proxy
  * - 1:1 Polymarket TWAP Strike Server Integration (Port 8088 Proxy + Preddy Engine)
  * - Fixed Windows cp1251 encoding in run_app.py
  * - Direct STRIKE & DELTA Parity Fix: Multi-Tier CORS-Proof Strike Engine
@@ -6692,7 +6671,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.2...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.3...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -7030,6 +7009,8 @@ window.App = (() => {
     showLoading('Fetching market discovery...');
     _loadingRetries = 0;
     _isInitialized = false;
+    _liveBtcOpen = null;
+    _updateBtcHeroMetrics(0, _liveBtcCurrent, null);
     PriceEngine.reset();
     _currentSessionTicks = [];
 
@@ -7230,6 +7211,8 @@ window.App = (() => {
 
       // Clean price initialization for the new market
       PriceEngine.reset();
+      _liveBtcOpen = null;
+      _updateBtcHeroMetrics(0, _liveBtcCurrent, null);
       const newProb = newMarket.initialProb || 0.50;
       PriceEngine.updateLastTrade(newProb);
       _currentSessionTicks = [];
@@ -7243,7 +7226,7 @@ window.App = (() => {
         LiveTradingManager.pushTick(newMarket.startTs || nowSec, initialRawCents);
         LiveTradingManager.pushTick(nowSec, initialRawCents);
         if (_liveBtcCurrent) {
-          LiveTradingManager.pushBtcTick(nowSec, _liveBtcCurrent, _liveBtcOpen);
+          LiveTradingManager.pushBtcTick(nowSec, _liveBtcCurrent, null);
         }
       }
 
@@ -7257,9 +7240,18 @@ window.App = (() => {
         ChartManager.pushTick(nowSec, displayCents);
       }
 
-      if (window.PolyRTDS) {
-        PolyRTDS.setDurationSecs(_currentTfMinutes * 60);
-        PolyRTDS.checkAndRefreshWindow();
+      if (window.PolyRTDS && newMarket.startTs && newMarket.endTs) {
+        const dur = newMarket.endTs - newMarket.startTs;
+        PolyRTDS.setDurationSecs(dur);
+        PolyRTDS.fetchOfficialTargetPrice(newMarket.startTs, newMarket.endTs).then(openP => {
+          if (openP) {
+            _liveBtcOpen = openP;
+            _updateBtcHeroMetrics((_liveBtcCurrent ? _liveBtcCurrent - openP : 0), _liveBtcCurrent, openP);
+            if (window.LiveTradingManager) {
+              LiveTradingManager.updateBtcPrice(openP, _liveBtcCurrent, _liveBtcChange);
+            }
+          }
+        }).catch(() => {});
       }
 
       // Dual-token subscription for new market

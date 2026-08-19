@@ -50,12 +50,11 @@ window.PolyRTDS = (() => {
     const startISO = new Date(winStartSec * 1000).toISOString().replace('.000Z', 'Z');
     const endISO = new Date(endSec * 1000).toISOString().replace('.000Z', 'Z');
 
-    // 1. Try Direct Preddy & Local API Proxy (Port 8088 / 8080)
+    // 1. Direct Preddy & Local API Proxies (Strict 1:1 Polymarket Chainlink 60s TWAP Strike API)
     const endpoints = [
       `/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `http://localhost:8088/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `http://127.0.0.1:8088/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
-      `http://localhost:8080/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
       `https://polymarket.com/api/crypto/crypto-price?symbol=BTC&eventStartTime=${startISO}&endDate=${endISO}&twapEnabled=true&twapLookbackSeconds=60`,
     ];
@@ -63,7 +62,7 @@ window.PolyRTDS = (() => {
     for (const url of endpoints) {
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 2000);
+        const timer = setTimeout(() => controller.abort(), 2500);
         const resp = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: controller.signal });
         clearTimeout(timer);
         if (resp.ok) {
@@ -80,41 +79,19 @@ window.PolyRTDS = (() => {
       } catch (e) {}
     }
 
-    // 2. CORS-Free High Reliability Fallback (Binance 1m Kline at exact window start)
-    try {
-      const bUrl = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&startTime=${winStartSec * 1000}&limit=1`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2500);
-      const resp = await fetch(bUrl, { signal: controller.signal });
-      clearTimeout(timer);
-      if (resp.ok) {
-        const arr = await resp.json();
-        if (Array.isArray(arr) && arr[0] && arr[0][1]) {
-          const openPrice = parseFloat(arr[0][1]);
-          if (!isNaN(openPrice) && openPrice > 0) {
-            _targetBtcPrice = openPrice;
-            _cacheStrike(winStartSec, openPrice);
-            _emitPriceUpdate();
-            _isFetchingTarget = false;
-            return openPrice;
-          }
-        }
-      }
-    } catch (e) {}
-
     _isFetchingTarget = false;
     return null;
   }
 
   function _cacheStrike(winStartSec, price) {
     try {
-      localStorage.setItem(`pm_btc_twap_strike_v6_${winStartSec}`, price);
+      localStorage.setItem(`pm_btc_twap_strike_v7_${winStartSec}`, price);
     } catch {}
   }
 
   function _getCachedStrike(winStartSec) {
     try {
-      const v = localStorage.getItem(`pm_btc_twap_strike_v6_${winStartSec}`);
+      const v = localStorage.getItem(`pm_btc_twap_strike_v7_${winStartSec}`);
       return v ? parseFloat(v) : null;
     } catch {
       return null;

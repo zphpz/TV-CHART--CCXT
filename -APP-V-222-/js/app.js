@@ -1,7 +1,9 @@
 /**
- * app.js — Main Application Coordinator v6.2
+ * app.js — Main Application Coordinator v6.3
  * 
- * Features & Fixes in v6.2:
+ * Features & Fixes in v6.3:
+ * - Instant Strike Reset on Rollover: Zero residual latency/old strike persistence across rounds
+ * - Removed Binance USDT Spot Fallback: 100% Chainlink BTC/USD TWAP Parity via Preddy & Local Proxy
  * - 1:1 Polymarket TWAP Strike Server Integration (Port 8088 Proxy + Preddy Engine)
  * - Fixed Windows cp1251 encoding in run_app.py
  * - Direct STRIKE & DELTA Parity Fix: Multi-Tier CORS-Proof Strike Engine
@@ -127,7 +129,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.2...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.3...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -465,6 +467,8 @@ window.App = (() => {
     showLoading('Fetching market discovery...');
     _loadingRetries = 0;
     _isInitialized = false;
+    _liveBtcOpen = null;
+    _updateBtcHeroMetrics(0, _liveBtcCurrent, null);
     PriceEngine.reset();
     _currentSessionTicks = [];
 
@@ -665,6 +669,8 @@ window.App = (() => {
 
       // Clean price initialization for the new market
       PriceEngine.reset();
+      _liveBtcOpen = null;
+      _updateBtcHeroMetrics(0, _liveBtcCurrent, null);
       const newProb = newMarket.initialProb || 0.50;
       PriceEngine.updateLastTrade(newProb);
       _currentSessionTicks = [];
@@ -678,7 +684,7 @@ window.App = (() => {
         LiveTradingManager.pushTick(newMarket.startTs || nowSec, initialRawCents);
         LiveTradingManager.pushTick(nowSec, initialRawCents);
         if (_liveBtcCurrent) {
-          LiveTradingManager.pushBtcTick(nowSec, _liveBtcCurrent, _liveBtcOpen);
+          LiveTradingManager.pushBtcTick(nowSec, _liveBtcCurrent, null);
         }
       }
 
@@ -692,9 +698,18 @@ window.App = (() => {
         ChartManager.pushTick(nowSec, displayCents);
       }
 
-      if (window.PolyRTDS) {
-        PolyRTDS.setDurationSecs(_currentTfMinutes * 60);
-        PolyRTDS.checkAndRefreshWindow();
+      if (window.PolyRTDS && newMarket.startTs && newMarket.endTs) {
+        const dur = newMarket.endTs - newMarket.startTs;
+        PolyRTDS.setDurationSecs(dur);
+        PolyRTDS.fetchOfficialTargetPrice(newMarket.startTs, newMarket.endTs).then(openP => {
+          if (openP) {
+            _liveBtcOpen = openP;
+            _updateBtcHeroMetrics((_liveBtcCurrent ? _liveBtcCurrent - openP : 0), _liveBtcCurrent, openP);
+            if (window.LiveTradingManager) {
+              LiveTradingManager.updateBtcPrice(openP, _liveBtcCurrent, _liveBtcChange);
+            }
+          }
+        }).catch(() => {});
       }
 
       // Dual-token subscription for new market
