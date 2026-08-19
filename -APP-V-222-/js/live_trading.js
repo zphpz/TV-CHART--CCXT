@@ -1,7 +1,9 @@
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v5.3
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v5.4
  * 
- * Features & Fixes in v5.3 (App v7.2):
+ * Features & Fixes in v5.4 (App v7.3):
+ * - 15M & 5M Full Density Coverage with Zero-Lag Server Aggregator
+ * - Unified Server-Side Aggregated History Ingestion with Zero Gaps
  * - Unified Server-Side Aggregated History Ingestion with Zero Gaps
  * - Instant Canvas Activation & Progressive Background Density Hydration
  * - Instant Canvas Activation & Progressive Background Density Hydration

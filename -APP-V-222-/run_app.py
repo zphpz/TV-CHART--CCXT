@@ -76,15 +76,10 @@ def fetch_session_history(cond, tok_up, tok_down, start_ts, end_ts):
             pass
         return []
 
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    with ThreadPoolExecutor(max_workers=10) as ex:
         f_clob_up = ex.submit(_fetch_clob, tok_up)
         f_clob_down = ex.submit(_fetch_clob, tok_down)
-        f_tr0 = ex.submit(_fetch_trades, 0)
-        f_tr1 = ex.submit(_fetch_trades, 500)
-        f_tr2 = ex.submit(_fetch_trades, 1000)
-        f_tr3 = ex.submit(_fetch_trades, 1500)
-        f_tr4 = ex.submit(_fetch_trades, 2000)
-        f_tr5 = ex.submit(_fetch_trades, 2500)
+        trade_futures = [ex.submit(_fetch_trades, off) for off in [0, 500, 1000, 1500, 2000, 2500, 3000, 3500]]
 
     # Process CLOB UP
     for p in f_clob_up.result():
@@ -110,8 +105,8 @@ def fetch_session_history(cond, tok_up, tok_down, start_ts, end_ts):
         except Exception:
             pass
 
-    # Process Trades 6 pages
-    for f in [f_tr0, f_tr1, f_tr2, f_tr3, f_tr4, f_tr5]:
+    # Process Trades (all 8 pages)
+    for f in trade_futures:
         trades = f.result()
         if not isinstance(trades, list): continue
         for tr in trades:

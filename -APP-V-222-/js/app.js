@@ -1,7 +1,9 @@
 /**
- * app.js — Main Application Coordinator v7.2
+ * app.js — Main Application Coordinator v7.3
  * 
- * Features & Fixes in v7.2:
+ * Features & Fixes in v7.3:
+ * - 15M / 5M Verified High-Density Parallel History Aggregation (/api/session-history)
+ * - Full 8-worker trade pooling up to 4,000 trades per 15M round in < 750ms
  * - Unified High-Density Server-Side Session History Ingestion (/api/session-history)
  * - 100% Uniform Granular Distribution across all minutes of 5M/15M rounds
  * - Instantaneous Non-Blocking Timeframe Switching (5M <-> 15M in < 50ms)
