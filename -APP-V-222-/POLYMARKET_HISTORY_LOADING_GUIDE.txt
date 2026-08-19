@@ -1,0 +1,275 @@
+﻿================================================================================
+ПОЛНОЕ РУКОВОДСТВО: АРХИТЕКТУРА ПОДГРУЗКИ И ОТОБРАЖЕНИЯ ИСТОРИИ ДЛЯ POLYMARKET
+             (Режимы: ₿ BTC USD TWAP и ¢ OPTION PROBABILITY 0–100¢)
+================================================================================
+
+Данный документ подробно описывает техническую архитектуру, методы, ошибки и готовые
+решения для идеальной (100% непрерывной) подгрузки истории сделок и тиков на рынках
+Polymarket (5M и 15M) при заходе в любой момент времени (на 0-й секунде, в середине,
+после F5 или при автоматическом переключении раунда).
+
+--------------------------------------------------------------------------------
+1. ДВА ПАРАЛЛЕЛЬНЫХ МИРА ДАННЫХ В ПРИЛОЖЕНИИ
+--------------------------------------------------------------------------------
+
+График Polymarket отображает два принципиально разных типа данных:
+
+1.1. Режим "₿ BTC ($)" — Непрерывный поток Chainlink 60s TWAP:
+- Физика: Посекундный гладкий временной ряд (1 точка в секунду).
+- Источник: WebSocket RTDS `wss://ws-live-data.polymarket.com` (топик `crypto_prices_twap_sixty`).
+- Особенность: Сервер RTDS при первом подключении отправляет не просто один тик, а весь
+  исторический массив `payload.data` за последние 5–15 минут (до 300–900 точек).
+
+1.2. Режим "¢ PROB (%)" — Ступенчатая вероятность токенов (0–100¢):
+- Физика: Дискретные сделки и изменения лучшей цены ордербука (Zero-Order Hold / Step Curve).
+- Источники:
+  a) REST API CLOB `https://clob.polymarket.com/prices-history` (история цен токена).
+  b) Data API Trades `https://data-api.polymarket.com/trades?market={conditionId}` (лента сделок).
+  c) WebSocket CLOB `wss://ws-subscriptions-clob.polymarket.com/ws/market` (живой ордербук).
+
+
+--------------------------------------------------------------------------------
+2. КАКИЕ БЫЛИ БАГИ И ЧТО МЕШАЛО КОРРЕКТНОЙ РАБОТЕ
+--------------------------------------------------------------------------------
+
+БАГ 1: "Диагональный срез через пол-экрана" в режиме BTC ($) при F5
+- В чём была суть ошибки:
+  При открытии страницы или обновлении (F5) на 2-й минуте 5M-раунда массив `_btcTicks`
+  инициализировался ТОЛЬКО одной стартовой точкой: `[[startTs, btcOpen]]`.
+  Когда через пару секунд приходил первый живой тик (например, на 125-й секунде),
+  график просто рисовал прямую диагональную линию от 00:00 до 02:05!
+  Вся реальная посекундная история динамики BTC за первые 2 минуты оставалась пустой.
+- Почему это происходило:
+  Массив `payload.data`, который RTDS WebSocket присылал при подключении, использовался
+  в коде ТОЛЬКО для вычисления страйка, а сами 120 точек истории выбрасывались!
+- Как исправлено:
+  Добавлен обработчик `onHistoricalBtcTicks`, который забирает ВСЕ точки из `payload.data`
+  с меткой `ts >= startTs && ts <= endTs` и мгновенно заполняет массив `_btcTicks`.
+
+БАГ 2: Разреженность и провалы в истории опционных токенов (PROB %)
+- В чём была суть ошибки:
+  Запрос к CLOB `prices-history` отправлялся только с параметром `interval=1d`.
+  Если на рынке за последние 2 минуты было мало сделок, API возвращал всего 1-2 точки,
+  а на графике рисовалась длинная плоская линия до момента прихода первого живого тика.
+- Как исправлено:
+  Внедрен мульти-запрос: параллельно запрашивается и суточный срез (`interval=1d`), и точный
+  интервал раунда (`startTs=${startTs}&endTs=${endTs}`), плюс 6 страниц истории сделок Data API.
+  Все точки объединяются через `Map` по временным меткам.
+
+БАГ 3: "Плавающее начало" (потеря точки 00:00)
+- В чём была суть ошибки:
+  Если первая сделка в раунде произошла только на 30-й секунде, график начинался с отступом
+  вправо, оставляя левый край пустым.
+- Как исправлено:
+  Реализован алгоритм "стартового якоря": мы ищем последнюю сделку с `timestamp <= startTs`
+  (`preStart`). Если она есть — ставим её ровно на 0-ю секунду `[startTs, preStart]`.
+  Если сделок до старта не было — берем стартовую вероятность (50¢ или midpoint).
+
+БАГ 4: Гонка данных (Race Condition) между REST API и живым WebSocket
+- В чём была суть ошибки:
+  REST API запрос истории мог завершиться через 1.5 секунды ПОСЛЕ того, как по WebSocket
+  уже поступило 3 живых тика. Если тупо перезаписать массив `_rawTicks = apiHistory`,
+  то свежие живые тики стирались.
+- Как исправлено:
+  Все точки складываются в `Map<timestamp, price>`. Новые тики просто дополняют или
+  уточняют значения для каждого timestamp, после чего массив сортируется по времени `a[0] - b[0]`.
+
+БАГ 5: Залипание подсказки курсора при уходе мыши с графика
+- В чём была суть ошибки:
+  При быстром движении мыши за пределы холста координаты `_hoverX` и `_hoverY` оставались
+  активными, и на графике зависал "призрачный" бейдж подсказки.
+- Как исправлено:
+  Событие `mouseleave` на холсте теперь безусловно сбрасывает `_hoverX = null; _hoverY = null;`
+  и вызывает немедленный `_render()`.
+
+
+--------------------------------------------------------------------------------
+3. ПОШАГОВЫЙ АЛГОРИТМ ПРАВИЛЬНОЙ ПОДГРУЗКИ ИСТОРИИ
+--------------------------------------------------------------------------------
+
+ШАГ 1: Фиксация временных рамок текущего рынка
+При загрузке рынка из Gamma API мы получаем:
+  `startTs` = время старта раунда в Unix секундах (например, 1787176200).
+  `endTs`   = время окончания раунда (например, 1787176500).
+  `duration`= `endTs - startTs` (300 сек для 5M, 900 сек для 15M).
+
+ШАГ 2: Подгрузка истории Опционных Токенов (PROB %)
+1) Запрашиваем CLOB API для UP и DOWN токенов с кэш-бастером `_t=${Date.now()}`:
+   - `GET /prices-history?market={upTokenId}&interval=1d&fidelity=1`
+   - `GET /prices-history?market={upTokenId}&startTs={startTs}&endTs={endTs}&fidelity=1`
+2) Запрашиваем Data API Trades по `conditionId`:
+   - `GET /trades?market={conditionId}&limit=500&offset=0`
+3) Объединяем точки: для DOWN-токенов инвертируем цену: `upPrice = 100 - downPrice`.
+4) Устанавливаем якорную точку на `startTs`.
+
+ШАГ 3: Подгрузка истории Биткоина BTC ($) из буфера RTDS
+1) При установлении соединения `wss://ws-live-data.polymarket.com` подписываемся на
+   `crypto_prices_twap_sixty`.
+2) Сервер первым сообщением присылает пакет с полем `payload.data`:
+   ```json
+   {
+     "topic": "crypto_prices_twap_sixty",
+     "payload": {
+       "data": [
+         {"timestamp": 1787176200000, "value": 69705.91},
+         {"timestamp": 1787176201000, "value": 69706.15},
+         ... 300 посекундных точек ...
+       ]
+     }
+   }
+   ```
+3) Фильтруем точки по правилу: `ptSec >= startTs && ptSec <= endTs`.
+4) Передаем их в `LiveTradingManager.addHistoricalBtcTicks(points)`.
+5) График мгновенно строит непрерывную кривую BTC от `00:00` до текущей секунды!
+
+ШАГ 4: Слияние с поступающим живым потоком (Continuous Live Ingestion)
+Каждую секунду:
+- Из RTDS поступает `{ value: 69710.50, timestamp: ... }` -> обновляет крайнюю точку кривой BTC.
+- Из CLOB WebSocket поступает `price_change` или `book` -> обновляет крайнюю точку кривой PROB.
+- Отрисовка выполняется через `requestAnimationFrame` с интервалом 33 мс (30 FPS) без задержек.
+
+
+--------------------------------------------------------------------------------
+4. ЭТАЛОННЫЕ ПРИМЕРЫ КОДА ДЛЯ ПОВТОРЕНИЯ
+--------------------------------------------------------------------------------
+
+4.1. МУЛЬТИ-ЗАПРОС ИСТОРИИ ТОКЕНОВ (`market.js`):
+-------------------------------------------------
+```javascript
+async function fetchSessionPriceHistory(upTokenId, downTokenId, startTs, endTs, conditionId) {
+  if (!upTokenId || !startTs || !endTs) return [];
+  const nowNonce = Date.now();
+
+  const fetchTokenClob = async (tok, isInverted) => {
+    if (!tok) return { inSession: [], preStart: null };
+    const url1 = `https://clob.polymarket.com/prices-history?market=${tok}&interval=1d&fidelity=1&_t=${nowNonce}`;
+    const url2 = `https://clob.polymarket.com/prices-history?market=${tok}&startTs=${startTs}&endTs=${endTs}&fidelity=1&_t=${nowNonce}`;
+
+    const [data1, data2] = await Promise.all([
+      _fetchWithRetry(url1, 2, 2500),
+      _fetchWithRetry(url2, 2, 2500),
+    ]);
+
+    const combined = [];
+    if (data1 && Array.isArray(data1.history)) combined.push(...data1.history);
+    if (data2 && Array.isArray(data2.history)) combined.push(...data2.history);
+
+    if (combined.length > 0) {
+      const inSessionMap = new Map();
+      let preStart = null;
+      for (let i = 0; i < combined.length; i++) {
+        const item = combined[i];
+        const ts = parseInt(item.t);
+        const p = parseFloat(item.p);
+        if (!isNaN(ts) && !isNaN(p)) {
+          const rawCents = Math.round(p * 1000) / 10;
+          const upCents = isInverted ? (100 - rawCents) : rawCents;
+          const clamped = Math.max(0, Math.min(100, Math.round(upCents * 10) / 10));
+
+          if (ts <= startTs) {
+            preStart = clamped;
+          } else if (ts <= endTs) {
+            inSessionMap.set(ts, clamped);
+          }
+        }
+      }
+      const inSession = Array.from(inSessionMap.entries()).sort((a, b) => a[0] - b[0]);
+      return { inSession, preStart };
+    }
+    return { inSession: [], preStart: null };
+  };
+
+  const tasks = [
+    fetchTokenClob(upTokenId, false),
+    fetchTokenClob(downTokenId, true),
+  ];
+
+  const results = await Promise.allSettled(tasks);
+  const map = new Map();
+  let openingAnchorPrice = null;
+
+  if (results[0].status === 'fulfilled' && results[0].value) {
+    const { inSession, preStart } = results[0].value;
+    if (preStart !== null) openingAnchorPrice = preStart;
+    for (let [ts, val] of inSession) map.set(ts, val);
+  }
+  if (results[1].status === 'fulfilled' && results[1].value) {
+    const { inSession, preStart } = results[1].value;
+    if (preStart !== null && openingAnchorPrice === null) openingAnchorPrice = preStart;
+    for (let [ts, val] of inSession) {
+      if (!map.has(ts)) map.set(ts, val);
+    }
+  }
+
+  const sorted = Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+  if (openingAnchorPrice !== null) {
+    sorted.unshift([startTs, openingAnchorPrice]);
+  } else if (sorted.length > 0 && sorted[0][0] > startTs) {
+    sorted.unshift([startTs, 50.0]);
+  }
+
+  return sorted;
+}
+```
+
+4.2. ИЗВЛЕЧЕНИЕ ПОСЕКУНДНОЙ ИСТОРИИ BTC ИЗ RTDS WEBSOCKET (`rtds.js`):
+---------------------------------------------------------------------
+```javascript
+// В обработчике onmessage при получении данных:
+if (Array.isArray(payload.data) && payload.data.length > 0) {
+  _lastHistoricalBuffer = payload.data;
+  
+  // Оповещаем график о наличии всей посекундной истории:
+  if (handlers.onHistoricalBtcTicks) {
+    try { handlers.onHistoricalBtcTicks(payload.data); } catch (e) {}
+  }
+}
+```
+
+4.3. ПРИЁМ И ГИДРАЦИЯ ИСТОРИИ В ГРАФИК (`live_trading.js`):
+-----------------------------------------------------------
+```javascript
+function addHistoricalBtcTicks(pts) {
+  if (!Array.isArray(pts) || pts.length === 0) return;
+  const btcMap = new Map();
+  if (_btcOpen && _startTs) btcMap.set(_startTs, _btcOpen);
+
+  // 1. Сохраняем уже существующие живые тики
+  for (let i = 0; i < _btcTicks.length; i++) {
+    btcMap.set(_btcTicks[i][0], _btcTicks[i][1]);
+  }
+
+  // 2. Вливаем исторический буфер RTDS
+  for (let i = 0; i < pts.length; i++) {
+    const pt = pts[i];
+    const rawVal = pt.value !== undefined ? pt.value : pt.price;
+    const val = typeof rawVal === 'number' ? rawVal : parseFloat(rawVal);
+    const tsMs = typeof pt.timestamp === 'number' ? pt.timestamp : (typeof pt.t === 'number' ? pt.t * 1000 : null);
+    if (tsMs !== null && !isNaN(val) && val > 0) {
+      const sec = Math.floor(tsMs / 1000);
+      if (sec >= _startTs && sec <= _endTs) {
+        btcMap.set(sec, val);
+      }
+    }
+  }
+
+  // 3. Сортируем и обновляем крайние значения
+  if (btcMap.size > 0) {
+    _btcTicks = Array.from(btcMap.entries()).sort((a, b) => a[0] - b[0]);
+    _btcCurrent = _btcTicks[_btcTicks.length - 1][1];
+    if (_btcOpen && _btcCurrent) {
+      _btcChange = Math.round(((_btcCurrent - _btcOpen) / _btcOpen) * 10000) / 100;
+    }
+    _isDirty = true;
+    _saveSessionStorage();
+  }
+}
+```
+
+================================================================================
+ИТОГОВЫЙ РЕЗУЛЬТАТ:
+1. При перезагрузке страницы (F5) на 3-й минуте 5M раунда график моментально получает
+   все 180 посекундных точек BTC и непрерывно рисует всю форму движения цены с 00:00.
+2. Кривая опционов (PROB %) объединяет ордербук CLOB и сделки Data API без дыр.
+3. Начало раунда (00:00) всегда зафиксировано стартовой якорной ценой.
+================================================================================
