@@ -37,17 +37,6 @@ def fetch_target_price(start_iso, end_iso, lookback_sec=60):
     except Exception:
         pass
 
-    # 2. Try Polymarket API
-    try:
-        url = f"https://polymarket.com/api/crypto/crypto-price?symbol=BTC&eventStartTime={start_iso}&endDate={end_iso}&twapEnabled=true&twapLookbackSeconds={lookback_sec}"
-        r = requests.get(url, headers=headers, timeout=3.5)
-        if r.status_code == 200:
-            data = r.json()
-            if data.get("openPrice") is not None:
-                return {"openPrice": float(data["openPrice"]), "source": "polymarket"}
-    except Exception:
-        pass
-
     return {"openPrice": None, "error": "Target price not available yet"}
 
 class AppHTTPHandler(SimpleHTTPRequestHandler):
@@ -159,7 +148,7 @@ def run_server():
     server = HTTPServer(("0.0.0.0", PORT), AppHTTPHandler)
     local_ip = get_local_ip()
     print("=" * 65)
-    print(">> POLYMARKET BTC 1:1 TWAP LIVE CHART SERVER (v6.6)")
+    print(">> POLYMARKET BTC 1:1 TWAP LIVE CHART SERVER (v6.7)")
     print(f"   PC:     http://localhost:{PORT}")
     print(f"   LAN:    http://{local_ip}:{PORT}")
     print(f"   DIR:    {ROOT_DIR}")

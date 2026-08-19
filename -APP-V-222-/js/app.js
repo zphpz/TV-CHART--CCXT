@@ -1,7 +1,11 @@
 /**
- * app.js — Main Application Coordinator v6.6
+ * app.js — Main Application Coordinator v6.7
  * 
- * Features & Fixes in v6.6:
+ * Features & Fixes in v6.7:
+ * - Direct onStrikeConfirmed dispatch: UI immediately receives official strike without needing prior live tick
+ * - Market metadata strike injection via setVerifiedStrike() ensuring 1:1 strike sync on page load and TF switch
+ * - Explicit duration binding in resetForNewWindow(winStartSec, dur) for accurate 5M and 15M strike reconciliation
+ * - Strict Chainlink 60s TWAP target-price resolution across local proxy and Preddy API
  * - Robust Strike Engine: Strict round boundary check (ptSec >= winStartSec) prevents selecting ticks from previous round
  * - Controlled fast strike reconciliation with concurrency guard and full timer cleanup on destroy
  * - Correct Order Book bestBid / bestAsk resolution (highest bid, lowest ask) with sorting-independent search
@@ -225,6 +229,26 @@ window.App = (() => {
 
   function _setupRTDSHandlers() {
     if (!window.PolyRTDS) return;
+
+    PolyRTDS.handlers.onStrikeConfirmed = (strikePrice, winStartSec) => {
+      if (typeof strikePrice === 'number' && !isNaN(strikePrice) && strikePrice > 0) {
+        _liveBtcOpen = strikePrice;
+        const cur = MarketManager.getCurrentMarket();
+        const effDelta = (_liveBtcOpen !== null && _liveBtcCurrent !== null)
+          ? (_liveBtcCurrent - _liveBtcOpen)
+          : 0;
+        if (_liveBtcOpen > 0) {
+          _liveBtcChange = Math.round((effDelta / _liveBtcOpen) * 10000) / 100;
+        }
+        _updateBtcHeroMetrics(effDelta, _liveBtcCurrent, _liveBtcOpen);
+        if (cur && _activeView === 'chart') {
+          ChartManager.updateLiveSessionBtc(cur.slug, _liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+        }
+        if (window.LiveTradingManager) {
+          LiveTradingManager.updateBtcPrice(_liveBtcOpen, _liveBtcCurrent, _liveBtcChange);
+        }
+      }
+    };
 
     PolyRTDS.handlers.onBtcPrice = (price, ts, targetPrice, delta) => {
       const cur = MarketManager.getCurrentMarket();
@@ -513,10 +537,13 @@ window.App = (() => {
     _updateMarketUI(market);
 
     // Initial strike from metadata
-    const metaStrike = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice);
+    const metaStrike = parseFloat(market.eventMetadata?.priceToBeat || market.eventMetadata?.targetPrice || market.eventMetadata?.openPrice);
     if (!isNaN(metaStrike) && metaStrike > 0) {
       _liveBtcOpen = metaStrike;
       _updateBtcHeroMetrics(0, _liveBtcCurrent, _liveBtcOpen);
+      if (window.PolyRTDS) {
+        PolyRTDS.setVerifiedStrike(metaStrike, market.startTs);
+      }
     }
 
     // 1. Immediately subscribe to Dual-Token WebSocket (UP & DOWN) to eliminate blind spot gap
@@ -563,7 +590,7 @@ window.App = (() => {
       const dur = (market.startTs && market.endTs) ? (market.endTs - market.startTs) : (tfMinutes * 60);
       PolyRTDS.setDurationSecs(dur);
       if (market.startTs) {
-        PolyRTDS.resetForNewWindow(market.startTs);
+        PolyRTDS.resetForNewWindow(market.startTs, dur);
       }
     }
 
@@ -713,7 +740,7 @@ window.App = (() => {
       if (window.PolyRTDS && newMarket.startTs && newMarket.endTs) {
         const dur = newMarket.endTs - newMarket.startTs;
         PolyRTDS.setDurationSecs(dur);
-        PolyRTDS.resetForNewWindow(newMarket.startTs);
+        PolyRTDS.resetForNewWindow(newMarket.startTs, dur);
       }
 
       // Dual-token subscription for new market
