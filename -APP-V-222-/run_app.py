@@ -145,10 +145,14 @@ if sys.platform == 'win32':
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 def run_server():
-    server = HTTPServer(("0.0.0.0", PORT), AppHTTPHandler)
+    try:
+        from http.server import ThreadingHTTPServer
+        server = ThreadingHTTPServer(("0.0.0.0", PORT), AppHTTPHandler)
+    except Exception:
+        server = HTTPServer(("0.0.0.0", PORT), AppHTTPHandler)
     local_ip = get_local_ip()
     print("=" * 65)
-    print(">> POLYMARKET BTC 1:1 TWAP LIVE CHART SERVER (v7.0)")
+    print(">> POLYMARKET BTC 1:1 TWAP LIVE CHART SERVER (v7.1 Multi-Threaded)")
     print(f"   PC:     http://localhost:{PORT}")
     print(f"   LAN:    http://{local_ip}:{PORT}")
     print(f"   DIR:    {ROOT_DIR}")

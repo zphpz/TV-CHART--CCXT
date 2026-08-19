@@ -1,7 +1,9 @@
 /**
- * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v5.1
+ * live_trading.js — Dedicated Stationary 300s (5M) / 900s (15M) Live Trading Engine v5.2
  * 
- * Features & Fixes in v5.1 (App v7.0):
+ * Features & Fixes in v5.2 (App v7.1):
+ * - Instant Canvas Activation & Progressive Background Density Hydration
+ * - Safe Timestamp-Deduplicated Merging in setHistoricalTicks
  * - Deep Continuous Background Density Healing: Auto-hydrates full trade depth if initial buffer is sparse
  * - 100% BTC Historical Buffer Ingestion from RTDS on page refresh / mid-session entry (zero gaps/diagonal lines)
  * - Enhanced multi-query token history hydration and session storage synchronization
@@ -357,14 +359,23 @@ window.LiveTradingManager = (() => {
 
   function setHistoricalTicks(ticks) {
     if (Array.isArray(ticks) && ticks.length > 0) {
-      _rawTicks = ticks.filter(([ts]) => ts >= _startTs && ts <= _endTs);
-      if (_rawTicks.length > 0) {
+      const map = new Map();
+      ticks.forEach(([ts, val]) => {
+        if (ts >= _startTs && ts <= _endTs) map.set(ts, val);
+      });
+      _rawTicks.forEach(([ts, val]) => {
+        if (ts >= _startTs && ts <= _endTs) map.set(ts, val);
+      });
+
+      if (map.size > 0) {
+        _rawTicks = Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
         _lastPrice = _rawTicks[_rawTicks.length - 1][1];
         if (_rawTicks[0][0] > _startTs) {
           _rawTicks.unshift([_startTs, _rawTicks[0][1]]);
         }
       }
       _isDirty = true;
+      _saveSessionStorage();
       _render();
     }
   }

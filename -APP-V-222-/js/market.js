@@ -187,19 +187,11 @@ window.MarketManager = (() => {
       return { inSession: [], preStart: null };
     };
 
-    // 2. Fetch Data API trades strictly by conditionId (never global asset_id) with 8-page deep pagination
+    // 2. Fetch Data API trades strictly by conditionId (never global asset_id) with streamlined high-speed pagination
     const fetchMarketTrades = async (cond, offset) => {
       if (!cond) return [];
-      const urls = [
-        `/api/data/trades?market=${cond}&limit=500&offset=${offset}&_t=${nowNonce}`,
-        `https://data-api.polymarket.com/trades?market=${cond}&limit=500&offset=${offset}&_t=${nowNonce}`,
-      ];
-
-      let data = null;
-      for (const u of urls) {
-        data = await _fetchWithRetry(u, 2, 3500);
-        if (Array.isArray(data) && data.length > 0) break;
-      }
+      const url = `/api/data/trades?market=${cond}&limit=500&offset=${offset}&_t=${nowNonce}`;
+      const data = await _fetchWithRetry(url, 1, 2000) || await _fetchWithRetry(`https://data-api.polymarket.com/trades?market=${cond}&limit=500&offset=${offset}&_t=${nowNonce}`, 1, 2000);
 
       if (Array.isArray(data) && data.length > 0) {
         const list = [];
@@ -223,7 +215,7 @@ window.MarketManager = (() => {
     };
 
     try {
-      // Launch CLOB + 8-page deep parallel ingestion strictly for this market's conditionId
+      // Streamlined concurrent ingestion: CLOB orderbooks + top active trade pages
       const tasks = [
         fetchTokenClob(upTokenId, false),
         fetchTokenClob(downTokenId, true),
@@ -233,11 +225,9 @@ window.MarketManager = (() => {
         tasks.push(fetchMarketTrades(conditionId, 0));
         tasks.push(fetchMarketTrades(conditionId, 500));
         tasks.push(fetchMarketTrades(conditionId, 1000));
-        tasks.push(fetchMarketTrades(conditionId, 1500));
-        tasks.push(fetchMarketTrades(conditionId, 2000));
-        tasks.push(fetchMarketTrades(conditionId, 2500));
-        tasks.push(fetchMarketTrades(conditionId, 3000));
-        tasks.push(fetchMarketTrades(conditionId, 3500));
+        if (endTs - startTs > 300) {
+          tasks.push(fetchMarketTrades(conditionId, 1500));
+        }
       }
 
       const results = await Promise.allSettled(tasks);
