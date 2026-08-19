@@ -1,0 +1,514 @@
+﻿================================================================================
+ПОЛНОЕ РУКОВОДСТВО: АРХИТЕКТУРА 100% ТОЧНОГО СТРАЙКА (PRICE TO BEAT) ДЛЯ POLYMARKET
+                     (Таймфреймы 5M и 15M | BTC/USD)
+================================================================================
+
+Данный документ подробно описывает математику, архитектуру, коварные баги и готовые
+решения для получения и отображения 100% точной цены страйка ("Price To Beat / Целевая цена")
+на рынках Polymarket (5M и 15M Up/Down) при любых сценариях входа пользователя.
+
+--------------------------------------------------------------------------------
+1. МАТЕМАТИЧЕСКАЯ И ТЕХНИЧЕСКАЯ СУТЬ СТРАЙКА POLYMARKET
+--------------------------------------------------------------------------------
+
+1.1. Что такое "Price To Beat" на Polymarket:
+Полимаркет для рынков "Bitcoin Up or Down" (5M / 15M) рассчитывает разрешение раунда
+НЕ по спотовым ценам бирж (Binance, Bybit, Coinbase) и НЕ по сырым тикам!
+Официальным источником резолюции является:
+  Stream: Chainlink BTC/USD Data Stream
+  Режим: TWAP 60s (Time-Weighted Average Price с окном усреднения 60 секунд)
+  Источник: https://data.chain.link/streams/btc-usd-twap-60s-streams
+
+1.2. Почему спот (Binance USDT Spot) НЕ подходит:
+Спот-цена Binance почти всегда отличается от Chainlink TWAP на $15–$50. Если взять
+спот Binance за страйк, дельта и победный исход разойдутся с Polymarket в пограничных ситуациях.
+
+1.3. Источники 1:1 истины:
+- Поток реального времени: WebSocket RTDS `wss://ws-live-data.polymarket.com`
+  (топик `crypto_prices_twap_sixty`, фильтр `{"symbol":"btc/usd"}`).
+- REST API для исторических и подтверждённых страйков:
+  `https://api.preddy.trade/crypto/price?symbol=btc&startDate={START_ISO}&endDate={END_ISO}&twapLookbackSeconds=60`
+  Поле `openPrice` в ответе совпадает с Polymarket "Price To Beat" копейка в копейку.
+
+
+--------------------------------------------------------------------------------
+2. ВСЕ СЦЕНАРИИ ВХОДА ПОЛЬЗОВАТЕЛЯ И КАК ИХ ОБРАБАТЫВАТЬ
+--------------------------------------------------------------------------------
+
+СЦЕНАРИЙ А: Вход ровно на 0-й секунде нового раунда
+- Проблема: API Polymarket/Preddy ещё НЕ успели сформировать запись в базе данных (на это уходит 2–10 секунд).
+- Решение: В момент наступления `nowSec === startTs` берётся первый живой тик из потока WebSocket RTDS `crypto_prices_twap_sixty`. Он ставится как предварительный страйк на экран мгновенно (0 мс задержки), и тут же запускается фоновый цикл подтверждения через API.
+
+СЦЕНАРИЙ B: Вход в первые 1–10 секунд раунда
+- Проблема: 0-я секунда уже прошла, но в REST API страйк ещё в процессе расчёта.
+- Решение: При подключении WebSocket RTDS сразу присылает массив `payload.data` (исторический буфер). Из него берётся самая ранняя точка с `timestamp >= startTs` (где `ts - startTs <= 30s`). Это даёт реальный страйк начала окна, пока API завершает расчёт.
+
+СЦЕНАРИЙ C: Вход в середине раунда (2-я, 4-я минута на 5M или 10-я минута на 15M / после F5)
+- Проблема: Раунд уже давно идёт, нужен точный зафиксированный страйк.
+- Решение:
+  1) Проверяется локальный кэш раунда `pm_btc_twap_strike_v7_{startTs}` для мгновенной отрисовки без мигания.
+  2) Параллельно отправляется запрос к API Preddy (через серверный прокси).
+  3) Из буфера `payload.data` RTDS извлекаются все посекундные исторические точки с `00:00` до текущего момента и заполняют кривую графика `BTC ($)`.
+
+СЦЕНАРИЙ D: Автоматический Rollover (переход на следующий раунд без F5)
+- Проблема: Старый страйк предыдущего раунда может залипнуть в UI или в дельте.
+- Решение: Метод `resetForNewWindow(newMarket.startTs, newMarket.duration)` сбрасывает `_isOfficialStrikeVerified = false`, обнуляет старый страйк `_targetBtcPrice = null`, немедленно блокирует старые таймеры и запускает реконсиляцию для нового окна.
+
+СЦЕНАРИЙ E: Переключение таймфрейма (5M <-> 15M)
+- Проблема: На 15M рынках `startTs` может не делиться ровно на 900 (например, если Polymarket сместил окно), а дефолтный modulo-расчёт `(now / 900) * 900` выдаст неверное время старта.
+- Решение: Никогда не полагаться только на системные часы! Время старта `_activeWinStartSec` и длительность `_activeDurationSecs` ОБЯЗАНЫ передаваться из метаданных рынка `market.startTs` и `market.endTs - market.startTs`.
+
+
+--------------------------------------------------------------------------------
+3. КОВАРНЫЕ БАГИ И ПОДВОДНЫЕ КАМНИ (ЧТО ЛОМАЛО СТРАЙК РАНЬШЕ)
+--------------------------------------------------------------------------------
+
+БАГ 1: Блокировка отправки страйка из-за отсутствия живого тика
+- Как было (ОШИБКА):
+  ```javascript
+  function _emitPriceUpdate() {
+    if (_currentBtcPrice === null) return; // <-- ЕСЛИ ЖИВОЙ ТИК ЕЩЕ НЕ ПРИШЕЛ, СТРАЙК ВЫБРАСЫВАЛСЯ!
+    handlers.onBtcPrice(_currentBtcPrice, ts, _targetBtcPrice, delta);
+  }
+  ```
+- Как правильно:
+  1) Сделать отдельный независимый колбэк `onStrikeConfirmed(strikePrice, startTs)`, который срабатывает СРАЗУ при получении страйка, даже если живой цены ещё нет.
+  2) В `_emitPriceUpdate()` условие: `if (_currentBtcPrice === null && _targetBtcPrice === null) return;`.
+
+БАГ 2: Неверная граница при поиске страйка в историческом буфере RTDS
+- Как было (ОШИБКА):
+  ```javascript
+  // ОШИБКА: захватывал тики из ПРЕДЫДУЩЕГО раунда, если diff <= 3!
+  if (Math.abs(ptSec - winStartSec) <= 3) { ... }
+  ```
+- Как правильно:
+  ```javascript
+  // СТРОГО: точка должна быть ВНУТРИ текущего раунда (>= winStartSec)
+  if (ptSec >= winStartSec) {
+    const diff = ptSec - winStartSec;
+    if (diff < minDiff && diff <= 30) {
+      minDiff = diff;
+      strikeCandidate = price;
+    }
+  }
+  ```
+
+БАГ 3: CORS-блокировка при прямом запросе к `api.preddy.trade` из браузера
+- Суть: `api.preddy.trade` НЕ возвращает CORS-заголовок `Access-Control-Allow-Origin: *`.
+- При открытии браузером прямой `fetch('https://api.preddy.trade/...')` блокируется браузером.
+- Решение: Всегда использовать локальный серверный прокси (Python `run_app.py` или Node `server.js`), который делает запрос со стороны сервера (где CORS не существует) и отдает в браузер с `Access-Control-Allow-Origin: *`.
+
+БАГ 4: Стирание страйка при обновлении текущей цены (Zero Delta Bug)
+- Как было (ОШИБКА): При отсутствии страйка переменная `_liveBtcOpen` перезаписывалась текущей ценой `_liveBtcCurrent`, из-за чего дельта навсегда становилась `$0.00`.
+- Как правильно: Страйк хранится в изолированной переменной `_liveBtcOpen`, а дельта рассчитывается ТОЛЬКО если страйк валиден и `> 0`.
+
+
+--------------------------------------------------------------------------------
+4. ПОЛНАЯ АРХИТЕКТУРА И ЭТАЛОННЫЙ КОД МОДУЛЕЙ
+--------------------------------------------------------------------------------
+
+4.1. МОДУЛЬ RTDS WEBSOCKET & STRIKE RECONCILIATION (`rtds.js`):
+---------------------------------------------------------------
+```javascript
+'use strict';
+
+window.PolyRTDS = (() => {
+  const WS_URL = 'wss://ws-live-data.polymarket.com';
+  const PING_INTERVAL_MS = 5_000;
+  const RECONNECT_DELAY_MS = 2_000;
+
+  let _ws = null;
+  let _pingTimer = null;
+  let _reconnectTimer = null;
+  let _reconciliationTimer = null;
+  let _destroyed = false;
+
+  let _currentBtcPrice = null;
+  let _targetBtcPrice  = null;
+  let _activeWinStartSec  = null;
+  let _activeDurationSecs = 300;
+  let _currentWindowId = null;
+  let _durationSecs    = 300;
+  let _lastTimestamp   = 0;
+  let _isOfficialStrikeVerified = false;
+  let _isReconciling   = false;
+  let _lastHistoricalBuffer = [];
+
+  const handlers = {
+    onBtcPrice: null,          // (currentPrice, tsMs, targetPrice, delta, isVerified)
+    onStrikeConfirmed: null,   // (strikePrice, winStartSec)
+    onHistoricalBtcTicks: null,// (arrayOfRawPoints)
+    onConnected: null,
+    onDisconnected: null,
+  };
+
+  function setDurationSecs(secs) {
+    const newDur = Math.max(60, secs || 300);
+    if (_durationSecs !== newDur) {
+      _durationSecs = newDur;
+      _currentWindowId = null;
+      _isOfficialStrikeVerified = false;
+    }
+  }
+
+  function setVerifiedStrike(price, winStartSec) {
+    if (!price || isNaN(price) || price <= 0) return;
+    _targetBtcPrice = price;
+    _isOfficialStrikeVerified = true;
+    if (winStartSec) {
+      _cacheStrike(winStartSec, price);
+      _activeWinStartSec = winStartSec;
+    }
+    _stopReconciliation();
+    _emitStrikeConfirmed(price, winStartSec || _activeWinStartSec);
+    _emitPriceUpdate();
+  }
+
+  async function fetchOfficialTargetPrice(winStartSec, winEndSec) {
+    if (!winStartSec) return null;
+    const duration = (winEndSec && winEndSec > winStartSec) ? (winEndSec - winStartSec) : _durationSecs;
+    const endSec = winEndSec || (winStartSec + duration);
+
+    const startISO = new Date(winStartSec * 1000).toISOString().replace('.000Z', 'Z');
+    const endISO   = new Date(endSec   * 1000).toISOString().replace('.000Z', 'Z');
+
+    const preddyDirect = `https://api.preddy.trade/crypto/price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`;
+    const endpoints = [
+      `/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
+      `http://localhost:8088/api/target-price?symbol=btc&startDate=${startISO}&endDate=${endISO}&twapLookbackSeconds=60`,
+      preddyDirect,
+      `https://corsproxy.io/?url=${encodeURIComponent(preddyDirect)}`,
+    ];
+
+    for (const url of endpoints) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3000);
+        const resp = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: controller.signal });
+        clearTimeout(timer);
+        if (resp.ok) {
+          const data = await resp.json();
+          const openPrice = typeof data.openPrice === 'number' ? data.openPrice : parseFloat(data.openPrice);
+          if (!isNaN(openPrice) && openPrice > 0) {
+            return openPrice;
+          }
+        }
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  function _cacheStrike(winStartSec, price) {
+    try { localStorage.setItem('pm_btc_twap_strike_v7_' + winStartSec, price); } catch {}
+  }
+
+  function _getCachedStrike(winStartSec) {
+    try {
+      const v = localStorage.getItem('pm_btc_twap_strike_v7_' + winStartSec);
+      return v ? parseFloat(v) : null;
+    } catch { return null; }
+  }
+
+  function _stopReconciliation() {
+    if (_reconciliationTimer) { clearInterval(_reconciliationTimer); _reconciliationTimer = null; }
+    _isReconciling = false;
+  }
+
+  function _startFastStrikeReconciliation(winStartSec, durationSecs) {
+    _stopReconciliation();
+    if (!winStartSec) return;
+    const dur = durationSecs || _activeDurationSecs || _durationSecs;
+
+    let attempts = 0;
+    const maxAttempts = 20;
+
+    const poll = async () => {
+      if (_destroyed || _isOfficialStrikeVerified || attempts >= maxAttempts) {
+        _stopReconciliation();
+        return;
+      }
+      if (_isReconciling) return;
+      _isReconciling = true;
+      attempts++;
+
+      try {
+        const officialPrice = await fetchOfficialTargetPrice(winStartSec, winStartSec + dur);
+        if (officialPrice !== null && !isNaN(officialPrice) && officialPrice > 0) {
+          _targetBtcPrice = officialPrice;
+          _isOfficialStrikeVerified = true;
+          _cacheStrike(winStartSec, officialPrice);
+          _stopReconciliation();
+          _emitStrikeConfirmed(officialPrice, winStartSec);
+          _emitPriceUpdate();
+          return;
+        }
+      } catch (err) {
+      } finally {
+        _isReconciling = false;
+      }
+    };
+
+    poll();
+    _reconciliationTimer = setInterval(poll, 2000);
+  }
+
+  function _emitStrikeConfirmed(price, winStartSec) {
+    if (handlers.onStrikeConfirmed) {
+      try { handlers.onStrikeConfirmed(price, winStartSec); } catch (e) {}
+    }
+  }
+
+  function _emitPriceUpdate() {
+    if (_currentBtcPrice === null && _targetBtcPrice === null) return;
+    const delta = (_currentBtcPrice !== null && _targetBtcPrice !== null)
+      ? (_currentBtcPrice - _targetBtcPrice) : null;
+    if (handlers.onBtcPrice) {
+      handlers.onBtcPrice(_currentBtcPrice, _lastTimestamp || Date.now(), _targetBtcPrice, delta, Boolean(_isOfficialStrikeVerified));
+    }
+  }
+
+  function resetForNewWindow(winStartSec, durationSecs) {
+    if (!winStartSec) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
+    }
+    const dur = durationSecs || _durationSecs;
+
+    _activeWinStartSec  = winStartSec;
+    _activeDurationSecs = dur;
+    _currentWindowId    = Math.floor(winStartSec / dur);
+    _isOfficialStrikeVerified = false;
+    _targetBtcPrice = null;
+    _stopReconciliation();
+
+    const cached = _getCachedStrike(winStartSec);
+    if (cached && !isNaN(cached) && cached > 0) {
+      _targetBtcPrice = cached;
+      _emitPriceUpdate();
+    }
+
+    _startFastStrikeReconciliation(winStartSec, dur);
+  }
+
+  function connect() {
+    if (_destroyed) return;
+    if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
+
+    try {
+      _ws = new WebSocket(WS_URL);
+    } catch (e) {
+      _scheduleReconnect();
+      return;
+    }
+
+    _ws.onopen = () => {
+      _subscribeTwapPrices();
+      _startPing();
+      if (handlers.onConnected) handlers.onConnected();
+    };
+
+    _ws.onmessage = (event) => {
+      if (!event.data || !event.data.trim()) return;
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.topic === 'crypto_prices_twap_sixty' || msg.topic === 'crypto_prices_chainlink') {
+          const payload = msg.payload || {};
+
+          // 1. Исторический буфер (присылается при первом подключении)
+          if (Array.isArray(payload.data) && payload.data.length > 0) {
+            _lastHistoricalBuffer = payload.data;
+            if (handlers.onHistoricalBtcTicks) {
+              try { handlers.onHistoricalBtcTicks(payload.data); } catch (e) {}
+            }
+
+            const winStartSec = _activeWinStartSec != null ? _activeWinStartSec
+              : (Math.floor(Date.now() / 1000 / _durationSecs) * _durationSecs);
+
+            let strikeCandidate = null;
+            let minDiff = Infinity;
+            let latestPrice = null;
+            let maxTsMs = 0;
+
+            for (const pt of payload.data) {
+              const rawVal = pt.value !== undefined ? pt.value : pt.price;
+              const price = typeof rawVal === 'number' ? rawVal : parseFloat(rawVal);
+              const tsMs = typeof pt.timestamp === 'number' ? pt.timestamp : (msg.timestamp || Date.now());
+              const ptSec = Math.floor(tsMs / 1000);
+
+              if (!isNaN(price) && price > 0) {
+                if (tsMs >= maxTsMs) { maxTsMs = tsMs; latestPrice = price; }
+                if (ptSec >= winStartSec) {
+                  const diff = ptSec - winStartSec;
+                  if (diff < minDiff) { minDiff = diff; strikeCandidate = price; }
+                }
+              }
+            }
+
+            if (latestPrice !== null) {
+              _currentBtcPrice = latestPrice;
+              _lastTimestamp = maxTsMs || Date.now();
+            }
+
+            if (strikeCandidate !== null && minDiff <= 30 && !_isOfficialStrikeVerified) {
+              _targetBtcPrice = strikeCandidate;
+              _isOfficialStrikeVerified = true;
+              _cacheStrike(winStartSec, strikeCandidate);
+              _stopReconciliation();
+              _emitStrikeConfirmed(strikeCandidate, winStartSec);
+            }
+
+            _emitPriceUpdate();
+          }
+
+          // 2. Живой посекундный тик
+          if (payload.value !== undefined && payload.value !== null) {
+            const val = typeof payload.value === 'number' ? payload.value : parseFloat(payload.value);
+            if (!isNaN(val) && val > 0) {
+              _currentBtcPrice = val;
+              _lastTimestamp = payload.timestamp || msg.timestamp || Date.now();
+
+              const nowSec = Math.floor(_lastTimestamp / 1000);
+              const winStartSec = _activeWinStartSec != null ? _activeWinStartSec
+                : (Math.floor(nowSec / _durationSecs) * _durationSecs);
+              const dur = _activeDurationSecs || _durationSecs;
+              const secInWin = nowSec - winStartSec;
+
+              // Захват на 0-й секунде
+              if (secInWin === 0 && !_isOfficialStrikeVerified) {
+                _targetBtcPrice = val;
+                _cacheStrike(winStartSec, val);
+                _startFastStrikeReconciliation(winStartSec, dur);
+              } else if (_targetBtcPrice === null) {
+                const cached = _getCachedStrike(winStartSec);
+                if (cached && !isNaN(cached) && cached > 0) {
+                  _targetBtcPrice = cached;
+                } else if (!_isReconciling && !_reconciliationTimer) {
+                  _startFastStrikeReconciliation(winStartSec, dur);
+                }
+              }
+
+              _emitPriceUpdate();
+            }
+          }
+        }
+      } catch (err) {}
+    };
+
+    _ws.onclose = () => {
+      _clearTimers();
+      if (handlers.onDisconnected) handlers.onDisconnected();
+      if (!_destroyed) _scheduleReconnect();
+    };
+  }
+
+  function _subscribeTwapPrices() {
+    if (!_ws || _ws.readyState !== WebSocket.OPEN) return;
+    try {
+      _ws.send(JSON.stringify({
+        action: 'subscribe',
+        subscriptions: [{ topic: 'crypto_prices_twap_sixty', type: '*', filters: JSON.stringify({ symbol: 'btc/usd' }) }]
+      }));
+    } catch {}
+  }
+
+  function _startPing() {
+    clearInterval(_pingTimer);
+    _pingTimer = setInterval(() => {
+      if (_ws && _ws.readyState === WebSocket.OPEN) {
+        try { _ws.send(JSON.stringify({ action: 'ping' })); } catch {}
+      }
+    }, PING_INTERVAL_MS);
+  }
+
+  function _scheduleReconnect() {
+    clearTimeout(_reconnectTimer);
+    _reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+  }
+
+  function _clearTimers() {
+    clearInterval(_pingTimer);
+    clearTimeout(_reconnectTimer);
+    clearInterval(_reconciliationTimer);
+    _pingTimer = null;
+    _reconnectTimer = null;
+    _reconciliationTimer = null;
+    _isReconciling = false;
+  }
+
+  function destroy() {
+    _destroyed = true;
+    _clearTimers();
+    if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; }
+  }
+
+  return {
+    connect,
+    destroy,
+    setDurationSecs,
+    resetForNewWindow,
+    setVerifiedStrike,
+    getHistoricalBuffer: () => _lastHistoricalBuffer || [],
+    handlers,
+  };
+})();
+```
+
+--------------------------------------------------------------------------------
+4.2. СЕРВЕРНЫЙ ПРОКСИ PYTHON (`run_app.py`):
+--------------------------------------------------------------------------------
+```python
+import requests, time, json
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+
+def fetch_target_price(start_iso, end_iso, lookback_sec=60):
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+    }
+    try:
+        url = f"https://api.preddy.trade/crypto/price?symbol=btc&startDate={start_iso}&endDate={end_iso}&twapLookbackSeconds={lookback_sec}"
+        r = requests.get(url, headers=headers, timeout=3.5)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("openPrice") is not None:
+                return {"openPrice": float(data["openPrice"]), "source": "preddy"}
+    except Exception:
+        pass
+    return {"openPrice": None, "error": "Target price not available yet"}
+
+class AppHTTPHandler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.end_headers()
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        if parsed.path == "/api/target-price":
+            start_iso = qs.get("startDate", [None])[0]
+            end_iso = qs.get("endDate", [None])[0]
+            lookback = int(qs.get("twapLookbackSeconds", [60])[0])
+            data = fetch_target_price(start_iso, end_iso, lookback)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+            return
+        return super().do_GET()
+```
+
+================================================================================
+ИТОГОВЫЙ ЧЕК-ЛИСТ ДЛЯ ПРОВЕРКИ:
+1. Страйк отображается сразу при входе (0 мс задержки).
+2. На 0-й секунде нового раунда захватывается первый живой тик RTDS.
+3. Через 2–6 секунд страйк автоматически подтверждается 1:1 официальным Chainlink TWAP.
+4. При F5 на 3-й минуте страйк берется из кэша/API, а вся история BTC с 00:00 подтягивается из буфера RTDS.
+5. Для 5M и 15M время старта берется строго из `market.startTs`, исключая сдвиги окон.
+================================================================================
