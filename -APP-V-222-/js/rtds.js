@@ -107,7 +107,21 @@ window.PolyRTDS = (() => {
     if (_currentWindowId !== winId) {
       _currentWindowId = winId;
       _targetBtcPrice = _getCachedStrike(winStartSec);
-      fetchOfficialTargetPrice(winStartSec, winEndSec);
+      if (_targetBtcPrice === null) {
+        fetchOfficialTargetPrice(winStartSec, winEndSec);
+      }
+    }
+  }
+
+  function resetForNewWindow(winStartSec) {
+    if (!winStartSec) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
+    }
+    _currentWindowId = Math.floor(winStartSec / _durationSecs);
+    _targetBtcPrice = _getCachedStrike(winStartSec);
+    if (_targetBtcPrice === null) {
+      fetchOfficialTargetPrice(winStartSec, winStartSec + _durationSecs);
     }
   }
 
@@ -154,15 +168,34 @@ window.PolyRTDS = (() => {
 
           // 1. Batch historical points on initial connection
           if (Array.isArray(payload.data) && payload.data.length > 0) {
+            const nowSec = Math.floor(Date.now() / 1000);
+            const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
+            let strikeCandidate = null;
+            let minDiff = Infinity;
+
             for (const pt of payload.data) {
               const rawVal = pt.value !== undefined ? pt.value : pt.price;
               const price = typeof rawVal === 'number' ? rawVal : parseFloat(rawVal);
               const tsMs = pt.timestamp || msg.timestamp || Date.now();
+              const ptSec = Math.floor(tsMs / 1000);
+
               if (!isNaN(price) && price > 0) {
                 _currentBtcPrice = price;
                 _lastTimestamp = tsMs;
+
+                const diff = Math.abs(ptSec - winStartSec);
+                if (diff < minDiff && diff <= 3) {
+                  minDiff = diff;
+                  strikeCandidate = price;
+                }
               }
             }
+
+            if (_targetBtcPrice === null && strikeCandidate !== null) {
+              _targetBtcPrice = strikeCandidate;
+              _cacheStrike(winStartSec, strikeCandidate);
+            }
+
             _emitPriceUpdate();
           }
 
@@ -177,8 +210,8 @@ window.PolyRTDS = (() => {
               const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
               const secInWin = nowSec % _durationSecs;
 
-              // At exact round open (0-th second), anchor the target price
-              if (secInWin === 0 && _targetBtcPrice === null) {
+              // At exact round open (0-th second), anchor the target price directly from live RTDS
+              if (secInWin === 0) {
                 _targetBtcPrice = val;
                 _cacheStrike(winStartSec, val);
               } else if (_targetBtcPrice === null) {
@@ -275,6 +308,7 @@ window.PolyRTDS = (() => {
     setDurationSecs,
     getDurationSecs,
     checkAndRefreshWindow,
+    resetForNewWindow,
     fetchOfficialTargetPrice,
     getCurrentPrice,
     getTargetPrice,

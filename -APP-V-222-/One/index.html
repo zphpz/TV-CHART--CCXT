@@ -1871,7 +1871,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
         <a href="https://polymarket.com" target="_blank" class="attr-link">Polymarket TWAP 60s</a>
       </div>
       <div id="footer-right">
-        <span id="app-version">v6.3</span>
+        <span id="app-version">v6.4</span>
       </div>
     </footer>
 
@@ -3806,7 +3806,21 @@ window.PolyRTDS = (() => {
     if (_currentWindowId !== winId) {
       _currentWindowId = winId;
       _targetBtcPrice = _getCachedStrike(winStartSec);
-      fetchOfficialTargetPrice(winStartSec, winEndSec);
+      if (_targetBtcPrice === null) {
+        fetchOfficialTargetPrice(winStartSec, winEndSec);
+      }
+    }
+  }
+
+  function resetForNewWindow(winStartSec) {
+    if (!winStartSec) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
+    }
+    _currentWindowId = Math.floor(winStartSec / _durationSecs);
+    _targetBtcPrice = _getCachedStrike(winStartSec);
+    if (_targetBtcPrice === null) {
+      fetchOfficialTargetPrice(winStartSec, winStartSec + _durationSecs);
     }
   }
 
@@ -3853,15 +3867,34 @@ window.PolyRTDS = (() => {
 
           // 1. Batch historical points on initial connection
           if (Array.isArray(payload.data) && payload.data.length > 0) {
+            const nowSec = Math.floor(Date.now() / 1000);
+            const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
+            let strikeCandidate = null;
+            let minDiff = Infinity;
+
             for (const pt of payload.data) {
               const rawVal = pt.value !== undefined ? pt.value : pt.price;
               const price = typeof rawVal === 'number' ? rawVal : parseFloat(rawVal);
               const tsMs = pt.timestamp || msg.timestamp || Date.now();
+              const ptSec = Math.floor(tsMs / 1000);
+
               if (!isNaN(price) && price > 0) {
                 _currentBtcPrice = price;
                 _lastTimestamp = tsMs;
+
+                const diff = Math.abs(ptSec - winStartSec);
+                if (diff < minDiff && diff <= 3) {
+                  minDiff = diff;
+                  strikeCandidate = price;
+                }
               }
             }
+
+            if (_targetBtcPrice === null && strikeCandidate !== null) {
+              _targetBtcPrice = strikeCandidate;
+              _cacheStrike(winStartSec, strikeCandidate);
+            }
+
             _emitPriceUpdate();
           }
 
@@ -3876,8 +3909,8 @@ window.PolyRTDS = (() => {
               const winStartSec = Math.floor(nowSec / _durationSecs) * _durationSecs;
               const secInWin = nowSec % _durationSecs;
 
-              // At exact round open (0-th second), anchor the target price
-              if (secInWin === 0 && _targetBtcPrice === null) {
+              // At exact round open (0-th second), anchor the target price directly from live RTDS
+              if (secInWin === 0) {
                 _targetBtcPrice = val;
                 _cacheStrike(winStartSec, val);
               } else if (_targetBtcPrice === null) {
@@ -3974,6 +4007,7 @@ window.PolyRTDS = (() => {
     setDurationSecs,
     getDurationSecs,
     checkAndRefreshWindow,
+    resetForNewWindow,
     fetchOfficialTargetPrice,
     getCurrentPrice,
     getTargetPrice,
@@ -6541,9 +6575,10 @@ window.HistoryPanel = (() => {
 
 /* ═══ MODULE: js/app.js ═══ */
 /**
- * app.js — Main Application Coordinator v6.3
+ * app.js — Main Application Coordinator v6.4
  * 
- * Features & Fixes in v6.3:
+ * Features & Fixes in v6.4:
+ * - 1:1 Live RTDS Second-0 Opening Strike Capture & WebSocket History Buffer Extraction
  * - Instant Strike Reset on Rollover: Zero residual latency/old strike persistence across rounds
  * - Removed Binance USDT Spot Fallback: 100% Chainlink BTC/USD TWAP Parity via Preddy & Local Proxy
  * - 1:1 Polymarket TWAP Strike Server Integration (Port 8088 Proxy + Preddy Engine)
@@ -6671,7 +6706,7 @@ window.App = (() => {
 
   // ─── Boot Sequence ────────────────────────────────────────────────
   async function boot() {
-    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.3...');
+    console.log('[App] Initializing Polymarket BTC Live Chart & TWAP Parity v6.4...');
 
     if (window.LiveTradingManager) {
       LiveTradingManager.init(el.tradingContainer);
@@ -7243,15 +7278,7 @@ window.App = (() => {
       if (window.PolyRTDS && newMarket.startTs && newMarket.endTs) {
         const dur = newMarket.endTs - newMarket.startTs;
         PolyRTDS.setDurationSecs(dur);
-        PolyRTDS.fetchOfficialTargetPrice(newMarket.startTs, newMarket.endTs).then(openP => {
-          if (openP) {
-            _liveBtcOpen = openP;
-            _updateBtcHeroMetrics((_liveBtcCurrent ? _liveBtcCurrent - openP : 0), _liveBtcCurrent, openP);
-            if (window.LiveTradingManager) {
-              LiveTradingManager.updateBtcPrice(openP, _liveBtcCurrent, _liveBtcChange);
-            }
-          }
-        }).catch(() => {});
+        PolyRTDS.resetForNewWindow(newMarket.startTs);
       }
 
       // Dual-token subscription for new market
