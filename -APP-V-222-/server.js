@@ -160,7 +160,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log('='.repeat(60));
-  console.log(`🚀 POLYMARKET BTC 1:1 LIVE SERVER (v6.7)`);
+  console.log(`🚀 POLYMARKET BTC 1:1 LIVE SERVER (v6.8)`);
   console.log(`💻 Local: http://localhost:${PORT}`);
   console.log('='.repeat(60));
 });

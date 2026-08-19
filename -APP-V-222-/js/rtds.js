@@ -1,11 +1,11 @@
-﻿/**
- * rtds.js — Polymarket Real-Time Data Stream (RTDS) WebSocket Client v6.7
+/**
+ * rtds.js — Polymarket Real-Time Data Stream (RTDS) WebSocket Client v6.8
  *
  * Strike Architecture:
  * - Stage 0: market.startTs fed in via resetForNewWindow() -> locks winStartSec
  * - Stage 1: live tick at second 0 -> preliminary strike (unverified)
  * - Stage 1b: payload.data historical buffer (on connect) -> earliest point >= winStartSec
- * - Stage 2: Fast API reconciliation loop (Preddy / local proxy) -> official Chainlink TWAP
+ * - Stage 2: Fast API reconciliation loop (Preddy / local proxy / multi-tier CORS) -> official Chainlink TWAP
  * - onStrikeConfirmed callback fires directly (does NOT need live price to be received first)
  */
 'use strict';
@@ -74,11 +74,14 @@ window.PolyRTDS = (() => {
     const startISO = new Date(winStartSec * 1000).toISOString().replace('.000Z', 'Z');
     const endISO   = new Date(endSec   * 1000).toISOString().replace('.000Z', 'Z');
 
+    const preddyDirect = 'https://api.preddy.trade/crypto/price?symbol=btc&startDate=' + startISO + '&endDate=' + endISO + '&twapLookbackSeconds=60';
     const endpoints = [
       '/api/target-price?symbol=btc&startDate=' + startISO + '&endDate=' + endISO + '&twapLookbackSeconds=60',
       'http://localhost:8088/api/target-price?symbol=btc&startDate=' + startISO + '&endDate=' + endISO + '&twapLookbackSeconds=60',
       'http://127.0.0.1:8088/api/target-price?symbol=btc&startDate=' + startISO + '&endDate=' + endISO + '&twapLookbackSeconds=60',
-      'https://api.preddy.trade/crypto/price?symbol=btc&startDate=' + startISO + '&endDate=' + endISO + '&twapLookbackSeconds=60',
+      preddyDirect,
+      'https://corsproxy.io/?url=' + encodeURIComponent(preddyDirect),
+      'https://api.allorigins.win/raw?url=' + encodeURIComponent(preddyDirect),
     ];
 
     for (const url of endpoints) {

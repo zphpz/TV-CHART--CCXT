@@ -1,7 +1,8 @@
 /**
- * app.js — Main Application Coordinator v6.7
+ * app.js — Main Application Coordinator v6.8
  * 
- * Features & Fixes in v6.7:
+ * Features & Fixes in v6.8:
+ * - Multi-tier CORS-resilient strike reconciliation engine with zero-drop callback dispatch
  * - Direct onStrikeConfirmed dispatch: UI immediately receives official strike without needing prior live tick
  * - Market metadata strike injection via setVerifiedStrike() ensuring 1:1 strike sync on page load and TF switch
  * - Explicit duration binding in resetForNewWindow(winStartSec, dur) for accurate 5M and 15M strike reconciliation
