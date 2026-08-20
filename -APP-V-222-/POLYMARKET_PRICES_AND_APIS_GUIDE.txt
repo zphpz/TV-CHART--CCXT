@@ -1,0 +1,299 @@
+﻿================================================================================
+ПОЛНОЕ РУКОВОДСТВО: ПОЛУЧЕНИЕ РЕАЛЬНЫХ И ВЕРНЫХ ЦЕН БИТКОИНА НА POLYMARKET
+            (Начальная цена / Страйк / Price To Beat и Живая цена)
+================================================================================
+
+Для рынков Polymarket BTC Up/Down (5M и 15M) расчёт цен кардинально отличается
+от обычных криптовалютных бирж (Binance, Bybit, Coinbase). Если брать спотовую
+цену с Binance или TradingView, вы гарантированно получите расхождение в $15–$60,
+из-за чего дельта, графики и определение победившего исхода на границе экспирации
+будут неверными.
+
+В данном документе описано: какие API использовать, как устроена математика,
+как получать 1:1 официальные цены и какие подводные камни существуют.
+
+--------------------------------------------------------------------------------
+1. ФИЗИКА И МАТЕМАТИКА ЦЕН POLYMARKET
+--------------------------------------------------------------------------------
+
+Polymarket использует для разрешения рынков НЕ биржевой спот, а децентрализованный оракул:
+- Источник: Chainlink BTC/USD Data Stream
+  (https://data.chain.link/streams/btc-usd-twap-60s-streams)
+- Режим: TWAP 60s (Time-Weighted Average Price — средневзвешенная по времени цена
+  со скользящим окном сглаживания в 60 секунд).
+
+Что это значит:
+1. НАЧАЛЬНАЯ ЦЕНА (Страйк / Price To Beat / Open Price):
+   Это значение Chainlink 60s TWAP, зафиксированное ровно в момент 00-й секунды начала раунда.
+2. ТЕКУЩАЯ ЦЕНА (Live BTC TWAP Price):
+   Это непрерывный 1-секундный поток текущего значения Chainlink 60s TWAP.
+3. ДЕЛЬТА (Delta):
+   Delta = Live BTC Price - Price To Beat
+   * Если Delta > 0 -> побеждает исход UP (Выше).
+   * Если Delta < 0 -> побеждает исход DOWN (Ниже).
+
+
+--------------------------------------------------------------------------------
+2. ОФИЦИАЛЬНЫЕ API И ПРОТОКОЛЫ (ИСТОЧНИКИ 100% ИСТИНЫ)
+--------------------------------------------------------------------------------
+
+2.1. ИСТОЧНИК 1: WebSocket RTDS (Живые цены и исторический буфер)
+- URL: wss://ws-live-data.polymarket.com
+- Топик подписки: crypto_prices_twap_sixty
+- Фильтр: {"symbol": "btc/usd"}
+
+Запрос на подписку (JSON):
+{
+  "action": "subscribe",
+  "subscriptions": [
+    {
+      "topic": "crypto_prices_twap_sixty",
+      "type": "*",
+      "filters": "{\"symbol\":\"btc/usd\"}"
+    }
+  ]
+}
+
+Что возвращает сервер:
+1) При первом подключении (Исторический буфер за последние 5–15 минут):
+{
+  "topic": "crypto_prices_twap_sixty",
+  "payload": {
+    "data": [
+      { "timestamp": 1787179500000, "value": 69313.25 },
+      { "timestamp": 1787179501000, "value": 69313.40 },
+      { "timestamp": 1787179502000, "value": 69313.10 }
+    ]
+  }
+}
+
+2) Каждую секунду (Живой тик реального времени):
+{
+  "topic": "crypto_prices_twap_sixty",
+  "timestamp": 1787179545120,
+  "payload": {
+    "symbol": "btc/usd",
+    "timestamp": 1787179545000,
+    "value": 69342.80
+  }
+}
+
+--------------------------------------------------------------------------------
+2.2. ИСТОЧНИК 2: REST API официального страйка (Preddy API)
+Polymarket использует оракул Preddy/Chainlink для фиксации цены экспирации и страйка.
+
+- URL: https://api.preddy.trade/crypto/price
+- Параметры:
+  * symbol: btc
+  * startDate: ISO-время старта раунда в UTC (например, 2026-08-20T18:45:00Z)
+  * endDate: ISO-время конца раунда в UTC (например, 2026-08-20T19:00:00Z)
+  * twapLookbackSeconds: 60
+
+Пример прямого запроса:
+GET https://api.preddy.trade/crypto/price?symbol=btc&startDate=2026-08-20T18:45:00Z&endDate=2026-08-20T19:00:00Z&twapLookbackSeconds=60
+
+Ответ API:
+{
+  "openPrice": 69313.24981659374,
+  "closePrice": null
+}
+
+* openPrice = $69,313.25 — это и есть точный официальный "Price To Beat",
+  отображаемый на сайте Polymarket.
+
+--------------------------------------------------------------------------------
+2.3. ИСТОЧНИК 3: Gamma API (Метаданные раунда)
+- URL: https://gamma-api.polymarket.com/events?slug=btc-updown-5m-{START_UNIX_TIMESTAMP}
+
+Ответ API:
+[
+  {
+    "title": "Bitcoin Up or Down - 5 Minutes",
+    "startDate": "2026-08-20T18:45:00Z",
+    "endDate": "2026-08-20T18:50:00Z",
+    "eventMetadata": {
+      "priceToBeat": "69313.25"
+    },
+    "markets": [
+      {
+        "conditionId": "0x6f495e...",
+        "clobTokenIds": "[\"57005...\", \"68369...\"]"
+      }
+    ]
+  }
+]
+
+
+--------------------------------------------------------------------------------
+3. 4-УРОВНЕВЫЙ АЛГОРИТМ ПОЛУЧЕНИЯ 100% ТОЧНОГО СТРАЙКА
+--------------------------------------------------------------------------------
+
+В разные моменты времени раунда данные находятся в разном состоянии:
+
+1. 0-Я СЕКУНДА РАУНДА:
+   - В REST API ещё null (идёт расчёт).
+   - Действие (Уровень 1): Мгновенно захватываем 1-й тик из WebSocket RTDS (0 мс задержки).
+
+2. 1–10 СЕКУНДА РАУНДА:
+   - REST API ещё формирует запись в БД.
+   - Действие (Уровень 2): Берём точку >= startTs из входящего исторического буфера RTDS payload.data.
+
+3. ПОСЛЕ 10-Й СЕКУНДЫ / СЕРЕДИНА РАУНДА / ПОСЛЕ F5:
+   - В REST API уже записан официальный openPrice.
+   - Действие (Уровень 3): Запрашиваем api.preddy.trade через серверный прокси. Получаем точный страйк до 8 знаков.
+
+4. ПОВТОРНЫЙ ВХОД / ПЕРЕЗАГРУЗКА:
+   - Данные уже были получены ранее.
+   - Действие (Уровень 0): Читаем мгновенно из кэша раунда pm_btc_twap_strike_v7_{startTs} без мигания экрана.
+
+
+--------------------------------------------------------------------------------
+4. ГЛАВНЫЕ ПОДВОДНЫЕ КАМНИ И КАК ИХ ОБХОДИТЬ
+--------------------------------------------------------------------------------
+
+ПОДВОДНЫЙ КАМЕНЬ 1: Браузерная CORS-блокировка
+- Проблема: Если из JavaScript в браузере напрямую вызвать fetch('https://api.preddy.trade/...'),
+  браузер заблокирует запрос ошибкой Blocked by CORS policy (сервер Preddy не отдаёт заголовок Access-Control-Allow-Origin: *).
+- Как правильно: Запрос должен делать локальный бэкенд на Python (run_app.py) через библиотеку requests.
+  Для серверного Python ограничений CORS не существует. Бэкенд возвращает ответ вашему браузеру с Access-Control-Allow-Origin: *.
+
+ПОДВОДНЫЙ КАМЕНЬ 2: Неверный расчёт времени начала на 15M (startTs)
+- Проблема: Если вычислять начало окна формулой Math.floor(now / 900) * 900, то при технических задержках
+  или сдвигах Polymarket (например, раунд начался на 30 секунд позже) вы запросите страйк для неверного интервала времени.
+- Как правильно: Всегда парсить точный startTs из slug рынка (btc-updown-15m-1787179500 -> 1787179500)
+  или из полей startDate в Gamma API.
+
+ПОДВОДНЫЙ КАМЕНЬ 3: Захват тиков предыдущего раунда из буфера RTDS
+- Проблема: В историческом массиве payload.data есть точки за прошлый раунд (например, за 3 секунды до старта).
+  Если написать условие Math.abs(tickTime - startTs) <= 3, вы можете случайно взять цену закрытия прошлого раунда вместо открытия нового.
+- Как правильно: Точка должна строго принадлежать текущему окну:
+  if (tickSec >= startTs) {
+    const diff = tickSec - startTs;
+    if (diff < minDiff && diff <= 30) {
+      minDiff = diff;
+      strikePrice = tickPrice;
+    }
+  }
+
+ПОДВОДНЫЙ КАМЕНЬ 4: Стирание страйка ("Zero Delta Bug")
+- Проблема: Если переменная страйка _liveBtcOpen при отсутствии данных перезаписывается текущей ценой _liveBtcCurrent,
+  дельта превращается в $0.00 и график замирает на нуле.
+- Как правильно: Хранить страйк в строго изолированной переменной и рассчитывать дельту только тогда,
+  когда страйк валиден и больше 0.
+
+
+--------------------------------------------------------------------------------
+5. ГОТОВЫЕ РАБОЧИЕ ПРИМЕРЫ КОДА
+--------------------------------------------------------------------------------
+
+5.1. ПРИМЕР НА PYTHON: ПОЛНОЕ ПОЛУЧЕНИЕ СТРАЙКА И ТЕКУЩЕЙ ЦЕНЫ
+--------------------------------------------------------------
+```python
+import time
+import requests
+import json
+
+def get_current_btc_market_data(tf_minutes=5):
+    now_sec = int(time.time())
+    interval_sec = tf_minutes * 60
+    win_start = (now_sec // interval_sec) * interval_sec
+    win_end = win_start + interval_sec
+    
+    slug = f"btc-updown-{tf_minutes}m-{win_start}"
+    print(f"[*] Проверяем рынок: {slug} (+{now_sec - win_start} сек от старта)")
+
+    # 1. Получаем метаданные из Gamma API
+    gamma_url = f"https://gamma-api.polymarket.com/events?slug={slug}"
+    r_gamma = requests.get(gamma_url, timeout=5)
+    
+    if r_gamma.status_code != 200 or not r_gamma.json():
+        print("[-] Рынок еще не открыт или завершен")
+        return None
+        
+    market_data = r_gamma.json()[0]['markets'][0]
+    condition_id = market_data.get('conditionId')
+    print(f"[+] Рынок: {market_data.get('question')}")
+    print(f"[+] Condition ID: {condition_id}")
+
+    # 2. Получаем официальный Price To Beat (Chainlink 60s TWAP)
+    start_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(win_start))
+    end_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(win_end))
+    
+    preddy_url = f"https://api.preddy.trade/crypto/price?symbol=btc&startDate={start_iso}&endDate={end_iso}&twapLookbackSeconds=60"
+    r_strike = requests.get(preddy_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+    
+    strike_price = None
+    if r_strike.status_code == 200:
+        data = r_strike.json()
+        strike_price = data.get("openPrice")
+
+    print(f"[+] Официальный Страйк (Price To Beat): ${strike_price:,.2f}" if strike_price else "[-] Страйк еще рассчитывается...")
+    return {
+        "slug": slug,
+        "start_ts": win_start,
+        "end_ts": win_end,
+        "strike": strike_price,
+        "condition_id": condition_id
+    }
+
+if __name__ == "__main__":
+    get_current_btc_market_data(5)
+```
+
+--------------------------------------------------------------------------------
+5.2. ПРИМЕР НА JAVASCRIPT (КЛИЕНТ WEBSOCKET RTDS + LIVE TWAP)
+--------------------------------------------------------------
+```javascript
+// Подключение к живому потоку Chainlink 60s TWAP Polymarket
+const ws = new WebSocket('wss://ws-live-data.polymarket.com');
+
+ws.onopen = () => {
+  console.log('Подключено к RTDS Polymarket');
+  // Подписываемся на TWAP 60s Биткоина
+  ws.send(JSON.stringify({
+    action: 'subscribe',
+    subscriptions: [
+      {
+        topic: 'crypto_prices_twap_sixty',
+        type: '*',
+        filters: JSON.stringify({ symbol: 'btc/usd' })
+      }
+    ]
+  }));
+  
+  // Пинг каждые 5 секунд для поддержания соединения
+  setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ action: 'ping' }));
+    }
+  }, 5000);
+};
+
+ws.onmessage = (event) => {
+  if (!event.data) return;
+  const msg = JSON.parse(event.data);
+  
+  if (msg.topic === 'crypto_prices_twap_sixty') {
+    const payload = msg.payload || {};
+    
+    // 1. Обработка исторического буфера (приходит при рукопожатии)
+    if (Array.isArray(payload.data)) {
+      console.log(`Получен буфер истории: ${payload.data.length} посекундных точек BTC`);
+    }
+    
+    // 2. Обработка живого тика (приходит каждую секунду)
+    if (payload.value !== undefined) {
+      const livePrice = parseFloat(payload.value);
+      const timestamp = payload.timestamp || msg.timestamp;
+      console.log(`[LIVE BTC TWAP] Цена: $${livePrice.toFixed(2)} | Время: ${new Date(timestamp).toLocaleTimeString()}`);
+    }
+  }
+};
+```
+
+================================================================================
+ИТОГОВЫЙ СВОД ПРАВИЛ ДЛЯ ГАРАНТИРОВАННОЙ ТОЧНОСТИ:
+1. Никакого спота Binance / Bybit: Всегда подключаться к WebSocket RTDS wss://ws-live-data.polymarket.com (топик crypto_prices_twap_sixty).
+2. Для страйка: Запрашивать api.preddy.trade/crypto/price с twapLookbackSeconds=60 через локальный Python-бэкенд.
+3. Для графика: Использовать входящий массив payload.data из WebSocket для мгновенной отрисовки всей истории с 00:00 даже при перезагрузке страницы в середине раунда.
+================================================================================
